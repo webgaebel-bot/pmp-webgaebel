@@ -28,6 +28,7 @@ class ApiService {
 
     if (response.status === 401) {
       localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
       window.location.href = '/login';
       throw new Error('Unauthorized');
     }
@@ -173,6 +174,13 @@ class ApiService {
     return this.request(`/task/${userId}/tasks`);
   }
 
+  async assignTask(taskId: string, userId: string) {
+    return this.request(`/task/tasks/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ assignee_id: userId }),
+    });
+  }
+
   // Task Comments APIs
   async getTaskComments(taskId: string) {
     return this.request(`/taskcomment/tasks/${taskId}/comments`);
@@ -249,6 +257,10 @@ class ApiService {
 
   async getRole(id: string) {
     return this.request(`/role/${id}`);
+  }
+
+  async getRolePermissions(roleId: string) {
+    return this.request(`/roles/${roleId}/permissions`);
   }
 
   async createRole(data: any) {

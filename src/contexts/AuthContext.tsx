@@ -11,36 +11,82 @@ interface AuthContextType extends AuthState {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Helper function to get user from localStorage
+const getStoredUser = (): User | null => {
+  try {
+    const storedUser = localStorage.getItem('user');
+    return storedUser ? JSON.parse(storedUser) : null;
+  } catch {
+    return null;
+  }
+};
+
+// Helper function to store user in localStorage
+const storeUser = (user: User | null) => {
+  if (user) {
+    localStorage.setItem('user', JSON.stringify({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role ? { id: user.role.id, name: user.role.name } : null,
+      permissions: user.permissions || [],
+      avatar: user.avatar,
+      status: user.status,
+    }));
+  } else {
+    localStorage.removeItem('user');
+  }
+};
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AuthState>({
-    user: null,
+    user: getStoredUser(),
     token: localStorage.getItem('auth_token'),
-    isAuthenticated: false,
+    isAuthenticated: !!localStorage.getItem('auth_token') && !!getStoredUser(),
     isLoading: true,
   });
 
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('auth_token');
+      const storedUser = getStoredUser();
+      
       if (token) {
         try {
           const response: any = await api.getCurrentUser();
+          const user = response.data || response;
+          
+          // Store user in localStorage with proper structure
+          storeUser(user);
+          
           setState({
-            user: response.data || response,
+            user,
             token,
             isAuthenticated: true,
             isLoading: false,
           });
         } catch (error) {
-          localStorage.removeItem('auth_token');
-          setState({
-            user: null,
-            token: null,
-            isAuthenticated: false,
-            isLoading: false,
-          });
+          // If API fails but we have stored user, use it
+          if (storedUser) {
+            setState({
+              user: storedUser,
+              token,
+              isAuthenticated: true,
+              isLoading: false,
+            });
+          } else {
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('user');
+            setState({
+              user: null,
+              token: null,
+              isAuthenticated: false,
+              isLoading: false,
+            });
+          }
         }
       } else {
+        localStorage.removeItem('user');
         setState(prev => ({ ...prev, isLoading: false }));
       }
     };
@@ -52,7 +98,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const response: any = await api.login(email, password);
     const { token, user } = response.data || response;
     
+    // Store token
     localStorage.setItem('auth_token', token);
+    
+    // Store user in localStorage with proper structure
+    storeUser(user);
+    
     setState({
       user,
       token,
@@ -68,6 +119,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Continue with local logout even if API fails
     }
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
     setState({
       user: null,
       token: null,
@@ -78,6 +130,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const hasPermission = (permission: string): boolean => {
     if (!state.user) return false;
+    // Check from state user permissions
     return state.user.permissions?.includes(permission) || false;
   };
 
@@ -99,4 +152,11 @@ export const useAuth = () => {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
+};
+
+// Export helper function for use outside React components
+export const hasPermissionHelper = (permission: string): boolean => {
+  const user = getStoredUser();
+  if (!user) return false;
+  return user.permissions?.includes(permission) || false;
 };

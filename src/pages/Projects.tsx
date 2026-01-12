@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Plus,
   Search,
-  Filter,
   MoreVertical,
   Calendar,
   Users,
   Edit,
   Trash2,
   Eye,
+  Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -40,6 +40,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -49,80 +50,13 @@ import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
 import type { Project } from '@/types';
 
-// Mock data
-const mockProjects: Project[] = [
-  {
-    id: '1',
-    name: 'E-commerce Platform Redesign',
-    description: 'Complete overhaul of the e-commerce platform with modern UI/UX',
-    status: 'in_progress',
-    priority: 'high',
-    progress: 75,
-    start_date: '2024-01-15',
-    end_date: '2024-04-30',
-    created_at: '2024-01-10',
-    updated_at: '2024-03-15',
-    owner: { id: '1', name: 'Sarah Johnson', email: 'sarah@example.com' } as any,
-    members: [],
-    task_count: 60,
-    completed_tasks: 45,
-  },
-  {
-    id: '2',
-    name: 'Mobile App v2.0',
-    description: 'Second major version of our mobile application',
-    status: 'in_progress',
-    priority: 'critical',
-    progress: 45,
-    start_date: '2024-02-01',
-    end_date: '2024-06-15',
-    created_at: '2024-01-25',
-    updated_at: '2024-03-10',
-    owner: { id: '2', name: 'Mike Chen', email: 'mike@example.com' } as any,
-    members: [],
-    task_count: 40,
-    completed_tasks: 18,
-  },
-  {
-    id: '3',
-    name: 'API Gateway Implementation',
-    description: 'Build a centralized API gateway for all microservices',
-    status: 'in_progress',
-    priority: 'high',
-    progress: 90,
-    start_date: '2024-01-01',
-    end_date: '2024-03-31',
-    created_at: '2023-12-15',
-    updated_at: '2024-03-20',
-    owner: { id: '3', name: 'Emily Davis', email: 'emily@example.com' } as any,
-    members: [],
-    task_count: 30,
-    completed_tasks: 27,
-  },
-  {
-    id: '4',
-    name: 'Dashboard Analytics',
-    description: 'Implement comprehensive analytics dashboard',
-    status: 'planning',
-    priority: 'medium',
-    progress: 15,
-    start_date: '2024-03-01',
-    end_date: '2024-05-31',
-    created_at: '2024-02-20',
-    updated_at: '2024-03-05',
-    owner: { id: '4', name: 'James Wilson', email: 'james@example.com' } as any,
-    members: [],
-    task_count: 20,
-    completed_tasks: 3,
-  },
-];
-
 const Projects: React.FC = () => {
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -141,20 +75,22 @@ const Projects: React.FC = () => {
   const canDelete = hasPermission('projects.delete');
 
   useEffect(() => {
-    const fetchProjects = async () => {
-      setIsLoading(true);
-      try {
-        const response: any = await api.getProjects();
-        setProjects(response.data || mockProjects);
-      } catch (error) {
-        setProjects(mockProjects);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchProjects();
   }, []);
+
+  const fetchProjects = async () => {
+    setIsLoading(true);
+    try {
+      const response: any = await api.getProjects();
+      const projectsData = response?.data || response || [];
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
+      setProjects([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const filteredProjects = projects.filter((project) => {
     const matchesSearch = project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -165,6 +101,16 @@ const Projects: React.FC = () => {
   });
 
   const handleCreateProject = async () => {
+    if (!newProject.name.trim()) {
+      toast({
+        title: 'Validation Error',
+        description: 'Project name is required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsSaving(true);
     try {
       await api.createProject(newProject);
       toast({
@@ -173,15 +119,15 @@ const Projects: React.FC = () => {
       });
       setIsCreateDialogOpen(false);
       setNewProject({ name: '', description: '', priority: 'medium', start_date: '', end_date: '' });
-      // Refresh projects
-      const response: any = await api.getProjects();
-      setProjects(response.data || mockProjects);
+      fetchProjects();
     } catch (error: any) {
       toast({
         title: 'Error',
         description: error.message || 'Failed to create project.',
         variant: 'destructive',
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -264,8 +210,12 @@ const Projects: React.FC = () => {
       {filteredProjects.length === 0 ? (
         <EmptyState
           title="No projects found"
-          description="Create your first project to get started."
-          action={canCreate ? { label: 'Create Project', onClick: () => setIsCreateDialogOpen(true) } : undefined}
+          description={
+            projects.length === 0 
+              ? "No projects have been created yet."
+              : "No projects match your search criteria."
+          }
+          action={canCreate && projects.length === 0 ? { label: 'Create Project', onClick: () => setIsCreateDialogOpen(true) } : undefined}
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -279,7 +229,7 @@ const Projects: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-foreground truncate">{project.name}</h3>
                   <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                    {project.description}
+                    {project.description || 'No description'}
                   </p>
                 </div>
                 <DropdownMenu>
@@ -320,9 +270,9 @@ const Projects: React.FC = () => {
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-muted-foreground">Progress</span>
-                  <span className="text-sm font-medium">{project.progress}%</span>
+                  <span className="text-sm font-medium">{project.progress || 0}%</span>
                 </div>
-                <ProgressBar value={project.progress} size="sm" />
+                <ProgressBar value={project.progress || 0} size="sm" />
               </div>
 
               <div className="flex items-center justify-between text-sm text-muted-foreground">
@@ -359,10 +309,13 @@ const Projects: React.FC = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create New Project</DialogTitle>
+            <DialogDescription>
+              Add a new project to track and manage.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Project Name</Label>
+              <Label htmlFor="name">Project Name <span className="text-destructive">*</span></Label>
               <Input
                 id="name"
                 value={newProject.name}
@@ -419,11 +372,18 @@ const Projects: React.FC = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)} disabled={isSaving}>
               Cancel
             </Button>
-            <Button onClick={handleCreateProject} className="bg-accent hover:bg-accent/90">
-              Create Project
+            <Button onClick={handleCreateProject} className="bg-accent hover:bg-accent/90" disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Project'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
