@@ -15,7 +15,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   permissions,
   requireAll = false,
 }) => {
-  const { isAuthenticated, isLoading, hasPermission, hasAnyPermission } = useAuth();
+  const { isAuthenticated, isLoading, hasPermission, hasAnyPermission, user } = useAuth();
   const location = useLocation();
 
   // Show loading state while checking auth
@@ -30,6 +30,12 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Super admin has access to everything
+  const isSuperAdmin = user?.role?.name?.toLowerCase().replace(/_/g, ' ') === 'super admin';
+  if (isSuperAdmin) {
+    return <>{children}</>;
   }
 
   // Check single permission

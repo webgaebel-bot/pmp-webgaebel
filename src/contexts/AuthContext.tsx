@@ -51,7 +51,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const token = localStorage.getItem('auth_token');
       const storedUser = getStoredUser();
       
-      if (token) {
+      if (token && storedUser) {
         try {
           const response: any = await api.getCurrentUser();
           const user = response.data || response;
@@ -66,8 +66,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             isLoading: false,
           });
         } catch (error) {
-          // If API fails but we have stored user, use it
-          if (storedUser) {
+          // If API fails but we have stored user with role info, use it
+          if (storedUser && storedUser.role) {
             setState({
               user: storedUser,
               token,
@@ -87,7 +87,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       } else {
         localStorage.removeItem('user');
-        setState(prev => ({ ...prev, isLoading: false }));
+        localStorage.removeItem('auth_token');
+        setState({
+          user: null,
+          token: null,
+          isAuthenticated: false,
+          isLoading: false,
+        });
       }
     };
 
@@ -130,12 +136,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const hasPermission = (permission: string): boolean => {
     if (!state.user) return false;
+    // Super admin has all permissions
+    const roleName = state.user.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
+    if (roleName === 'super admin' || roleName === 'superadmin') {
+      return true;
+    }
     // Check from state user permissions
     return state.user.permissions?.includes(permission) || false;
   };
 
   const hasAnyPermission = (permissions: string[]): boolean => {
     if (!state.user) return false;
+    // Super admin has all permissions
+    const roleName = state.user.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
+    if (roleName === 'super admin' || roleName === 'superadmin') {
+      return true;
+    }
     return permissions.some(p => state.user?.permissions?.includes(p));
   };
 

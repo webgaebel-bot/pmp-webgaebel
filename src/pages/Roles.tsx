@@ -176,9 +176,9 @@ const Roles: React.FC = () => {
     }
   };
 
-  const handleDeleteRole = async (id: string) => {
+  const handleDeleteRole = async (id: string | number) => {
     try {
-      await api.deleteRole(id);
+      await api.deleteRole(String(id));
       setRoles(roles.filter(r => r.id !== id));
       toast({
         title: 'Success',
@@ -196,10 +196,11 @@ const Roles: React.FC = () => {
   const handleOpenPermissions = async (role: Role) => {
     setSelectedRole(role);
     setIsPermissionDialogOpen(true);
+    setSelectedPermissions([]);
     
     // Try to fetch role's assigned permissions
     try {
-      const response: any = await api.getRolePermissions(role.id);
+      const response: any = await api.getRolePermissions(String(role.id));
       const assignedPermissions = response?.data || response || [];
       setSelectedPermissions(
         Array.isArray(assignedPermissions) 
@@ -256,7 +257,7 @@ const Roles: React.FC = () => {
     
     setIsSaving(true);
     try {
-      await api.assignPermissions(selectedRole.id, selectedPermissions);
+      await api.assignPermissions(String(selectedRole.id), selectedPermissions);
       toast({
         title: 'Success',
         description: 'Permissions updated successfully.',
@@ -327,7 +328,7 @@ const Roles: React.FC = () => {
                   <div>
                     <h3 className="font-semibold">{role.name}</h3>
                     <p className="text-sm text-muted-foreground">
-                      {role.permissions?.length || 0} permissions
+                      {role.permission_count || role.permissions?.length || 0} permissions
                     </p>
                   </div>
                 </div>

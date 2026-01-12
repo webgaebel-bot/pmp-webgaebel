@@ -11,8 +11,11 @@ import {
   ChevronDown,
   FileText,
   BarChart3,
+  ChevronLeft,
+  Menu,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
@@ -21,6 +24,11 @@ interface NavItem {
   path: string;
   permission?: string;
   children?: NavItem[];
+}
+
+interface SidebarProps {
+  isOpen?: boolean;
+  onToggle?: () => void;
 }
 
 const navigation: NavItem[] = [
@@ -72,10 +80,11 @@ const navigation: NavItem[] = [
   },
 ];
 
-export const Sidebar: React.FC = () => {
+export const Sidebar: React.FC<SidebarProps> = ({ isOpen = true, onToggle }) => {
   const location = useLocation();
   const { hasPermission, user } = useAuth();
   const [expandedItems, setExpandedItems] = React.useState<string[]>([]);
+  const [isMobileOpen, setIsMobileOpen] = React.useState(false);
 
   const toggleExpanded = (path: string) => {
     setExpandedItems(prev =>
@@ -87,6 +96,12 @@ export const Sidebar: React.FC = () => {
 
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/');
+  };
+
+  const closeMobileSidebar = () => {
+    if (window.innerWidth < 768) {
+      setIsMobileOpen(false);
+    }
   };
 
   const renderNavItem = (item: NavItem, depth = 0) => {
@@ -132,6 +147,7 @@ export const Sidebar: React.FC = () => {
       <NavLink
         key={item.path}
         to={item.path}
+        onClick={closeMobileSidebar}
         className={({ isActive }) =>
           cn(
             'nav-item',
@@ -146,35 +162,63 @@ export const Sidebar: React.FC = () => {
   };
 
   return (
-    <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border">
-      {/* Logo */}
-      <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-6">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sidebar-primary">
-          <FileText className="h-5 w-5 text-sidebar-primary-foreground" />
-        </div>
-        <div>
-          <h1 className="text-base font-semibold text-sidebar-foreground">ProjectHub</h1>
-          <p className="text-xs text-sidebar-foreground/60">Management Portal</p>
-        </div>
-      </div>
+    <>
+      {/* Mobile Overlay */}
+      {isMobileOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => setIsMobileOpen(false)}
+        />
+      )}
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto p-4 scrollbar-thin">
-        {navigation.map(item => renderNavItem(item))}
-      </nav>
+      {/* Toggle Button - Mobile */}
+      <button
+        onClick={() => setIsMobileOpen(!isMobileOpen)}
+        className="fixed top-4 left-4 z-50 md:hidden rounded-lg bg-sidebar p-2 shadow-lg border border-sidebar-border"
+      >
+        {isMobileOpen ? (
+          <ChevronLeft className="h-6 w-6 text-sidebar-foreground" />
+        ) : (
+          <Menu className="h-6 w-6 text-sidebar-foreground" />
+        )}
+      </button>
 
-      {/* User Section */}
-      <div className="border-t border-sidebar-border p-4">
-        <NavLink
-          to="/settings"
-          className={({ isActive }) =>
-            cn('nav-item', isActive && 'nav-item-active')
-          }
-        >
-          <Settings className="h-5 w-5" />
-          <span className="font-medium">Settings</span>
-        </NavLink>
-      </div>
-    </aside>
+      {/* Sidebar */}
+      <aside className={cn(
+        "fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border transition-transform duration-300",
+        "md:translate-x-0",
+        isMobileOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
+        {/* Logo */}
+        <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-6">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sidebar-primary">
+            <FileText className="h-5 w-5 text-sidebar-primary-foreground" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-sidebar-foreground">ProjectHub</h1>
+            <p className="text-xs text-sidebar-foreground/60">Management Portal</p>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 space-y-1 overflow-y-auto p-4 scrollbar-thin">
+          {navigation.map(item => renderNavItem(item))}
+        </nav>
+
+        {/* User Section */}
+        <div className="border-t border-sidebar-border p-4">
+          <NavLink
+            to="/settings"
+            onClick={closeMobileSidebar}
+            className={({ isActive }) =>
+              cn('nav-item', isActive && 'nav-item-active')
+            }
+          >
+            <Settings className="h-5 w-5" />
+            <span className="font-medium">Settings</span>
+          </NavLink>
+        </div>
+      </aside>
+    </>
   );
 };

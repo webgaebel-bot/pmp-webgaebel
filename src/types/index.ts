@@ -12,10 +12,12 @@ export interface User {
 }
 
 export interface Role {
-  id: string;
+  id: string | number;
   name: string;
   description?: string;
-  permissions: Permission[];
+  permissions?: Permission[];
+  permission_count?: number;
+  created_at?: string;
 }
 
 export interface Permission {

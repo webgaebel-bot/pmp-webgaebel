@@ -7,7 +7,7 @@ import { Loader2 } from 'lucide-react';
 
 export const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   if (isLoading) {
     return (
@@ -27,10 +27,10 @@ export const MainLayout: React.FC = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* Sidebar */}
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
 
       {/* Main Content */}
-      <div className="lg:pl-64">
+      <div className={sidebarOpen ? 'lg:pl-64' : ''}>
         <Topbar onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
         
         <main className="p-6">
