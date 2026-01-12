@@ -282,7 +282,7 @@ class ApiService {
   }
 
   async assignPermissions(roleId: string, permissionIds: string[]) {
-    return this.request(`/role/${roleId}/permissionsassign`, {
+    return this.request(`/${roleId}/permissionsassign`, {
       method: 'POST',
       body: JSON.stringify({ permissionIds }),
     });

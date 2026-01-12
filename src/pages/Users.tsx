@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Plus,
   Search,
@@ -10,6 +10,7 @@ import {
   Mail,
   Clock,
   Shield,
+  ArrowLeft,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -102,11 +103,13 @@ const mockRoles: Role[] = [
 
 const Users: React.FC = () => {
   const navigate = useNavigate();
+  const { id } = useParams<{ id?: string }>();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>(mockRoles);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -144,6 +147,13 @@ const Users: React.FC = () => {
 
     fetchData();
   }, []);
+
+  useEffect(() => {
+    if (id && users.length > 0) {
+      const user = users.find(u => u.id === id);
+      setSelectedUser(user || null);
+    }
+  }, [id, users]);
 
   const filteredUsers = users.filter((user) => {
     const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -211,6 +221,92 @@ const Users: React.FC = () => {
 
   if (isLoading) {
     return <LoadingPage text="Loading users..." />;
+  }
+
+  // Show detail view if id parameter exists
+  if (id && selectedUser) {
+    return (
+      <div className="space-y-6">
+        <button
+          onClick={() => navigate('/users')}
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Users
+        </button>
+
+        <div className="bg-card rounded-lg border border-border p-8 shadow-card">
+          <div className="flex items-start gap-6">
+            <Avatar className="h-24 w-24">
+              <AvatarImage src={selectedUser.avatar ? `${IMAGE_BASE_URL}${selectedUser.avatar}` : ''} />
+              <AvatarFallback className="text-xl">{selectedUser.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+            </Avatar>
+
+            <div className="flex-1">
+              <h1 className="text-3xl font-bold mb-2">{selectedUser.name}</h1>
+              <div className="flex items-center gap-3 mb-4">
+                <StatusBadge status={selectedUser.status} />
+                <Badge variant="secondary" className="flex items-center gap-1">
+                  <Shield className="h-3 w-3" />
+                  {selectedUser.role?.name || 'No Role'}
+                </Badge>
+              </div>
+
+              {canEdit && (
+                <Button className="bg-accent hover:bg-accent/90">
+                  <Edit className="mr-2 h-4 w-4" />
+                  Edit User
+                </Button>
+              )}
+            </div>
+
+            {canDelete && (
+              <Button variant="destructive" size="icon">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-8 pt-8 border-t border-border">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
+                <Mail className="h-4 w-4" />
+                Email
+              </p>
+              <p className="text-sm font-medium">{selectedUser.email}</p>
+            </div>
+
+            <div>
+              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                Last Login
+              </p>
+              <p className="text-sm font-medium">
+                {selectedUser.last_login ? format(new Date(selectedUser.last_login), 'MMM dd, yyyy HH:mm') : 'Never'}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Member Since</p>
+              <p className="text-sm font-medium">
+                {selectedUser.created_at ? format(new Date(selectedUser.created_at), 'MMM dd, yyyy') : 'Unknown'}
+              </p>
+            </div>
+          </div>
+
+          {selectedUser.permissions && selectedUser.permissions.length > 0 && (
+            <div className="mt-8 pt-8 border-t border-border">
+              <h3 className="text-sm font-semibold text-muted-foreground mb-4">Permissions</h3>
+              <div className="flex flex-wrap gap-2">
+                {selectedUser.permissions.map((permission, idx) => (
+                  <Badge key={idx} variant="outline">{permission}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (

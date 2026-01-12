@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import {
   Plus,
   Search,
@@ -16,6 +16,7 @@ import {
   XCircle,
   UserPlus,
   Loader2,
+  ArrowLeft,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -72,12 +73,14 @@ const statusIcons = {
 const Tasks: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { id } = useParams<{ id?: string }>();
   const { hasPermission, user } = useAuth();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [selectedTaskDetail, setSelectedTaskDetail] = useState<Task | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -108,6 +111,13 @@ const Tasks: React.FC = () => {
   useEffect(() => {
     fetchTasks();
   }, [activeTab]);
+
+  useEffect(() => {
+    if (id && tasks.length > 0) {
+      const task = tasks.find(t => t.id === id);
+      setSelectedTaskDetail(task || null);
+    }
+  }, [id, tasks]);
 
   const fetchTasks = async () => {
     setIsLoading(true);
@@ -278,6 +288,126 @@ const Tasks: React.FC = () => {
 
   if (isLoading) {
     return <LoadingPage text="Loading tasks..." />;
+  }
+
+  // Show detail view if id parameter exists
+  if (id && selectedTaskDetail) {
+    return (
+      <div className="space-y-6">
+        <button
+          onClick={() => navigate('/tasks')}
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Tasks
+        </button>
+
+        <div className="bg-card rounded-lg border border-border p-8 shadow-card">
+          <div className="flex items-start justify-between mb-6">
+            <div className="flex-1">
+              <h1 className="text-3xl font-bold mb-2">{selectedTaskDetail.title}</h1>
+              <div className="flex items-center gap-2">
+                <StatusBadge status={selectedTaskDetail.status} />
+                <PriorityBadge priority={selectedTaskDetail.priority} />
+              </div>
+            </div>
+            {canEdit && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => navigate(`/tasks/${selectedTaskDetail.id}/edit`)}>
+                    <Edit className="mr-2 h-4 w-4" /> Edit
+                  </DropdownMenuItem>
+                  {canDelete && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => {
+                          handleDeleteTask(selectedTaskDetail.id);
+                          navigate('/tasks');
+                        }}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="md:col-span-2">
+              <h2 className="text-sm font-semibold text-muted-foreground mb-3">Description</h2>
+              <p className="text-foreground whitespace-pre-wrap mb-8">
+                {selectedTaskDetail.description || 'No description provided'}
+              </p>
+
+              {selectedTaskDetail.comments_count && selectedTaskDetail.comments_count > 0 && (
+                <div>
+                  <h2 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Comments ({selectedTaskDetail.comments_count})
+                  </h2>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Project</p>
+                <p className="text-sm font-medium">{selectedTaskDetail.project?.name || 'No project'}</p>
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Due Date</p>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <p className="text-sm font-medium">
+                    {selectedTaskDetail.due_date ? format(new Date(selectedTaskDetail.due_date), 'MMM dd, yyyy') : 'Not set'}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Assigned To</p>
+                {selectedTaskDetail.assignee ? (
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={selectedTaskDetail.assignee.avatar ? `${IMAGE_BASE_URL}${selectedTaskDetail.assignee.avatar}` : ''} />
+                      <AvatarFallback>{selectedTaskDetail.assignee.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-sm font-medium">{selectedTaskDetail.assignee.name}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Unassigned</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Reporter</p>
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={selectedTaskDetail.reporter?.avatar ? `${IMAGE_BASE_URL}${selectedTaskDetail.reporter.avatar}` : ''} />
+                    <AvatarFallback>{selectedTaskDetail.reporter?.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-sm font-medium">{selectedTaskDetail.reporter?.name}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

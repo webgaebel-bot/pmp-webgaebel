@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Plus,
   Search,
@@ -10,6 +10,7 @@ import {
   Trash2,
   Eye,
   Loader2,
+  ArrowLeft,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -52,12 +53,14 @@ import type { Project } from '@/types';
 
 const Projects: React.FC = () => {
   const navigate = useNavigate();
+  const { id } = useParams<{ id?: string }>();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
@@ -77,6 +80,13 @@ const Projects: React.FC = () => {
   useEffect(() => {
     fetchProjects();
   }, []);
+
+  useEffect(() => {
+    if (id && projects.length > 0) {
+      const project = projects.find(p => p.id === id);
+      setSelectedProject(project || null);
+    }
+  }, [id, projects]);
 
   const fetchProjects = async () => {
     setIsLoading(true);
@@ -150,6 +160,107 @@ const Projects: React.FC = () => {
 
   if (isLoading) {
     return <LoadingPage text="Loading projects..." />;
+  }
+
+  // Show detail view if id parameter exists
+  if (id && selectedProject) {
+    return (
+      <div className="space-y-6">
+        <button
+          onClick={() => navigate('/projects')}
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Projects
+        </button>
+
+        <div className="bg-card rounded-lg border border-border p-8 shadow-card">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h1 className="text-3xl font-bold">{selectedProject.name}</h1>
+              <div className="flex items-center gap-2 mt-2">
+                <StatusBadge status={selectedProject.status} />
+                <PriorityBadge priority={selectedProject.priority} />
+              </div>
+            </div>
+            {canEdit && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => navigate(`/projects/${selectedProject.id}/edit`)}>
+                    <Edit className="mr-2 h-4 w-4" /> Edit
+                  </DropdownMenuItem>
+                  {canDelete && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => handleDeleteProject(selectedProject.id)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div>
+              <h2 className="text-sm font-semibold text-muted-foreground mb-3">Description</h2>
+              <p className="text-foreground whitespace-pre-wrap">
+                {selectedProject.description || 'No description provided'}
+              </p>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground mb-2">Progress</h3>
+                <ProgressBar value={selectedProject.progress || 0} />
+                <p className="text-xs text-muted-foreground mt-1">{selectedProject.progress || 0}% complete</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Start Date</p>
+                  <p className="text-sm font-medium">
+                    {selectedProject.start_date ? format(new Date(selectedProject.start_date), 'MMM dd, yyyy') : 'Not set'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">End Date</p>
+                  <p className="text-sm font-medium">
+                    {selectedProject.end_date ? format(new Date(selectedProject.end_date), 'MMM dd, yyyy') : 'Not set'}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Project Owner
+                </h3>
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-10 w-10">
+                    <AvatarImage src={selectedProject.owner?.avatar ? `${IMAGE_BASE_URL}${selectedProject.owner.avatar}` : ''} />
+                    <AvatarFallback>{selectedProject.owner?.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="font-medium">{selectedProject.owner?.name}</p>
+                    <p className="text-xs text-muted-foreground">{selectedProject.owner?.email}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
