@@ -157,7 +157,7 @@ const Roles: React.FC = () => {
     
     setIsSaving(true);
     try {
-      await api.updateRole(selectedRole.id, editRole);
+      await api.updateRole(String(selectedRole.id), editRole);
       toast({
         title: 'Success',
         description: 'Role updated successfully.',
