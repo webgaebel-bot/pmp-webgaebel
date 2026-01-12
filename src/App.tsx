@@ -9,8 +9,11 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Projects from "@/pages/Projects";
+import ProjectDetail from "@/pages/ProjectDetail";
 import Tasks from "@/pages/Tasks";
+import TaskDetail from "@/pages/TaskDetail";
 import Users from "@/pages/Users";
+import UserDetail from "@/pages/UserDetail";
 import Roles from "@/pages/Roles";
 import Reports from "@/pages/Reports";
 import Activity from "@/pages/Activity";
@@ -53,7 +56,7 @@ const App = () => (
               } />
               <Route path="/projects/:id" element={
                 <ProtectedRoute permission="projects.view">
-                  <Projects />
+                  <ProjectDetail />
                 </ProtectedRoute>
               } />
               <Route path="/tasks" element={
@@ -68,7 +71,7 @@ const App = () => (
               } />
               <Route path="/tasks/:id" element={
                 <ProtectedRoute permission="tasks.view">
-                  <Tasks />
+                  <TaskDetail />
                 </ProtectedRoute>
               } />
               <Route path="/users" element={
@@ -78,7 +81,7 @@ const App = () => (
               } />
               <Route path="/users/:id" element={
                 <ProtectedRoute permission="users.view">
-                  <Users />
+                  <UserDetail />
                 </ProtectedRoute>
               } />
               <Route path="/roles" element={

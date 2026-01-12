@@ -139,16 +139,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button
                   onClick={() => toggleExpanded(item.path)}
                   className={cn(
-                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors mx-auto',
+                    'flex h-11 w-11 items-center justify-center rounded-lg transition-colors mx-auto my-1',
                     'hover:bg-sidebar-muted text-sidebar-foreground/80 hover:text-sidebar-foreground',
                     active && 'bg-sidebar-muted text-sidebar-foreground'
                   )}
                   aria-label={item.label}
                 >
-                  <Icon className="h-5 w-5" />
+                  <Icon className="h-5 w-5 flex-shrink-0" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right" className="flex items-center gap-2">
+              <TooltipContent side="right" className="flex items-center gap-2 z-50">
                 {item.label}
               </TooltipContent>
             </Tooltip>
@@ -165,17 +165,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={handleNavClick}
                 className={({ isActive }) =>
                   cn(
-                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors mx-auto',
+                    'flex h-11 w-11 items-center justify-center rounded-lg transition-colors mx-auto my-1',
                     'hover:bg-sidebar-muted text-sidebar-foreground/80 hover:text-sidebar-foreground',
                     isActive && 'bg-sidebar-primary text-sidebar-primary-foreground'
                   )
                 }
                 aria-label={item.label}
               >
-                <Icon className="h-5 w-5" />
+                <Icon className="h-5 w-5 flex-shrink-0" />
               </NavLink>
             </TooltipTrigger>
-            <TooltipContent side="right" className="flex items-center gap-2">
+            <TooltipContent side="right" className="flex items-center gap-2 z-50">
               {item.label}
             </TooltipContent>
           </Tooltip>
@@ -298,7 +298,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Navigation */}
         <nav className={cn(
           'flex-1 overflow-y-auto scrollbar-thin py-4',
-          isCollapsed && !isMobile ? 'px-2 space-y-2' : 'px-4 space-y-1'
+          isCollapsed && !isMobile ? 'px-2 space-y-3' : 'px-4 space-y-1'
         )}>
           {navigation.map(item => renderNavItem(item))}
         </nav>
@@ -318,17 +318,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={handleNavClick}
                     className={({ isActive }) =>
                       cn(
-                        'flex h-10 w-10 items-center justify-center rounded-lg transition-colors mx-auto mb-2',
+                        'flex h-11 w-11 items-center justify-center rounded-lg transition-colors mx-auto mb-3',
                         'hover:bg-sidebar-muted text-sidebar-foreground/80 hover:text-sidebar-foreground',
                         isActive && 'bg-sidebar-primary text-sidebar-primary-foreground'
                       )
                     }
                     aria-label="Settings"
                   >
-                    <Settings className="h-5 w-5" />
+                    <Settings className="h-5 w-5 flex-shrink-0" />
                   </NavLink>
                 </TooltipTrigger>
-                <TooltipContent side="right">Settings</TooltipContent>
+                <TooltipContent side="right" className="z-50">Settings</TooltipContent>
               </Tooltip>
             </TooltipProvider>
           ) : (
@@ -355,12 +355,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={onToggleCollapse}
                     className={cn(
                       'w-full transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-muted',
-                      isCollapsed ? 'h-10 w-10 mx-auto' : 'justify-start gap-2'
+                      isCollapsed ? 'h-11 w-11 mx-auto' : 'justify-start gap-2'
                     )}
                     aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                   >
                     {isCollapsed ? (
-                      <ChevronRight className="h-5 w-5" />
+                      <ChevronRight className="h-5 w-5 flex-shrink-0" />
                     ) : (
                       <>
                         <ChevronLeft className="h-5 w-5" />
@@ -370,7 +370,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </Button>
                 </TooltipTrigger>
                 {isCollapsed && (
-                  <TooltipContent side="right">Expand sidebar</TooltipContent>
+                  <TooltipContent side="right" className="z-50">Expand sidebar</TooltipContent>
                 )}
               </Tooltip>
             </TooltipProvider>
