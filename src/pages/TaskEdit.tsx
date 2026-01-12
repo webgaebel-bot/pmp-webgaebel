@@ -291,13 +291,13 @@ const TaskEdit: React.FC = () => {
 
             <div className="space-y-2">
               <Label htmlFor="assignee">Assigned To</Label>
-              <Select value={assigneeId} onValueChange={setAssigneeId}>
+              <Select value={assigneeId || "unassigned"} onValueChange={(val) => setAssigneeId(val === "unassigned" ? "" : val)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select assignee" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Unassigned</SelectItem>
-                  {users.map((user) => (
+                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                  {users.filter(user => user.id).map((user) => (
                     <SelectItem key={user.id} value={String(user.id)}>
                       {user.name}
                     </SelectItem>
