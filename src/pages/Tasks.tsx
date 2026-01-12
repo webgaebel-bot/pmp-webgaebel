@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Plus,
   Search,
-  Filter,
   MoreVertical,
   Calendar,
-  User,
   Edit,
   Trash2,
   Eye,
@@ -16,6 +14,8 @@ import {
   Clock,
   AlertCircle,
   XCircle,
+  UserPlus,
+  Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -45,10 +45,10 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import {
   Tabs,
-  TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs';
@@ -59,86 +59,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
-import type { Task } from '@/types';
-
-// Mock data
-const mockTasks: Task[] = [
-  {
-    id: '1',
-    title: 'Implement user authentication',
-    description: 'Add login, logout, and session management',
-    status: 'done',
-    priority: 'high',
-    project: { id: '1', name: 'E-commerce Platform' } as any,
-    assignee: { id: '1', name: 'Sarah Johnson', email: 'sarah@example.com' } as any,
-    reporter: { id: '2', name: 'Mike Chen' } as any,
-    due_date: '2024-03-15',
-    created_at: '2024-02-20',
-    updated_at: '2024-03-10',
-    comments_count: 5,
-    attachments_count: 2,
-  },
-  {
-    id: '2',
-    title: 'Design product listing page',
-    description: 'Create responsive product grid with filters',
-    status: 'in_progress',
-    priority: 'high',
-    project: { id: '1', name: 'E-commerce Platform' } as any,
-    assignee: { id: '3', name: 'Emily Davis', email: 'emily@example.com' } as any,
-    reporter: { id: '2', name: 'Mike Chen' } as any,
-    due_date: '2024-03-20',
-    created_at: '2024-02-25',
-    updated_at: '2024-03-12',
-    comments_count: 3,
-    attachments_count: 1,
-  },
-  {
-    id: '3',
-    title: 'Setup payment gateway',
-    description: 'Integrate Stripe payment processing',
-    status: 'todo',
-    priority: 'critical',
-    project: { id: '1', name: 'E-commerce Platform' } as any,
-    assignee: { id: '4', name: 'James Wilson', email: 'james@example.com' } as any,
-    reporter: { id: '1', name: 'Sarah Johnson' } as any,
-    due_date: '2024-03-25',
-    created_at: '2024-03-01',
-    updated_at: '2024-03-05',
-    comments_count: 0,
-    attachments_count: 0,
-  },
-  {
-    id: '4',
-    title: 'Mobile app navigation',
-    description: 'Implement bottom navigation and drawer menu',
-    status: 'review',
-    priority: 'medium',
-    project: { id: '2', name: 'Mobile App v2.0' } as any,
-    assignee: { id: '2', name: 'Mike Chen', email: 'mike@example.com' } as any,
-    reporter: { id: '3', name: 'Emily Davis' } as any,
-    due_date: '2024-03-18',
-    created_at: '2024-02-28',
-    updated_at: '2024-03-14',
-    comments_count: 8,
-    attachments_count: 4,
-  },
-  {
-    id: '5',
-    title: 'API rate limiting',
-    description: 'Add rate limiting to prevent abuse',
-    status: 'blocked',
-    priority: 'high',
-    project: { id: '3', name: 'API Gateway' } as any,
-    assignee: { id: '1', name: 'Sarah Johnson', email: 'sarah@example.com' } as any,
-    reporter: { id: '4', name: 'James Wilson' } as any,
-    due_date: '2024-03-12',
-    created_at: '2024-02-15',
-    updated_at: '2024-03-08',
-    comments_count: 12,
-    attachments_count: 1,
-  },
-];
+import type { Task, User } from '@/types';
 
 const statusIcons = {
   todo: Clock,
@@ -150,16 +71,22 @@ const statusIcons = {
 
 const Tasks: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { hasPermission, user } = useAuth();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeTab, setActiveTab] = useState(location.pathname === '/tasks/my' ? 'my' : 'all');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState('');
   const [newTask, setNewTask] = useState({
     title: '',
     description: '',
@@ -171,24 +98,44 @@ const Tasks: React.FC = () => {
   const canCreate = hasPermission('tasks.create');
   const canEdit = hasPermission('tasks.edit');
   const canDelete = hasPermission('tasks.delete');
+  const canAssign = hasPermission('tasks.assign');
 
   useEffect(() => {
-    const fetchTasks = async () => {
-      setIsLoading(true);
-      try {
-        const response: any = activeTab === 'my'
-          ? await api.getMyTasks()
-          : await api.getTasks();
-        setTasks(response.data || mockTasks);
-      } catch (error) {
-        setTasks(mockTasks);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    // Update active tab based on URL
+    setActiveTab(location.pathname === '/tasks/my' ? 'my' : 'all');
+  }, [location.pathname]);
 
+  useEffect(() => {
     fetchTasks();
   }, [activeTab]);
+
+  const fetchTasks = async () => {
+    setIsLoading(true);
+    try {
+      const response: any = activeTab === 'my'
+        ? await api.getMyTasks()
+        : await api.getTasks();
+      
+      const tasksData = response?.data || response || [];
+      setTasks(Array.isArray(tasksData) ? tasksData : []);
+    } catch (error) {
+      console.error('Failed to fetch tasks:', error);
+      setTasks([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const response: any = await api.getUsers();
+      const usersData = response?.data || response || [];
+      setUsers(Array.isArray(usersData) ? usersData : []);
+    } catch (error) {
+      console.error('Failed to fetch users:', error);
+      setUsers([]);
+    }
+  };
 
   const filteredTasks = tasks.filter((task) => {
     const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -197,6 +144,11 @@ const Tasks: React.FC = () => {
     const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
     return matchesSearch && matchesStatus && matchesPriority;
   });
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    navigate(value === 'my' ? '/tasks/my' : '/tasks');
+  };
 
   const handleStatusChange = async (taskId: string, newStatus: string) => {
     try {
@@ -250,6 +202,16 @@ const Tasks: React.FC = () => {
   };
 
   const handleCreateTask = async () => {
+    if (!newTask.title.trim()) {
+      toast({
+        title: 'Validation Error',
+        description: 'Task title is required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsSaving(true);
     try {
       await api.createTask(newTask);
       toast({
@@ -258,23 +220,60 @@ const Tasks: React.FC = () => {
       });
       setIsCreateDialogOpen(false);
       setNewTask({ title: '', description: '', priority: 'medium', due_date: '', project_id: '' });
-      // Refresh tasks
-      const response: any = await api.getTasks();
-      setTasks(response.data || mockTasks);
+      fetchTasks();
     } catch (error: any) {
       toast({
         title: 'Error',
         description: error.message || 'Failed to create task.',
         variant: 'destructive',
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const tasksByStatus = {
-    todo: filteredTasks.filter(t => t.status === 'todo'),
-    in_progress: filteredTasks.filter(t => t.status === 'in_progress'),
-    review: filteredTasks.filter(t => t.status === 'review'),
-    done: filteredTasks.filter(t => t.status === 'done'),
+  const handleOpenAssignDialog = async (task: Task) => {
+    setSelectedTask(task);
+    setSelectedUserId(task.assignee?.id || '');
+    await fetchUsers();
+    setIsAssignDialogOpen(true);
+  };
+
+  const handleAssignTask = async () => {
+    if (!selectedTask || !selectedUserId) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a user to assign.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsSaving(true);
+    try {
+      await api.assignTask(selectedTask.id, selectedUserId);
+      const assignedUser = users.find(u => u.id === selectedUserId);
+      setTasks(tasks.map(t => 
+        t.id === selectedTask.id 
+          ? { ...t, assignee: assignedUser } 
+          : t
+      ));
+      toast({
+        title: 'Success',
+        description: 'Task assigned successfully.',
+      });
+      setIsAssignDialogOpen(false);
+      setSelectedTask(null);
+      setSelectedUserId('');
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to assign task.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (isLoading) {
@@ -298,7 +297,7 @@ const Tasks: React.FC = () => {
       />
 
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="all">All Tasks</TabsTrigger>
           <TabsTrigger value="my">My Tasks</TabsTrigger>
@@ -347,8 +346,14 @@ const Tasks: React.FC = () => {
       {filteredTasks.length === 0 ? (
         <EmptyState
           title="No tasks found"
-          description="Create your first task to get started."
-          action={canCreate ? { label: 'Create Task', onClick: () => setIsCreateDialogOpen(true) } : undefined}
+          description={
+            tasks.length === 0 
+              ? activeTab === 'my' 
+                ? "You don't have any tasks assigned yet."
+                : "No tasks have been created yet."
+              : "No tasks match your search criteria."
+          }
+          action={canCreate && tasks.length === 0 ? { label: 'Create Task', onClick: () => setIsCreateDialogOpen(true) } : undefined}
         />
       ) : (
         <div className="bg-card rounded-lg border border-border shadow-card overflow-hidden">
@@ -367,7 +372,7 @@ const Tasks: React.FC = () => {
             </thead>
             <tbody>
               {filteredTasks.map((task) => {
-                const StatusIcon = statusIcons[task.status];
+                const StatusIcon = statusIcons[task.status] || Clock;
                 return (
                   <tr key={task.id} className="group">
                     <td>
@@ -375,6 +380,7 @@ const Tasks: React.FC = () => {
                         checked={task.status === 'done'}
                         onCheckedChange={() => handleStatusChange(task.id, task.status === 'done' ? 'todo' : 'done')}
                         className="data-[state=checked]:bg-accent data-[state=checked]:border-accent"
+                        disabled={!canEdit}
                       />
                     </td>
                     <td>
@@ -409,7 +415,7 @@ const Tasks: React.FC = () => {
                     </td>
                     <td>
                       <span className="text-sm text-muted-foreground">
-                        {task.project?.name}
+                        {task.project?.name || '-'}
                       </span>
                     </td>
                     <td>
@@ -474,6 +480,11 @@ const Tasks: React.FC = () => {
                           <DropdownMenuItem onClick={() => navigate(`/tasks/${task.id}`)}>
                             <Eye className="mr-2 h-4 w-4" /> View Details
                           </DropdownMenuItem>
+                          {canAssign && (
+                            <DropdownMenuItem onClick={() => handleOpenAssignDialog(task)}>
+                              <UserPlus className="mr-2 h-4 w-4" /> Assign
+                            </DropdownMenuItem>
+                          )}
                           {canEdit && (
                             <DropdownMenuItem onClick={() => navigate(`/tasks/${task.id}/edit`)}>
                               <Edit className="mr-2 h-4 w-4" /> Edit
@@ -506,12 +517,15 @@ const Tasks: React.FC = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create New Task</DialogTitle>
+            <DialogDescription>
+              Add a new task to your project.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="title">Task Title</Label>
+              <Label htmlFor="task-title">Title <span className="text-destructive">*</span></Label>
               <Input
-                id="title"
+                id="task-title"
                 value={newTask.title}
                 onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
                 placeholder="Enter task title"
@@ -527,39 +541,112 @@ const Tasks: React.FC = () => {
                 rows={3}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="task-priority">Priority</Label>
-              <Select
-                value={newTask.priority}
-                onValueChange={(value) => setNewTask({ ...newTask, priority: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="task-due-date">Due Date</Label>
-              <Input
-                id="task-due-date"
-                type="date"
-                value={newTask.due_date}
-                onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="task-priority">Priority</Label>
+                <Select
+                  value={newTask.priority}
+                  onValueChange={(value) => setNewTask({ ...newTask, priority: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="task-due-date">Due Date</Label>
+                <Input
+                  id="task-due-date"
+                  type="date"
+                  value={newTask.due_date}
+                  onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)} disabled={isSaving}>
               Cancel
             </Button>
-            <Button onClick={handleCreateTask} className="bg-accent hover:bg-accent/90">
-              Create Task
+            <Button onClick={handleCreateTask} className="bg-accent hover:bg-accent/90" disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Task'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Task Dialog */}
+      <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign Task</DialogTitle>
+            <DialogDescription>
+              Select a team member to assign this task to.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="space-y-2">
+              <Label>Task</Label>
+              <div className="p-3 bg-muted rounded-lg">
+                <p className="font-medium">{selectedTask?.title}</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {selectedTask?.project?.name || 'No project'}
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2 mt-4">
+              <Label htmlFor="assign-user">Assign to <span className="text-destructive">*</span></Label>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a user" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-6 w-6">
+                          <AvatarImage src={user.avatar ? `${IMAGE_BASE_URL}${user.avatar}` : undefined} />
+                          <AvatarFallback className="text-xs">
+                            {user.name?.split(' ').map(n => n[0]).join('') || '?'}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span>{user.name}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button onClick={handleAssignTask} className="bg-accent hover:bg-accent/90" disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Assigning...
+                </>
+              ) : (
+                <>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Assign Task
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
