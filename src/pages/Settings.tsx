@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   User,
   Lock,
@@ -29,9 +29,12 @@ import type { User as UserType } from '@/types';
 const Settings: React.FC = () => {
   const { user, logout } = useAuth();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [profile, setProfile] = useState({
     name: '',
     email: '',
@@ -62,6 +65,11 @@ const Settings: React.FC = () => {
           phone: data?.phone || '',
           bio: data?.bio || '',
         });
+        if (data?.avatar) {
+          setAvatarPreview(`${IMAGE_BASE_URL}${data.avatar}`);
+        } else if (user?.avatar) {
+          setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
+        }
       } catch (error) {
         if (user) {
           setProfile({
@@ -70,6 +78,9 @@ const Settings: React.FC = () => {
             phone: '',
             bio: '',
           });
+          if (user.avatar) {
+            setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
+          }
         }
       } finally {
         setIsLoading(false);
@@ -78,6 +89,46 @@ const Settings: React.FC = () => {
 
     fetchProfile();
   }, [user]);
+
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Preview immediately
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setAvatarPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    // Upload the file
+    setIsUploadingAvatar(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('related_type', 'profile');
+      formData.append('related_id', String(user?.id || 'profile'));
+      
+      await api.uploadFile(formData);
+      
+      toast({
+        title: 'Success',
+        description: 'Profile image updated successfully.',
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to upload image.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
 
   const handleProfileUpdate = async () => {
     setIsSaving(true);
@@ -164,20 +215,42 @@ const Settings: React.FC = () => {
             <div className="flex items-center gap-6 mb-8">
               <div className="relative">
                 <Avatar className="h-24 w-24">
-                  <AvatarImage src={user?.avatar ? `${IMAGE_BASE_URL}${user.avatar}` : undefined} />
+                  <AvatarImage src={avatarPreview || (user?.avatar ? `${IMAGE_BASE_URL}${user.avatar}` : undefined)} />
                   <AvatarFallback className="bg-accent/20 text-accent text-2xl">
                     {user?.name?.split(' ').map(n => n[0]).join('') || 'U'}
                   </AvatarFallback>
                 </Avatar>
-                <button className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-sm">
+                {isUploadingAvatar && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full">
+                    <Loader2 className="h-6 w-6 animate-spin text-white" />
+                  </div>
+                )}
+                <button 
+                  onClick={handleAvatarClick}
+                  disabled={isUploadingAvatar}
+                  className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-sm hover:bg-accent/90 transition-colors disabled:opacity-50"
+                >
                   <Camera className="h-4 w-4" />
                 </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarChange}
+                  className="hidden"
+                />
               </div>
               <div>
                 <h4 className="font-medium">{user?.name}</h4>
                 <p className="text-sm text-muted-foreground">{user?.role?.name || 'Team Member'}</p>
-                <Button variant="outline" size="sm" className="mt-2">
-                  Change Avatar
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-2"
+                  onClick={handleAvatarClick}
+                  disabled={isUploadingAvatar}
+                >
+                  {isUploadingAvatar ? 'Uploading...' : 'Change Avatar'}
                 </Button>
               </div>
             </div>

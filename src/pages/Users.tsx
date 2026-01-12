@@ -17,6 +17,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingPage } from '@/components/common/LoadingSpinner';
+import { DeleteConfirmModal } from '@/components/common/DeleteConfirmModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -115,6 +116,9 @@ const Users: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [newUser, setNewUser] = useState({
     name: '',
     email: '',
@@ -181,20 +185,32 @@ const Users: React.FC = () => {
     }
   };
 
-  const handleDeleteUser = async (id: string) => {
+  const openDeleteModal = (user: User) => {
+    setUserToDelete(user);
+    setDeleteModalOpen(true);
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    setIsDeleting(true);
     try {
-      await api.deleteUser(id);
-      setUsers(users.filter(u => u.id !== id));
+      await api.deleteUser(String(userToDelete.id));
+      setUsers(users.filter(u => u.id !== userToDelete.id));
       toast({
         title: 'Success',
         description: 'User deleted successfully.',
       });
+      setDeleteModalOpen(false);
+      setUserToDelete(null);
     } catch (error: any) {
       toast({
         title: 'Error',
         description: error.message || 'Failed to delete user.',
         variant: 'destructive',
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -451,7 +467,7 @@ const Users: React.FC = () => {
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-destructive"
-                              onClick={() => handleDeleteUser(user.id)}
+                              onClick={() => openDeleteModal(user)}
                             >
                               <Trash2 className="mr-2 h-4 w-4" /> Delete
                             </DropdownMenuItem>
@@ -530,6 +546,20 @@ const Users: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          setDeleteModalOpen(false);
+          setUserToDelete(null);
+        }}
+        onConfirm={handleDeleteUser}
+        isDeleting={isDeleting}
+        title="Delete User"
+        description="This action cannot be undone. All user data will be permanently removed."
+        itemName={userToDelete?.name}
+      />
     </div>
   );
 };

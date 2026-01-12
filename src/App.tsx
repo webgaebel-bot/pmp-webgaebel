@@ -15,6 +15,7 @@ import TaskDetail from "@/pages/TaskDetail";
 import TaskEdit from "@/pages/TaskEdit";
 import Users from "@/pages/Users";
 import UserDetail from "@/pages/UserDetail";
+import UserEdit from "@/pages/UserEdit";
 import Roles from "@/pages/Roles";
 import Reports from "@/pages/Reports";
 import Activity from "@/pages/Activity";
@@ -89,6 +90,11 @@ const App = () => (
               <Route path="/users/:id" element={
                 <ProtectedRoute permission="users.view">
                   <UserDetail />
+                </ProtectedRoute>
+              } />
+              <Route path="/users/:id/edit" element={
+                <ProtectedRoute permission="users.edit">
+                  <UserEdit />
                 </ProtectedRoute>
               } />
               <Route path="/roles" element={

@@ -133,14 +133,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (isCollapsed && !isMobile) {
       if (hasChildren) {
         return (
-          <div key={item.path} className="flex justify-center">
+          <div key={item.path} className="flex justify-center my-1">
             <TooltipProvider delayDuration={0}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => toggleExpanded(item.path)}
                     className={cn(
-                      'flex h-12 w-12 items-center justify-center rounded-lg transition-colors',
+                      'flex h-10 w-10 min-h-[40px] items-center justify-center rounded-lg transition-colors',
                       'hover:bg-sidebar-muted text-sidebar-foreground/80 hover:text-sidebar-foreground',
                       active && 'bg-sidebar-muted text-sidebar-foreground'
                     )}
@@ -149,7 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Icon className="h-5 w-5 flex-shrink-0" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8} className="z-[100]">
+                <TooltipContent side="right" sideOffset={12} className="z-[9999]">
                   {item.label}
                 </TooltipContent>
               </Tooltip>
@@ -159,7 +159,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
 
       return (
-        <div key={item.path} className="flex justify-center">
+        <div key={item.path} className="flex justify-center my-1">
           <TooltipProvider delayDuration={0}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -168,7 +168,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onClick={handleNavClick}
                   className={({ isActive }) =>
                     cn(
-                      'flex h-12 w-12 items-center justify-center rounded-lg transition-colors',
+                      'flex h-10 w-10 min-h-[40px] items-center justify-center rounded-lg transition-colors',
                       'hover:bg-sidebar-muted text-sidebar-foreground/80 hover:text-sidebar-foreground',
                       isActive && 'bg-sidebar-primary text-sidebar-primary-foreground'
                     )
@@ -178,7 +178,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Icon className="h-5 w-5 flex-shrink-0" />
                 </NavLink>
               </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8} className="z-[100]">
+              <TooltipContent side="right" sideOffset={12} className="z-[9999]">
                 {item.label}
               </TooltipContent>
             </Tooltip>
@@ -302,7 +302,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Navigation */}
         <nav className={cn(
           'flex-1 overflow-y-auto scrollbar-thin py-4',
-          isCollapsed && !isMobile ? 'px-1 space-y-2' : 'px-4 space-y-1'
+          isCollapsed && !isMobile ? 'px-2 space-y-3' : 'px-4 space-y-1'
         )}>
           {navigation.map(item => renderNavItem(item))}
         </nav>
@@ -314,7 +314,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}>
           {/* Settings Link */}
           {isCollapsed && !isMobile ? (
-            <div className="flex justify-center mb-2">
+            <div className="flex justify-center mb-3">
               <TooltipProvider delayDuration={0}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -323,7 +323,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={handleNavClick}
                       className={({ isActive }) =>
                         cn(
-                          'flex h-12 w-12 items-center justify-center rounded-lg transition-colors',
+                          'flex h-10 w-10 min-h-[40px] items-center justify-center rounded-lg transition-colors',
                           'hover:bg-sidebar-muted text-sidebar-foreground/80 hover:text-sidebar-foreground',
                           isActive && 'bg-sidebar-primary text-sidebar-primary-foreground'
                         )
@@ -333,7 +333,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <Settings className="h-5 w-5 flex-shrink-0" />
                     </NavLink>
                   </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8} className="z-[100]">Settings</TooltipContent>
+                  <TooltipContent side="right" sideOffset={12} className="z-[9999]">Settings</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
@@ -362,7 +362,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={onToggleCollapse}
                       className={cn(
                         'transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-muted',
-                        isCollapsed ? 'h-12 w-12' : 'w-full justify-start gap-2'
+                        isCollapsed ? 'h-10 w-10 min-h-[40px]' : 'w-full justify-start gap-2'
                       )}
                       aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                     >
@@ -377,7 +377,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </Button>
                   </TooltipTrigger>
                   {isCollapsed && (
-                    <TooltipContent side="right" sideOffset={8} className="z-[100]">Expand sidebar</TooltipContent>
+                    <TooltipContent side="right" sideOffset={12} className="z-[9999]">Expand sidebar</TooltipContent>
                   )}
                 </Tooltip>
               </TooltipProvider>
