@@ -14,12 +14,15 @@ import {
   Loader2,
   CheckSquare,
   User,
+  Eye,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingPage } from '@/components/common/LoadingSpinner';
+import { ImagePreviewModal } from '@/components/common/ImagePreviewModal';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -38,6 +41,7 @@ import {
 } from '@/components/ui/select';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
@@ -56,6 +60,8 @@ const TaskDetail: React.FC = () => {
   const [files, setFiles] = useState<FileAttachment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
 
   const canEdit = hasPermission('tasks.edit');
   const canDelete = hasPermission('tasks.delete');
@@ -174,6 +180,8 @@ const TaskDetail: React.FC = () => {
         title: 'Success',
         description: 'Comment added successfully.',
       });
+      // Scroll to new comment
+      setTimeout(scrollToBottom, 100);
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -253,6 +261,43 @@ const TaskDetail: React.FC = () => {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const isImageFile = (fileName: string) => {
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
+    return imageExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+  };
+
+  const handleDownload = async (file: FileAttachment) => {
+    try {
+      const fileUrl = file.url.startsWith('http') ? file.url : `${IMAGE_BASE_URL}${file.url}`;
+      const response = await fetch(fileUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to download file.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handlePreviewImage = (file: FileAttachment) => {
+    const fileUrl = file.url.startsWith('http') ? file.url : `${IMAGE_BASE_URL}${file.url}`;
+    setPreviewImage({ url: fileUrl, name: file.name });
+  };
+
+  // Scroll to bottom when new comment is added
+  const scrollToBottom = () => {
+    commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   if (isLoading) {
@@ -375,45 +420,48 @@ const TaskDetail: React.FC = () => {
               <h3 className="font-semibold">Comments ({comments.length})</h3>
             </div>
 
-            <div className="divide-y divide-border">
-              {comments.length === 0 ? (
-                <div className="p-6 text-center text-muted-foreground">
-                  No comments yet. Be the first to comment!
-                </div>
-              ) : (
-                comments.map((comment) => (
-                  <div key={comment.id} className="p-4">
-                    <div className="flex items-start gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={comment.user?.avatar ? `${IMAGE_BASE_URL}${comment.user.avatar}` : ''} />
-                        <AvatarFallback>{comment.user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?'}</AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-sm">{comment.user?.name || 'Unknown'}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {format(new Date(comment.created_at), 'MMM dd, yyyy HH:mm')}
-                            </span>
+            <ScrollArea className="max-h-80">
+              <div className="divide-y divide-border">
+                {comments.length === 0 ? (
+                  <div className="p-6 text-center text-muted-foreground">
+                    No comments yet. Be the first to comment!
+                  </div>
+                ) : (
+                  comments.map((comment) => (
+                    <div key={comment.id} className="p-4">
+                      <div className="flex items-start gap-3">
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={comment.user?.avatar ? `${IMAGE_BASE_URL}${comment.user.avatar}` : ''} />
+                          <AvatarFallback>{comment.user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?'}</AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">{comment.user?.name || 'Unknown'}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {format(new Date(comment.created_at), 'MMM dd, yyyy HH:mm')}
+                              </span>
+                            </div>
+                            {canDeleteComment && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                onClick={() => handleDeleteComment(comment.id)}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
                           </div>
-                          {canDeleteComment && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                              onClick={() => handleDeleteComment(comment.id)}
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          )}
+                          <p className="text-sm mt-1 whitespace-pre-wrap">{comment.content}</p>
                         </div>
-                        <p className="text-sm mt-1 whitespace-pre-wrap">{comment.content}</p>
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
-            </div>
+                  ))
+                )}
+                <div ref={commentsEndRef} />
+              </div>
+            </ScrollArea>
 
             {canComment && (
               <div className="p-4 border-t border-border">
@@ -481,7 +529,11 @@ const TaskDetail: React.FC = () => {
                   <div key={file.id} className="flex items-center justify-between p-4 hover:bg-muted/50 transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                        <FileText className="h-5 w-5 text-muted-foreground" />
+                        {isImageFile(file.name) ? (
+                          <ImageIcon className="h-5 w-5 text-muted-foreground" />
+                        ) : (
+                          <FileText className="h-5 w-5 text-muted-foreground" />
+                        )}
                       </div>
                       <div>
                         <p className="font-medium text-sm">{file.name}</p>
@@ -491,10 +543,13 @@ const TaskDetail: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="icon" asChild>
-                        <a href={file.url} download target="_blank" rel="noopener noreferrer">
-                          <Download className="h-4 w-4" />
-                        </a>
+                      {isImageFile(file.name) && (
+                        <Button variant="ghost" size="icon" onClick={() => handlePreviewImage(file)} title="View">
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" onClick={() => handleDownload(file)} title="Download">
+                        <Download className="h-4 w-4" />
                       </Button>
                       {canDeleteFiles && (
                         <Button
@@ -617,6 +672,14 @@ const TaskDetail: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Image Preview Modal */}
+      <ImagePreviewModal
+        isOpen={!!previewImage}
+        onClose={() => setPreviewImage(null)}
+        imageUrl={previewImage?.url || ''}
+        imageName={previewImage?.name}
+      />
     </div>
   );
 };

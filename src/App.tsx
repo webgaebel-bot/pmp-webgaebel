@@ -12,12 +12,14 @@ import Projects from "@/pages/Projects";
 import ProjectDetail from "@/pages/ProjectDetail";
 import Tasks from "@/pages/Tasks";
 import TaskDetail from "@/pages/TaskDetail";
+import TaskEdit from "@/pages/TaskEdit";
 import Users from "@/pages/Users";
 import UserDetail from "@/pages/UserDetail";
 import Roles from "@/pages/Roles";
 import Reports from "@/pages/Reports";
 import Activity from "@/pages/Activity";
 import Settings from "@/pages/Settings";
+import Notifications from "@/pages/Notifications";
 import Unauthorized from "@/pages/Unauthorized";
 import NotFound from "@/pages/NotFound";
 
@@ -74,6 +76,11 @@ const App = () => (
                   <TaskDetail />
                 </ProtectedRoute>
               } />
+              <Route path="/tasks/:id/edit" element={
+                <ProtectedRoute permission="tasks.update">
+                  <TaskEdit />
+                </ProtectedRoute>
+              } />
               <Route path="/users" element={
                 <ProtectedRoute permission="users.view">
                   <Users />
@@ -107,6 +114,11 @@ const App = () => (
               <Route path="/settings/profile" element={
                 <ProtectedRoute>
                   <Settings />
+                </ProtectedRoute>
+              } />
+              <Route path="/notifications" element={
+                <ProtectedRoute>
+                  <Notifications />
                 </ProtectedRoute>
               } />
             </Route>

@@ -169,7 +169,7 @@ export const Topbar: React.FC<TopbarProps> = ({
               </DropdownMenuItem>
             </div>
             <div className="border-t px-4 py-2">
-              <Button variant="ghost" size="sm" className="w-full text-accent">
+              <Button variant="ghost" size="sm" className="w-full text-accent" onClick={() => navigate('/notifications')}>
                 View all notifications
               </Button>
             </div>
