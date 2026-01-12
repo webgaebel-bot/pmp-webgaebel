@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 type StatusType = 'success' | 'warning' | 'error' | 'info' | 'default';
 
 interface StatusBadgeProps {
-  status: string;
+  status?: string;
   type?: StatusType;
   className?: string;
 }
@@ -39,6 +39,21 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   type,
   className,
 }) => {
+  // Handle undefined or null status
+  if (!status) {
+    return (
+      <span
+        className={cn(
+          'status-badge capitalize',
+          typeStyles.default,
+          className
+        )}
+      >
+        Unknown
+      </span>
+    );
+  }
+
   const statusType = type || statusTypeMap[status.toLowerCase()] || 'default';
   const displayStatus = status.replace(/_/g, ' ');
 

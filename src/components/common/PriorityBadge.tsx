@@ -1,9 +1,9 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
-import { AlertTriangle, ArrowDown, ArrowUp, Flame } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Flame, Minus } from 'lucide-react';
 
 interface PriorityBadgeProps {
-  priority: 'low' | 'medium' | 'high' | 'critical';
+  priority?: 'low' | 'medium' | 'high' | 'critical' | string;
   showIcon?: boolean;
   className?: string;
 }
@@ -31,12 +31,22 @@ const priorityConfig = {
   },
 };
 
+const defaultConfig = {
+  label: 'Unknown',
+  icon: Minus,
+  className: 'bg-muted text-muted-foreground',
+};
+
 export const PriorityBadge: React.FC<PriorityBadgeProps> = ({
   priority,
   showIcon = true,
   className,
 }) => {
-  const config = priorityConfig[priority];
+  // Handle undefined or unknown priority values
+  const config = priority && priorityConfig[priority as keyof typeof priorityConfig] 
+    ? priorityConfig[priority as keyof typeof priorityConfig] 
+    : defaultConfig;
+  
   const Icon = config.icon;
 
   return (
@@ -48,7 +58,7 @@ export const PriorityBadge: React.FC<PriorityBadgeProps> = ({
       )}
     >
       {showIcon && <Icon className="h-3.5 w-3.5" />}
-      {config.label}
+      {priority ? config.label : 'None'}
     </span>
   );
 };
