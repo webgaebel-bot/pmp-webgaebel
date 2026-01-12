@@ -257,7 +257,7 @@ const Users: React.FC = () => {
           <SelectContent>
             <SelectItem value="all">All Roles</SelectItem>
             {roles.map((role) => (
-              <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
+              <SelectItem key={role.id} value={String(role.id)}>{role.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -418,7 +418,7 @@ const Users: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   {roles.map((role) => (
-                    <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
+                    <SelectItem key={role.id} value={String(role.id)}>{role.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

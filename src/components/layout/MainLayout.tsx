@@ -1,13 +1,22 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSidebar } from '@/hooks/useSidebar';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { Loader2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const {
+    isCollapsed,
+    isMobileOpen,
+    isMobile,
+    toggleCollapsed,
+    toggleMobile,
+    closeMobile,
+  } = useSidebar();
 
   if (isLoading) {
     return (
@@ -24,27 +33,39 @@ export const MainLayout: React.FC = () => {
     return <Navigate to="/login" replace />;
   }
 
+  // Calculate main content margin based on sidebar state
+  const getMainMargin = () => {
+    if (isMobile) return 'ml-0';
+    return isCollapsed ? 'ml-16' : 'ml-64';
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Sidebar */}
-      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+      <Sidebar
+        isCollapsed={isCollapsed}
+        isMobileOpen={isMobileOpen}
+        isMobile={isMobile}
+        onToggleCollapse={toggleCollapsed}
+        onCloseMobile={closeMobile}
+      />
 
       {/* Main Content */}
-      <div className={sidebarOpen ? 'lg:pl-64' : ''}>
-        <Topbar onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
+      <div className={cn(
+        'transition-[margin] duration-300 ease-in-out',
+        getMainMargin()
+      )}>
+        <Topbar
+          isMobile={isMobile}
+          isCollapsed={isCollapsed}
+          onToggleMobile={toggleMobile}
+          onToggleCollapse={toggleCollapsed}
+        />
         
-        <main className="p-6">
+        <main className="p-4 md:p-6">
           <Outlet />
         </main>
       </div>
-
-      {/* Mobile Sidebar Overlay */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
     </div>
   );
 };

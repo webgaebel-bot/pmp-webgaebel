@@ -8,6 +8,8 @@ import {
   User,
   Settings,
   Menu,
+  PanelLeftClose,
+  PanelLeft,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -21,13 +23,28 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { IMAGE_BASE_URL } from '@/services/api';
+import { cn } from '@/lib/utils';
 
 interface TopbarProps {
-  onMenuClick?: () => void;
+  isMobile: boolean;
+  isCollapsed: boolean;
+  onToggleMobile: () => void;
+  onToggleCollapse: () => void;
 }
 
-export const Topbar: React.FC<TopbarProps> = ({ onMenuClick }) => {
+export const Topbar: React.FC<TopbarProps> = ({
+  isMobile,
+  isCollapsed,
+  onToggleMobile,
+  onToggleCollapse,
+}) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,17 +64,54 @@ export const Topbar: React.FC<TopbarProps> = ({ onMenuClick }) => {
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-card px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-card px-4 md:px-6">
       {/* Left Section */}
-      <div className="flex items-center gap-4">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="lg:hidden"
-          onClick={onMenuClick}
-        >
-          <Menu className="h-5 w-5" />
-        </Button>
+      <div className="flex items-center gap-2">
+        {/* Mobile Menu Toggle */}
+        {isMobile && (
+          <TooltipProvider delayDuration={0}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onToggleMobile}
+                  className="shrink-0"
+                  aria-label="Open menu"
+                >
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Open menu</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
+        {/* Desktop Collapse Toggle */}
+        {!isMobile && (
+          <TooltipProvider delayDuration={0}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onToggleCollapse}
+                  className="shrink-0"
+                  aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                >
+                  {isCollapsed ? (
+                    <PanelLeft className="h-5 w-5" />
+                  ) : (
+                    <PanelLeftClose className="h-5 w-5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
 
         {/* Search */}
         <div className="relative hidden md:block">
@@ -65,7 +119,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onMenuClick }) => {
           <Input
             type="search"
             placeholder="Search projects, tasks..."
-            className="w-80 pl-10 bg-secondary/50 border-0 focus-visible:ring-accent"
+            className="w-64 lg:w-80 pl-10 bg-secondary/50 border-0 focus-visible:ring-accent"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -73,7 +127,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onMenuClick }) => {
       </div>
 
       {/* Right Section */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 md:gap-3">
         {/* Notifications */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -127,7 +181,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onMenuClick }) => {
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="flex items-center gap-3 px-2 hover:bg-secondary"
+              className="flex items-center gap-2 md:gap-3 px-2 hover:bg-secondary"
             >
               <Avatar className="h-8 w-8">
                 <AvatarImage
@@ -138,13 +192,13 @@ export const Topbar: React.FC<TopbarProps> = ({ onMenuClick }) => {
                   {user?.name ? getInitials(user.name) : 'U'}
                 </AvatarFallback>
               </Avatar>
-              <div className="hidden md:block text-left">
+              <div className="hidden lg:block text-left">
                 <p className="text-sm font-medium">{user?.name || 'User'}</p>
                 <p className="text-xs text-muted-foreground">
                   {user?.role?.name || 'Member'}
                 </p>
               </div>
-              <ChevronDown className="h-4 w-4 text-muted-foreground hidden md:block" />
+              <ChevronDown className="h-4 w-4 text-muted-foreground hidden lg:block" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
