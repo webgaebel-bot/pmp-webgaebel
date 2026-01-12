@@ -23,6 +23,8 @@ import Settings from "@/pages/Settings";
 import Notifications from "@/pages/Notifications";
 import Unauthorized from "@/pages/Unauthorized";
 import NotFound from "@/pages/NotFound";
+import ContactAdmin from "@/pages/ContactAdmin";
+import ForgotPassword from "@/pages/ForgotPassword";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +45,8 @@ const App = () => (
           <Routes>
             {/* Public Routes */}
             <Route path="/login" element={<Login />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/contact-admin" element={<ContactAdmin />} />
             <Route path="/unauthorized" element={<Unauthorized />} />
             
             {/* Protected Routes */}
