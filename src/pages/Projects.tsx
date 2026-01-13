@@ -47,6 +47,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermission } from '@/hooks/usePermission';
+import { PermissionGuard } from '@/components/auth/PermissionGuard';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
 import type { Project } from '@/types';
@@ -54,7 +56,8 @@ import type { Project } from '@/types';
 const Projects: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
-  const { hasPermission } = useAuth();
+  const { user } = useAuth();
+  const permission = usePermission();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
@@ -73,9 +76,31 @@ const Projects: React.FC = () => {
     end_date: '',
   });
 
-  const canCreate = hasPermission('projects.create');
-  const canEdit = hasPermission('projects.edit');
-  const canDelete = hasPermission('projects.delete');
+  const getInitials = (name?: string) => {
+    if (!name) return 'U';
+    return name
+      .split(' ')
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  const canViewProjects = permission.canViewProjects();
+  const canCreate = permission.canCreateProject();
+  const canEdit = permission.canEditProject();
+  const canDelete = permission.canDeleteProject();
+
+  // Check if user has permission to view projects
+  if (!canViewProjects) {
+    return (
+      <EmptyState
+        title="Access Denied"
+        description="You don't have permission to view projects."
+        action={{ label: 'Go Back', onClick: () => navigate(-1) }}
+      />
+    );
+  }
 
   useEffect(() => {
     fetchProjects();
@@ -247,12 +272,13 @@ const Projects: React.FC = () => {
                 </h3>
                 <div className="flex items-center gap-3">
                   <Avatar className="h-10 w-10">
-                    <AvatarImage src={selectedProject.owner?.avatar ? `${IMAGE_BASE_URL}${selectedProject.owner.avatar}` : ''} />
-                    <AvatarFallback>{selectedProject.owner?.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+                    <AvatarImage src={selectedProject.owner?.avatar ? `${IMAGE_BASE_URL}${selectedProject.owner.avatar}` : undefined} />
+                    <AvatarFallback className="bg-accent/20 text-accent text-sm">{getInitials(selectedProject.created_by_name || selectedProject.owner?.name)}</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium">{selectedProject.owner?.name}</p>
-                    <p className="text-xs text-muted-foreground">{selectedProject.owner?.email}</p>
+                    <p className="font-medium">{selectedProject.created_by_name || selectedProject.owner?.name || 'Unassigned'}</p>
+                    <p className="text-xs text-muted-foreground">{selectedProject.created_by_name ? `Created by ${selectedProject.created_by_name}` : (selectedProject.owner?.email || '')}</p>
+                    <p className="text-xs text-muted-foreground">Members: {selectedProject.member_count ?? selectedProject.members?.length ?? 0}</p>
                   </div>
                 </div>
               </div>
@@ -402,13 +428,12 @@ const Projects: React.FC = () => {
               <div className="mt-4 pt-4 border-t border-border flex items-center">
                 <Avatar className="h-7 w-7">
                   <AvatarImage src={project.owner?.avatar ? `${IMAGE_BASE_URL}${project.owner.avatar}` : undefined} />
-                  <AvatarFallback className="bg-accent/20 text-accent text-xs">
-                    {project.owner?.name?.split(' ').map(n => n[0]).join('') || 'U'}
-                  </AvatarFallback>
+                  <AvatarFallback className="bg-accent/20 text-accent text-xs">{getInitials(project.created_by_name || project.owner?.name)}</AvatarFallback>
                 </Avatar>
-                <span className="ml-2 text-sm text-muted-foreground">
-                  {project.owner?.name || 'Unassigned'}
-                </span>
+                <div className="ml-2">
+                  <div className="text-sm font-medium">{project.created_by_name || project.owner?.name || 'Unassigned'}</div>
+                  <div className="text-xs text-muted-foreground">Members: {project.member_count ?? project.members?.length ?? 0}</div>
+                </div>
               </div>
             </div>
           ))}

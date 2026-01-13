@@ -46,6 +46,7 @@ import { Switch } from '@/components/ui/switch';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermission } from '@/hooks/usePermission';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
 import type { User, Role } from '@/types';
@@ -105,7 +106,7 @@ const mockRoles: Role[] = [
 const Users: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
-  const { hasPermission } = useAuth();
+  const permission = usePermission();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
@@ -116,6 +117,8 @@ const Users: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -127,9 +130,10 @@ const Users: React.FC = () => {
     status: 'active',
   });
 
-  const canCreate = hasPermission('users.create');
-  const canEdit = hasPermission('users.edit');
-  const canDelete = hasPermission('users.delete');
+  const canViewUsers = permission.canViewUsers();
+  const canCreate = permission.canCreateUser();
+  const canEdit = permission.canEditUser();
+  const canDelete = permission.canDeleteUser();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -163,9 +167,21 @@ const Users: React.FC = () => {
     const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.email.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || user.status === statusFilter;
-    const matchesRole = roleFilter === 'all' || user.role?.id === roleFilter;
+    const matchesRole = roleFilter === 'all' || 
+      (typeof user.role === 'string' ? user.role === roleFilter : user.role?.id === roleFilter);
     return matchesSearch && matchesStatus && matchesRole;
   });
+
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedUsers = filteredUsers.slice(startIndex, startIndex + itemsPerPage);
+
+  const getRoleDisplay = (user: User): string => {
+    if (typeof user.role === 'string') {
+      return user.role.split('_').map(word => word.charAt(0) + word.slice(1).toLowerCase()).join(' ');
+    }
+    return user.role?.name || 'No Role';
+  };
 
   const handleStatusToggle = async (userId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
@@ -239,6 +255,17 @@ const Users: React.FC = () => {
     return <LoadingPage text="Loading users..." />;
   }
 
+  // Check if user has permission to view users
+  if (!canViewUsers) {
+    return (
+      <EmptyState
+        title="Access Denied"
+        description="You don't have permission to view users."
+        action={{ label: 'Go Back', onClick: () => navigate(-1) }}
+      />
+    );
+  }
+
   // Show detail view if id parameter exists
   if (id && selectedUser) {
     return (
@@ -264,7 +291,7 @@ const Users: React.FC = () => {
                 <StatusBadge status={selectedUser.status} />
                 <Badge variant="secondary" className="flex items-center gap-1">
                   <Shield className="h-3 w-3" />
-                  {selectedUser.role?.name || 'No Role'}
+                {getRoleDisplay(selectedUser)}
                 </Badge>
               </div>
 
@@ -298,7 +325,7 @@ const Users: React.FC = () => {
                 Last Login
               </p>
               <p className="text-sm font-medium">
-                {selectedUser.last_login ? format(new Date(selectedUser.last_login), 'MMM dd, yyyy HH:mm') : 'Never'}
+                {(selectedUser as any).last_login_at ? format(new Date((selectedUser as any).last_login_at), 'MMM dd, yyyy HH:mm') : 'Never'}
               </p>
             </div>
 
@@ -348,11 +375,17 @@ const Users: React.FC = () => {
           <Input
             placeholder="Search users..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
             className="pl-10"
           />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter} onValueChange={(value) => {
+          setStatusFilter(value);
+          setCurrentPage(1);
+        }}>
           <SelectTrigger className="w-full sm:w-40">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -362,7 +395,10 @@ const Users: React.FC = () => {
             <SelectItem value="inactive">Inactive</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={roleFilter} onValueChange={setRoleFilter}>
+        <Select value={roleFilter} onValueChange={(value) => {
+          setRoleFilter(value);
+          setCurrentPage(1);
+        }}>
           <SelectTrigger className="w-full sm:w-44">
             <SelectValue placeholder="Role" />
           </SelectTrigger>
@@ -396,7 +432,7 @@ const Users: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.map((user) => (
+              {paginatedUsers.map((user) => (
                 <tr key={user.id} className="group">
                   <td>
                     <div className="flex items-center gap-3">
@@ -418,7 +454,7 @@ const Users: React.FC = () => {
                   <td>
                     <Badge variant="secondary" className="font-normal">
                       <Shield className="mr-1 h-3 w-3" />
-                      {user.role?.name || 'No Role'}
+                      {getRoleDisplay(user)}
                     </Badge>
                   </td>
                   <td>
@@ -436,8 +472,8 @@ const Users: React.FC = () => {
                   <td>
                     <div className="flex items-center gap-1 text-sm text-muted-foreground">
                       <Clock className="h-4 w-4" />
-                      {user.last_login
-                        ? format(new Date(user.last_login), 'MMM dd, yyyy HH:mm')
+                      {(user as any).last_login_at
+                        ? format(new Date((user as any).last_login_at), 'MMM dd, yyyy HH:mm')
                         : 'Never'}
                     </div>
                   </td>
@@ -480,6 +516,46 @@ const Users: React.FC = () => {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {filteredUsers.length > itemsPerPage && (
+        <div className="flex items-center justify-between bg-card rounded-lg border border-border p-4">
+          <div className="text-sm text-muted-foreground">
+            Showing {startIndex + 1} to {Math.min(startIndex + itemsPerPage, filteredUsers.length)} of {filteredUsers.length} users
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+            >
+              Previous
+            </Button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                <Button
+                  key={page}
+                  variant={currentPage === page ? "default" : "outline"}
+                  size="sm"
+                  className={currentPage === page ? "bg-accent hover:bg-accent/90" : ""}
+                  onClick={() => setCurrentPage(page)}
+                >
+                  {page}
+                </Button>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
 

@@ -1,21 +1,22 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import {
-  ArrowLeft,
-  MoreVertical,
-  Edit,
-  Trash2,
+import { 
+  Reply, 
+  ArrowLeft, 
+  CheckSquare, 
+  MoreVertical, 
+  Edit, 
+  Trash2, 
+  MessageSquare, 
+  Send, 
+  Loader2, 
+  FileText, 
+  Upload, 
+  Eye, 
+  Download, 
+  ImageIcon,
   Calendar,
-  MessageSquare,
-  FileText,
-  Upload,
-  Download,
-  Send,
-  Loader2,
-  CheckSquare,
-  User,
-  Eye,
-  Image as ImageIcon,
+  User
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -61,9 +62,11 @@ const TaskDetail: React.FC = () => {
   const [newComment, setNewComment] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [replyingToCommentId, setReplyingToCommentId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
   const commentsEndRef = useRef<HTMLDivElement>(null);
 
-  const canEdit = hasPermission('tasks.edit');
+  const canEdit = hasPermission('tasks.update');
   const canDelete = hasPermission('tasks.delete');
   const canComment = hasPermission('comments.create');
   const canDeleteComment = hasPermission('comments.delete');
@@ -88,7 +91,17 @@ const TaskDetail: React.FC = () => {
       ]);
 
       if (taskRes) {
-        setTask((taskRes as any).data || taskRes);
+        // Handle nested response structure
+        const taskData = (taskRes as any)?.data?.task || (taskRes as any)?.data || taskRes;
+        const projectData = (taskRes as any)?.data?.project;
+        
+        setTask({
+          ...taskData,
+          project: projectData,
+          // Normalize status and priority to lowercase
+          status: (taskData.status || 'todo').toLowerCase() as any,
+          priority: (taskData.priority || 'medium').toLowerCase() as any,
+        });
       }
       
       const commentsData = (commentsRes as any)?.data || commentsRes || [];
@@ -112,11 +125,11 @@ const TaskDetail: React.FC = () => {
     if (!id || !task) return;
     
     try {
-      await api.updateTaskStatus(id, newStatus);
-      setTask({ ...task, status: newStatus as Task['status'] });
+      await api.updateTaskStatus(id, newStatus.toLowerCase());
+      setTask({ ...task, status: newStatus.toLowerCase() as Task['status'] });
       toast({
         title: 'Status Updated',
-        description: `Task status changed to ${newStatus.replace('_', ' ')}.`,
+        description: `Task status changed to ${newStatus.replace(/_/g, ' ')}.`,
       });
     } catch (error: any) {
       toast({
@@ -131,8 +144,8 @@ const TaskDetail: React.FC = () => {
     if (!id || !task) return;
     
     try {
-      await api.updateTaskPriority(id, newPriority);
-      setTask({ ...task, priority: newPriority as Task['priority'] });
+      await api.updateTaskPriority(id, newPriority.toLowerCase());
+      setTask({ ...task, priority: newPriority.toLowerCase() as Task['priority'] });
       toast({
         title: 'Priority Updated',
         description: `Task priority changed to ${newPriority}.`,
@@ -186,6 +199,35 @@ const TaskDetail: React.FC = () => {
       toast({
         title: 'Error',
         description: error.message || 'Failed to add comment.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
+
+  const handleAddReply = async (parentCommentId: string) => {
+    if (!id || !replyText.trim()) return;
+    
+    setIsSubmittingComment(true);
+    try {
+      await api.addTaskComment(id, replyText.trim(), parentCommentId);
+      setReplyText('');
+      setReplyingToCommentId(null);
+      // Refresh comments
+      const commentsRes = await api.getTaskComments(id);
+      const commentsData = (commentsRes as any)?.data || commentsRes || [];
+      setComments(Array.isArray(commentsData) ? commentsData : []);
+      toast({
+        title: 'Success',
+        description: 'Reply added successfully.',
+      });
+      // Scroll to new reply
+      setTimeout(scrollToBottom, 100);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to add reply.',
         variant: 'destructive',
       });
     } finally {
@@ -270,17 +312,18 @@ const TaskDetail: React.FC = () => {
 
   const handleDownload = async (file: FileAttachment) => {
     try {
-      const fileUrl = file.url.startsWith('http') ? file.url : `${IMAGE_BASE_URL}${file.url}`;
+      const fileData = file as any;
+      const url = fileData.file_url || fileData.url || '';
+      const fileUrl = url.startsWith('http') ? url : `${IMAGE_BASE_URL}${url}`;
       const response = await fetch(fileUrl);
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = url;
+      link.href = window.URL.createObjectURL(blob);
       link.download = file.name;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(link.href);
     } catch (error) {
       toast({
         title: 'Error',
@@ -291,13 +334,26 @@ const TaskDetail: React.FC = () => {
   };
 
   const handlePreviewImage = (file: FileAttachment) => {
-    const fileUrl = file.url.startsWith('http') ? file.url : `${IMAGE_BASE_URL}${file.url}`;
-    setPreviewImage({ url: fileUrl, name: file.name });
+    const fileUrl = file as any;
+    const url = fileUrl.file_url || fileUrl.url || fileUrl.path || '';
+    if (!url) return;
+    const fullUrl = url.startsWith('http') ? url : `${IMAGE_BASE_URL}${url}`;
+    setPreviewImage({ url: fullUrl, name: file.name });
   };
 
   // Scroll to bottom when new comment is added
   const scrollToBottom = () => {
     commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Get replies for a comment
+  const getReplies = (parentId: string) => {
+    return comments.filter(c => (c as any).parent_id === parentId);
+  };
+
+  // Get only top-level comments (no parent_id)
+  const getTopLevelComments = () => {
+    return comments.filter(c => !(c as any).parent_id);
   };
 
   if (isLoading) {
@@ -420,7 +476,7 @@ const TaskDetail: React.FC = () => {
               <h3 className="font-semibold">Comments ({comments.length})</h3>
             </div>
 
-            <ScrollArea className="max-h-80">
+            <ScrollArea className={`${comments.length >= 4 ? 'max-h-96' : 'max-h-auto'}`}>
               <div className="divide-y divide-border">
                 {comments.length === 0 ? (
                   <div className="p-6 text-center text-muted-foreground">
@@ -432,12 +488,12 @@ const TaskDetail: React.FC = () => {
                       <div className="flex items-start gap-3">
                         <Avatar className="h-8 w-8">
                           <AvatarImage src={comment.user?.avatar ? `${IMAGE_BASE_URL}${comment.user.avatar}` : ''} />
-                          <AvatarFallback>{comment.user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?'}</AvatarFallback>
+                          <AvatarFallback>{(comment.user?.name || comment.user_name || '?')?.split(' ').map((n: string) => n[0]).join('').toUpperCase()}</AvatarFallback>
                         </Avatar>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className="font-medium text-sm">{comment.user?.name || 'Unknown'}</span>
+                              <span className="font-medium text-sm">{comment.user?.name || comment.user_name || 'Unknown'}</span>
                               <span className="text-xs text-muted-foreground">
                                 {format(new Date(comment.created_at), 'MMM dd, yyyy HH:mm')}
                               </span>
@@ -453,7 +509,7 @@ const TaskDetail: React.FC = () => {
                               </Button>
                             )}
                           </div>
-                          <p className="text-sm mt-1 whitespace-pre-wrap">{comment.content}</p>
+                          <p className="text-sm mt-1 whitespace-pre-wrap">{(comment as any).comment || comment.content || ''}</p>
                         </div>
                       </div>
                     </div>
@@ -579,7 +635,7 @@ const TaskDetail: React.FC = () => {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Project</p>
                 <p className="text-sm font-medium">
-                  {task.project?.name || 'No project'}
+                  {(task as any).project_name || task.project?.name || 'No project'}
                 </p>
               </div>
 
@@ -602,7 +658,9 @@ const TaskDetail: React.FC = () => {
                   <User className="h-3 w-3" />
                   Assigned To
                 </p>
-                {task.assignee ? (
+                {(task as any).assigned_user ? (
+                  <p className="text-sm font-medium">{(task as any).assigned_user}</p>
+                ) : task.assignee ? (
                   <div className="flex items-center gap-2">
                     <Avatar className="h-8 w-8">
                       <AvatarImage src={task.assignee.avatar ? `${IMAGE_BASE_URL}${task.assignee.avatar}` : ''} />
@@ -628,7 +686,7 @@ const TaskDetail: React.FC = () => {
                     <span className="text-sm font-medium">{task.reporter.name}</span>
                   </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground">Unknown</p>
+                  <p className="text-sm text-muted-foreground">Not assigned</p>
                 )}
               </div>
 
@@ -644,7 +702,7 @@ const TaskDetail: React.FC = () => {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Updated</p>
                 <p className="text-sm">
-                  {task.updated_at ? format(new Date(task.updated_at), 'MMM dd, yyyy HH:mm') : 'Unknown'}
+                  {task.updated_at ? format(new Date(task.updated_at), 'MMM dd, yyyy HH:mm') : (task.created_at ? format(new Date(task.created_at), 'MMM dd, yyyy HH:mm') : 'Unknown')}
                 </p>
               </div>
             </div>
@@ -679,6 +737,13 @@ const TaskDetail: React.FC = () => {
         onClose={() => setPreviewImage(null)}
         imageUrl={previewImage?.url || ''}
         imageName={previewImage?.name}
+        onDownload={() => {
+          if (previewImage?.name) {
+            // Find the file object and download it
+            const file = files.find(f => f.name === previewImage.name);
+            if (file) handleDownload(file);
+          }
+        }}
       />
     </div>
   );

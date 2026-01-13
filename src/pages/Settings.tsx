@@ -35,6 +35,7 @@ const Settings: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
   const [profile, setProfile] = useState({
     name: '',
     email: '',
@@ -54,41 +55,44 @@ const Settings: React.FC = () => {
   });
 
   useEffect(() => {
-    const fetchProfile = async () => {
-      setIsLoading(true);
-      try {
-        const response: any = await api.getProfile();
-        const data = response.data || user;
-        setProfile({
-          name: data?.name || '',
-          email: data?.email || '',
-          phone: data?.phone || '',
-          bio: data?.bio || '',
-        });
-        if (data?.avatar) {
-          setAvatarPreview(`${IMAGE_BASE_URL}${data.avatar}`);
-        } else if (user?.avatar) {
-          setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
-        }
-      } catch (error) {
-        if (user) {
-          setProfile({
-            name: user.name,
-            email: user.email,
-            phone: '',
-            bio: '',
-          });
-          if (user.avatar) {
-            setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
-          }
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchProfile();
   }, [user]);
+
+  const fetchProfile = async () => {
+    setIsLoading(true);
+    try {
+      const response: any = await api.getProfile();
+      const data = response.data || response;
+      setProfile({
+        name: data?.name || '',
+        email: data?.email || '',
+        phone: data?.phone || '',
+        bio: data?.bio || '',
+      });
+      // Handle both profile_image (new) and avatar (old) field names
+      const imageUrl = data?.profile_image || data?.avatar;
+      if (imageUrl) {
+        setAvatarPreview(imageUrl.startsWith('http') ? imageUrl : `${IMAGE_BASE_URL}${imageUrl}`);
+      } else if (user?.avatar) {
+        setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
+      }
+    } catch (error) {
+      console.error('Failed to fetch profile:', error);
+      if (user) {
+        setProfile({
+          name: user.name,
+          email: user.email,
+          phone: '',
+          bio: '',
+        });
+        if (user.avatar) {
+          setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
+        }
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleAvatarClick = () => {
     fileInputRef.current?.click();
@@ -98,45 +102,44 @@ const Settings: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Preview immediately
+    // Store file for later upload with profile update
+    setSelectedAvatarFile(file);
+
+    // Show preview immediately
     const reader = new FileReader();
     reader.onloadend = () => {
       setAvatarPreview(reader.result as string);
     };
     reader.readAsDataURL(file);
-
-    // Upload the file
-    setIsUploadingAvatar(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('related_type', 'profile');
-      formData.append('related_id', String(user?.id || 'profile'));
-      
-      await api.uploadFile(formData);
-      
-      toast({
-        title: 'Success',
-        description: 'Profile image updated successfully.',
-      });
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to upload image.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsUploadingAvatar(false);
-    }
   };
 
   const handleProfileUpdate = async () => {
     setIsSaving(true);
     try {
-      await api.updateProfile(profile);
+      // Create FormData for multipart request
+      const formData = new FormData();
+      formData.append('name', profile.name);
+      formData.append('email', profile.email);
+      formData.append('phone', profile.phone);
+      formData.append('bio', profile.bio);
+      
+      // Add file if one was selected
+      if (selectedAvatarFile) {
+        formData.append('file', selectedAvatarFile);
+      }
+      
+      // Call the profile update API with FormData
+      const response: any = await api.updateProfile(formData);
+      
+      // Clear selected file after successful upload
+      setSelectedAvatarFile(null);
+      
+      // Refetch profile to get updated data including profile_image
+      await fetchProfile();
+      
       toast({
         title: 'Profile Updated',
-        description: 'Your profile has been updated successfully.',
+        description: response?.message || 'Your profile has been updated successfully.',
       });
     } catch (error: any) {
       toast({
@@ -215,20 +218,14 @@ const Settings: React.FC = () => {
             <div className="flex items-center gap-6 mb-8">
               <div className="relative">
                 <Avatar className="h-24 w-24">
-                  <AvatarImage src={avatarPreview || (user?.avatar ? `${IMAGE_BASE_URL}${user.avatar}` : undefined)} />
+                  <AvatarImage src={avatarPreview || undefined} />
                   <AvatarFallback className="bg-accent/20 text-accent text-2xl">
                     {user?.name?.split(' ').map(n => n[0]).join('') || 'U'}
                   </AvatarFallback>
                 </Avatar>
-                {isUploadingAvatar && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full">
-                    <Loader2 className="h-6 w-6 animate-spin text-white" />
-                  </div>
-                )}
                 <button 
                   onClick={handleAvatarClick}
-                  disabled={isUploadingAvatar}
-                  className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-sm hover:bg-accent/90 transition-colors disabled:opacity-50"
+                  className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-sm hover:bg-accent/90 transition-colors"
                 >
                   <Camera className="h-4 w-4" />
                 </button>
@@ -248,9 +245,8 @@ const Settings: React.FC = () => {
                   size="sm" 
                   className="mt-2"
                   onClick={handleAvatarClick}
-                  disabled={isUploadingAvatar}
                 >
-                  {isUploadingAvatar ? 'Uploading...' : 'Change Avatar'}
+                  {selectedAvatarFile ? 'Change Image (Pending)' : 'Change Avatar'}
                 </Button>
               </div>
             </div>

@@ -10,6 +10,7 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Projects from "@/pages/Projects";
 import ProjectDetail from "@/pages/ProjectDetail";
+import ProjectEdit from "@/pages/ProjectEdit";
 import Tasks from "@/pages/Tasks";
 import TaskDetail from "@/pages/TaskDetail";
 import TaskEdit from "@/pages/TaskEdit";
@@ -64,6 +65,11 @@ const App = () => (
               <Route path="/projects/:id" element={
                 <ProtectedRoute permission="projects.view">
                   <ProjectDetail />
+                </ProtectedRoute>
+              } />
+              <Route path="/projects/:id/edit" element={
+                <ProtectedRoute permission="projects.update">
+                  <ProjectEdit />
                 </ProtectedRoute>
               } />
               <Route path="/tasks" element={

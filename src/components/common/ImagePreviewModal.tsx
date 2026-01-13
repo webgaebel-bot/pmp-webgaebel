@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Download, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,6 +12,7 @@ interface ImagePreviewModalProps {
   onClose: () => void;
   imageUrl: string;
   imageName?: string;
+  onDownload?: () => void;
 }
 
 export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
@@ -19,43 +20,72 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
   onClose,
   imageUrl,
   imageName = 'Image Preview',
+  onDownload,
 }) => {
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogOverlay className="bg-black/80 backdrop-blur-sm" />
-      <DialogContent className="max-w-4xl w-[90vw] max-h-[90vh] p-0 border-0 bg-transparent shadow-none overflow-hidden">
-        <div className="relative">
-          {/* Close button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="absolute -top-12 right-0 h-10 w-10 rounded-full bg-white/10 hover:bg-white/20 text-white z-50"
-            aria-label="Close preview"
-          >
-            <X className="h-6 w-6" />
-          </Button>
+      <DialogOverlay className="bg-black/50 backdrop-blur-sm" />
+      <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] p-0 border-0 bg-background shadow-lg overflow-hidden rounded-lg">
+        <div className="flex flex-col h-full">
+          {/* Header */}
+          <div className="flex items-center justify-between p-6 border-b border-border bg-muted/30">
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-foreground">{imageName}</h2>
+              <p className="text-sm text-muted-foreground mt-1">Image Preview</p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => window.open(imageUrl, '_blank')}
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                aria-label="Open in new tab"
+                title="Open in new tab"
+              >
+                <ExternalLink className="h-5 w-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                aria-label="Close preview"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+          </div>
 
-          {/* Image */}
-          <div className="flex items-center justify-center">
+          {/* Image Container */}
+          <div className="flex-1 flex items-center justify-center p-6 bg-muted/10 overflow-auto min-h-[400px]">
             <img
               src={imageUrl}
               alt={imageName}
-              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+              className="max-w-[85%] max-h-[70vh] object-contain"
               onClick={(e) => e.stopPropagation()}
             />
           </div>
 
-          {/* Image name */}
-          {imageName && (
-            <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent">
-              <p className="text-white text-sm text-center truncate">
-                {imageName}
-              </p>
+          {/* Footer Actions */}
+          <div className="flex items-center justify-between p-6 border-t border-border bg-muted/30">
+            <p className="text-xs text-muted-foreground">
+              Click image to view full size
+            </p>
+            <div className="flex gap-3">
+              {onDownload && (
+                <Button
+                  onClick={onDownload}
+                  className="bg-accent hover:bg-accent/90 rounded-md"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download
+                </Button>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
   );
 };
+

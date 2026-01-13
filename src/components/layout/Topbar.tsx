@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { format } from 'date-fns';
 import {
   Search,
   Bell,
@@ -10,6 +11,7 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeft,
+  CheckCheck,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -29,8 +31,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { IMAGE_BASE_URL } from '@/services/api';
+import { IMAGE_BASE_URL, api } from '@/services/api';
 import { cn } from '@/lib/utils';
+import type { Notification } from '@/types';
 
 interface TopbarProps {
   isMobile: boolean;
@@ -48,6 +51,51 @@ export const Topbar: React.FC<TopbarProps> = ({
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
+  const [profileImage, setProfileImage] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Load profile image from localStorage
+    const savedProfileImage = localStorage.getItem('profile_image');
+    if (savedProfileImage) {
+      setProfileImage(savedProfileImage);
+    }
+    
+    // Also use profile_image from user object if available
+    if (user?.profile_image) {
+      setProfileImage(user.profile_image);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        setIsLoadingNotifications(true);
+        const response: any = await api.getNotifications();
+        const notificationsData = response.data || [];
+        
+        // Map API response to component format
+        const mappedNotifications = notificationsData.map((notif: any) => ({
+          id: String(notif.id),
+          title: notif.title || notif.type,
+          message: notif.message || notif.description || '',
+          type: (notif.type || 'info').toLowerCase(),
+          read: notif.read || notif.is_read || false,
+          created_at: notif.created_at || new Date().toISOString(),
+        }));
+        
+        setNotifications(mappedNotifications);
+      } catch (error) {
+        console.error('Error fetching notifications:', error);
+        setNotifications([]);
+      } finally {
+        setIsLoadingNotifications(false);
+      }
+    };
+
+    fetchNotifications();
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -61,6 +109,37 @@ export const Topbar: React.FC<TopbarProps> = ({
       .join('')
       .toUpperCase()
       .slice(0, 2);
+  };
+
+  // Get only unread notifications, latest first, limit to 5
+  const unreadNotifications = notifications
+    .filter((n) => !n.read)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 5);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const handleMarkAsRead = async (id: string) => {
+    try {
+      await api.markNotificationAsRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      );
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      const unreadNotifs = notifications.filter((n) => !n.read);
+      await Promise.all(
+        unreadNotifs.map((n) => api.markNotificationAsRead(n.id))
+      );
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
   };
 
   return (
@@ -133,40 +212,43 @@ export const Topbar: React.FC<TopbarProps> = ({
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="h-5 w-5" />
-              <Badge className="absolute -right-1 -top-1 h-5 w-5 rounded-full p-0 flex items-center justify-center bg-accent text-accent-foreground text-xs">
-                3
-              </Badge>
+              {unreadCount > 0 && (
+                <Badge className="absolute -right-1 -top-1 h-5 w-5 rounded-full p-0 flex items-center justify-center bg-accent text-accent-foreground text-xs">
+                  {unreadCount}
+                </Badge>
+              )}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80">
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <span className="font-semibold">Notifications</span>
-              <Button variant="ghost" size="sm" className="text-xs text-accent">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-accent"
+                onClick={handleMarkAllAsRead}
+              >
                 Mark all as read
               </Button>
             </div>
-            <div className="py-2">
-              <DropdownMenuItem className="flex flex-col items-start gap-1 px-4 py-3 cursor-pointer">
-                <span className="font-medium text-sm">New task assigned</span>
-                <span className="text-xs text-muted-foreground">
-                  You have been assigned to "Update dashboard UI"
-                </span>
-                <span className="text-xs text-muted-foreground">2 min ago</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1 px-4 py-3 cursor-pointer">
-                <span className="font-medium text-sm">Project deadline approaching</span>
-                <span className="text-xs text-muted-foreground">
-                  "Website Redesign" is due in 2 days
-                </span>
-                <span className="text-xs text-muted-foreground">1 hour ago</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1 px-4 py-3 cursor-pointer">
-                <span className="font-medium text-sm">Comment on your task</span>
-                <span className="text-xs text-muted-foreground">
-                  John commented on "API Integration"
-                </span>
-                <span className="text-xs text-muted-foreground">3 hours ago</span>
-              </DropdownMenuItem>
+            <div className="py-2 max-h-64 overflow-y-auto">
+              {isLoadingNotifications ? (
+                <div className="px-4 py-3 text-sm text-muted-foreground">Loading...</div>
+              ) : unreadNotifications.length === 0 ? (
+                <div className="px-4 py-3 text-sm text-muted-foreground">No new notifications</div>
+              ) : (
+                unreadNotifications.map((n) => (
+                  <DropdownMenuItem
+                    key={n.id}
+                    onClick={() => handleMarkAsRead(n.id)}
+                    className="flex flex-col items-start gap-1 px-4 py-3 cursor-pointer"
+                  >
+                    <span className="font-medium text-sm">{n.title}</span>
+                    <span className="text-xs text-muted-foreground">{n.message}</span>
+                    <span className="text-xs text-muted-foreground">{format(new Date(n.created_at), 'p, MMM d')}</span>
+                  </DropdownMenuItem>
+                ))
+              )}
             </div>
             <div className="border-t px-4 py-2">
               <Button variant="ghost" size="sm" className="w-full text-accent" onClick={() => navigate('/notifications')}>
@@ -183,9 +265,9 @@ export const Topbar: React.FC<TopbarProps> = ({
               variant="ghost"
               className="flex items-center gap-2 md:gap-3 px-2 hover:bg-secondary"
             >
-              <Avatar className="h-8 w-8">
+            <Avatar className="h-8 w-8">
                 <AvatarImage
-                  src={user?.avatar ? `${IMAGE_BASE_URL}${user.avatar}` : undefined}
+                  src={profileImage ? `${IMAGE_BASE_URL}${profileImage}` : (user?.avatar ? `${IMAGE_BASE_URL}${user.avatar}` : undefined)}
                   alt={user?.name}
                 />
                 <AvatarFallback className="bg-accent text-accent-foreground text-sm">

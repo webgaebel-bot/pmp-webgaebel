@@ -41,7 +41,7 @@ const UserEdit: React.FC = () => {
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
 
-  const canEdit = hasPermission('users.edit');
+  const canEdit = hasPermission('users.update');
 
   useEffect(() => {
     if (id) {
@@ -65,7 +65,8 @@ const UserEdit: React.FC = () => {
         setName(userData.name || '');
         setEmail(userData.email || '');
         setPhone(userData.phone || '');
-        setRoleId(userData.role?.id?.toString() || '');
+        // Handle both role_id and role.id formats
+        setRoleId(userData.role_id?.toString() || userData.role?.id?.toString() || '');
         setStatus(userData.status || 'active');
         if (userData.avatar) {
           setAvatarPreview(`${IMAGE_BASE_URL}${userData.avatar}`);
@@ -244,7 +245,9 @@ const UserEdit: React.FC = () => {
             </div>
             <div>
               <h4 className="font-medium">{user.name}</h4>
-              <p className="text-sm text-muted-foreground">{user.role?.name || 'No Role'}</p>
+              <p className="text-sm text-muted-foreground">
+                {typeof user.role === 'string' ? user.role : user.role?.name || 'No Role'}
+              </p>
               <p className="text-xs text-muted-foreground mt-1">Click camera icon to change avatar</p>
             </div>
           </div>

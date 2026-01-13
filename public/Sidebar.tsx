@@ -189,7 +189,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     // Expanded state
     if (hasChildren) {
-      const visibleChildren = item.children?.filter(child => !child.permission || hasPermission(child.permission)) || [];
       return (
         <div key={item.path}>
           <button
@@ -210,9 +209,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             />
           </button>
-          {isExpanded && visibleChildren.length > 0 && (
+          {isExpanded && (
             <div className="ml-4 mt-1 space-y-1">
-              {visibleChildren.map(child => renderNavItem(child, depth + 1))}
+              {item.children?.map(child => renderNavItem(child, depth + 1))}
             </div>
           )}
         </div>
@@ -272,7 +271,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}>
           {isCollapsed && !isMobile ? (
             <img 
-              src="/images-removebg-preview.jfif"
+              src="/hakam-logo.svg"
               alt="Hakam TechSol"
               className="h-8 w-8 flex-shrink-0"
             />
@@ -280,7 +279,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <>
               <div className="flex items-center gap-3">
                 <img 
-                  src="/images-removebg-preview.jfif"
+                  src="/images-removebg-preview.png"
                   alt="Hakam TechSol"
                   className="h-12 w-12 flex-shrink-0"
                 />

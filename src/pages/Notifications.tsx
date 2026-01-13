@@ -24,59 +24,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import api from '@/services/api';
 import type { Notification } from '@/types';
-
-// Mock notifications since API might not have this endpoint
-const mockNotifications: Notification[] = [
-  {
-    id: '1',
-    title: 'New task assigned',
-    message: 'You have been assigned to "Update dashboard UI"',
-    type: 'info',
-    read: false,
-    created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '2',
-    title: 'Project deadline approaching',
-    message: '"Website Redesign" is due in 2 days',
-    type: 'warning',
-    read: false,
-    created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '3',
-    title: 'Comment on your task',
-    message: 'John commented on "API Integration"',
-    type: 'info',
-    read: false,
-    created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '4',
-    title: 'Task completed',
-    message: '"Database optimization" has been marked as done',
-    type: 'success',
-    read: true,
-    created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '5',
-    title: 'Build failed',
-    message: 'The deployment pipeline has failed for project "Mobile App"',
-    type: 'error',
-    read: true,
-    created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '6',
-    title: 'New team member',
-    message: 'Sarah has joined the "Marketing Campaign" project',
-    type: 'info',
-    read: true,
-    created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-];
 
 const Notifications: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -85,31 +34,75 @@ const Notifications: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState<string>('all');
 
   useEffect(() => {
-    // Simulate API call
-    const timer = setTimeout(() => {
-      setNotifications(mockNotifications);
-      setIsLoading(false);
-    }, 500);
+    const fetchNotifications = async () => {
+      setIsLoading(true);
+      try {
+        const response: any = await api.getNotifications();
+        const notificationsData = response.data || [];
+        
+        // Map API response to component format
+        const mappedNotifications = notificationsData.map((notif: any) => ({
+          id: String(notif.id),
+          title: notif.title || notif.type,
+          message: notif.message || notif.description || '',
+          type: (notif.type || 'info').toLowerCase(),
+          read: notif.read || notif.is_read || false,
+          created_at: notif.created_at || new Date().toISOString(),
+        }));
+        
+        setNotifications(mappedNotifications);
+      } catch (error) {
+        console.error('Error fetching notifications:', error);
+        setNotifications([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-    return () => clearTimeout(timer);
+    fetchNotifications();
   }, []);
 
-  const handleMarkAsRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-    );
+  const handleMarkAsRead = async (id: string) => {
+    try {
+      await api.markNotificationAsRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      );
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
   };
 
-  const handleMarkAllAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  const handleMarkAllAsRead = async () => {
+    try {
+      // Mark all unread notifications as read
+      const unreadNotifications = notifications.filter((n) => !n.read);
+      await Promise.all(
+        unreadNotifications.map((n) => api.markNotificationAsRead(n.id))
+      );
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  const handleDelete = async (id: string) => {
+    try {
+      await api.deleteNotification(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    } catch (error) {
+      console.error('Error deleting notification:', error);
+    }
   };
 
-  const handleClearAll = () => {
-    setNotifications([]);
+  const handleClearAll = async () => {
+    try {
+      // Delete all notifications
+      await Promise.all(notifications.map((n) => api.deleteNotification(n.id)));
+      setNotifications([]);
+    } catch (error) {
+      console.error('Error clearing notifications:', error);
+    }
   };
 
   const getTypeIcon = (type: Notification['type']) => {

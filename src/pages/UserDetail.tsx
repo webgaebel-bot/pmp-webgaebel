@@ -39,7 +39,7 @@ const UserDetail: React.FC = () => {
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [activeTab, setActiveTab] = useState('overview');
 
-  const canEdit = hasPermission('users.edit');
+  const canEdit = hasPermission('users.update');
   const canDelete = hasPermission('users.delete');
 
   useEffect(() => {

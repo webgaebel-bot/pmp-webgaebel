@@ -58,9 +58,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermission } from '@/hooks/usePermission';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
-import type { Task, User } from '@/types';
+import type { Task, User, Project } from '@/types';
 
 const statusIcons = {
   todo: Clock,
@@ -74,7 +75,8 @@ const Tasks: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { id } = useParams<{ id?: string }>();
-  const { hasPermission, user } = useAuth();
+  const { user } = useAuth();
+  const permission = usePermission();
   const { toast } = useToast();
   
   const [isLoading, setIsLoading] = useState(true);
@@ -82,6 +84,7 @@ const Tasks: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<Task | null>(null);
   const [users, setUsers] = useState<User[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
@@ -98,15 +101,23 @@ const Tasks: React.FC = () => {
     project_id: '',
   });
 
-  const canCreate = hasPermission('tasks.create');
-  const canEdit = hasPermission('tasks.edit');
-  const canDelete = hasPermission('tasks.delete');
-  const canAssign = hasPermission('tasks.assign');
+  const canViewTasks = permission.canViewTasks();
+  const canViewAllTasks = permission.can('tasks.view.all');
+  const canCreate = permission.canCreateTask();
+  const canEdit = permission.canEditTask();
+  const canDelete = permission.canDeleteTask();
+  const canAssign = permission.canAssignTask();
+  const canUpdateStatus = permission.canUpdateTaskStatus();
+  const canUpdatePriority = permission.canUpdateTaskPriority();
 
   useEffect(() => {
     // Update active tab based on URL
+    // Redirect to /tasks/my if user doesn't have tasks.view.all permission and tries to access /tasks
+    if (location.pathname === '/tasks' && !canViewAllTasks) {
+      navigate('/tasks/my', { replace: true });
+    }
     setActiveTab(location.pathname === '/tasks/my' ? 'my' : 'all');
-  }, [location.pathname]);
+  }, [location.pathname, canViewAllTasks, navigate]);
 
   useEffect(() => {
     fetchTasks();
@@ -144,6 +155,17 @@ const Tasks: React.FC = () => {
     } catch (error) {
       console.error('Failed to fetch users:', error);
       setUsers([]);
+    }
+  };
+
+  const fetchProjects = async () => {
+    try {
+      const response: any = await api.getProjects();
+      const projectsData = response?.data || response || [];
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
+      setProjects([]);
     }
   };
 
@@ -220,6 +242,15 @@ const Tasks: React.FC = () => {
       });
       return;
     }
+
+    if (!newTask.project_id) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a project.',
+        variant: 'destructive',
+      });
+      return;
+    }
     
     setIsSaving(true);
     try {
@@ -290,6 +321,17 @@ const Tasks: React.FC = () => {
     return <LoadingPage text="Loading tasks..." />;
   }
 
+  // Check if user has permission to view tasks
+  if (!canViewTasks) {
+    return (
+      <EmptyState
+        title="Access Denied"
+        description="You don't have permission to view tasks."
+        action={{ label: 'Go Back', onClick: () => navigate(-1) }}
+      />
+    );
+  }
+
   // Show detail view if id parameter exists
   if (id && selectedTaskDetail) {
     return (
@@ -307,8 +349,8 @@ const Tasks: React.FC = () => {
             <div className="flex-1">
               <h1 className="text-3xl font-bold mb-2">{selectedTaskDetail.title}</h1>
               <div className="flex items-center gap-2">
-                <StatusBadge status={selectedTaskDetail.status} />
-                <PriorityBadge priority={selectedTaskDetail.priority} />
+                <StatusBadge status={selectedTaskDetail.status?.toLowerCase() || 'todo'} />
+                <PriorityBadge priority={selectedTaskDetail.priority?.toLowerCase() || 'medium'} />
               </div>
             </div>
             {canEdit && (
@@ -361,7 +403,7 @@ const Tasks: React.FC = () => {
             <div className="space-y-6">
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Project</p>
-                <p className="text-sm font-medium">{selectedTaskDetail.project?.name || 'No project'}</p>
+                <p className="text-sm font-medium">{(selectedTaskDetail as any).project_name || selectedTaskDetail.project?.name || 'No project'}</p>
               </div>
 
               <div>
@@ -376,14 +418,14 @@ const Tasks: React.FC = () => {
 
               <div>
                 <p className="text-xs text-muted-foreground mb-2">Assigned To</p>
-                {selectedTaskDetail.assignee ? (
+                {(selectedTaskDetail as any).assigned_user || selectedTaskDetail.assignee ? (
                   <div className="flex items-center gap-3">
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={selectedTaskDetail.assignee.avatar ? `${IMAGE_BASE_URL}${selectedTaskDetail.assignee.avatar}` : ''} />
-                      <AvatarFallback>{selectedTaskDetail.assignee.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+                      <AvatarImage src={selectedTaskDetail.assignee?.avatar ? `${IMAGE_BASE_URL}${selectedTaskDetail.assignee.avatar}` : ''} />
+                      <AvatarFallback>{((selectedTaskDetail as any).assigned_user || selectedTaskDetail.assignee?.name || '?')?.split(' ').map((n: string) => n[0]).join('').toUpperCase() || '?'}</AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="text-sm font-medium">{selectedTaskDetail.assignee.name}</p>
+                      <p className="text-sm font-medium">{(selectedTaskDetail as any).assigned_user || selectedTaskDetail.assignee?.name}</p>
                     </div>
                   </div>
                 ) : (
@@ -418,7 +460,13 @@ const Tasks: React.FC = () => {
         breadcrumbs={[{ label: 'Tasks' }]}
         actions={
           canCreate && (
-            <Button onClick={() => setIsCreateDialogOpen(true)} className="bg-accent hover:bg-accent/90">
+            <Button 
+              onClick={async () => {
+                await fetchProjects();
+                setIsCreateDialogOpen(true);
+              }} 
+              className="bg-accent hover:bg-accent/90"
+            >
               <Plus className="mr-2 h-4 w-4" />
               New Task
             </Button>
@@ -429,7 +477,9 @@ const Tasks: React.FC = () => {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
-          <TabsTrigger value="all">All Tasks</TabsTrigger>
+          {canViewAllTasks && (
+            <TabsTrigger value="all">All Tasks</TabsTrigger>
+          )}
           <TabsTrigger value="my">My Tasks</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -545,7 +595,7 @@ const Tasks: React.FC = () => {
                     </td>
                     <td>
                       <span className="text-sm text-muted-foreground">
-                        {task.project?.name || '-'}
+                        {(task as any).project_name || task.project?.name || '-'}
                       </span>
                     </td>
                     <td>
@@ -555,7 +605,7 @@ const Tasks: React.FC = () => {
                         disabled={!canEdit}
                       >
                         <SelectTrigger className="w-32 h-8 text-xs">
-                          <StatusBadge status={task.status} />
+                          <StatusBadge status={task.status?.toLowerCase() || 'todo'} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="todo">To Do</SelectItem>
@@ -573,7 +623,7 @@ const Tasks: React.FC = () => {
                         disabled={!canEdit}
                       >
                         <SelectTrigger className="w-28 h-8 text-xs">
-                          <PriorityBadge priority={task.priority} showIcon={false} />
+                          <PriorityBadge priority={task.priority?.toLowerCase() || 'medium'} showIcon={false} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="low">Low</SelectItem>
@@ -588,10 +638,10 @@ const Tasks: React.FC = () => {
                         <Avatar className="h-7 w-7">
                           <AvatarImage src={task.assignee?.avatar ? `${IMAGE_BASE_URL}${task.assignee.avatar}` : undefined} />
                           <AvatarFallback className="bg-accent/20 text-accent text-xs">
-                            {task.assignee?.name?.split(' ').map(n => n[0]).join('') || '?'}
+                            {((task as any).assigned_user || task.assignee?.name || '?')?.split(' ').map((n: string) => n[0]).join('') || '?'}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="text-sm">{task.assignee?.name || 'Unassigned'}</span>
+                        <span className="text-sm">{(task as any).assigned_user || task.assignee?.name || 'Unassigned'}</span>
                       </div>
                     </td>
                     <td>
@@ -652,6 +702,21 @@ const Tasks: React.FC = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="task-project">Project <span className="text-destructive">*</span></Label>
+              <Select value={newTask.project_id} onValueChange={(value) => setNewTask({ ...newTask, project_id: value })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={String(project.id)}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="task-title">Title <span className="text-destructive">*</span></Label>
               <Input

@@ -4,6 +4,7 @@ export interface User {
   name: string;
   email: string;
   avatar?: string;
+  profile_image?: string;
   role: Role;
   status: 'active' | 'inactive';
   last_login?: string;
@@ -44,24 +45,31 @@ export interface Project {
   id: string;
   name: string;
   description?: string;
-  status: 'planning' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled';
+  status: 'planning' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled' | 'Active' | string;
   priority: 'low' | 'medium' | 'high' | 'critical';
   progress: number;
   start_date?: string;
   end_date?: string;
   created_at: string;
   updated_at: string;
-  owner: User;
+  created_by_id?: string;
+  created_by_name?: string;
+  owner?: User;
   members: ProjectMember[];
+  member_count?: number;
   task_count?: number;
   completed_tasks?: number;
 }
 
 export interface ProjectMember {
   id: string;
-  user: User;
-  role: 'owner' | 'manager' | 'member' | 'viewer';
-  joined_at: string;
+  user?: User;
+  name?: string;
+  email?: string;
+  user_id?: string;
+  role?: 'owner' | 'manager' | 'member' | 'viewer';
+  project_role?: 'owner' | 'manager' | 'member' | 'viewer';
+  joined_at?: string;
 }
 
 // Task Types
@@ -69,11 +77,15 @@ export interface Task {
   id: string;
   title: string;
   description?: string;
-  status: 'todo' | 'in_progress' | 'review' | 'done' | 'blocked';
+  status: 'todo' | 'in_progress' | 'review' | 'done' | 'blocked' | string;
   priority: 'low' | 'medium' | 'high' | 'critical';
-  project: Project;
+  project?: Project;
+  project_id?: string;
+  project_name?: string;
   assignee?: User;
-  reporter: User;
+  assigned_to?: string;
+  assigned_user?: string;
+  reporter?: User;
   due_date?: string;
   estimated_hours?: number;
   actual_hours?: number;

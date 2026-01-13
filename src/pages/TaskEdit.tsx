@@ -66,15 +66,20 @@ const TaskEdit: React.FC = () => {
         api.getUsers().catch(() => ({ data: [] })),
       ]);
 
-      const taskData = (taskRes as any)?.data || taskRes;
+      const taskData = (taskRes as any)?.data?.task || (taskRes as any)?.data || taskRes;
+      const projectData = (taskRes as any)?.data?.project;
+      
       if (taskData) {
-        setTask(taskData);
+        setTask({
+          ...taskData,
+          project: projectData,
+        });
         setTitle(taskData.title || '');
         setDescription(taskData.description || '');
-        setStatus(taskData.status || 'todo');
-        setPriority(taskData.priority || 'medium');
+        setStatus((taskData.status || 'todo').toLowerCase());
+        setPriority((taskData.priority || 'medium').toLowerCase());
         setDueDate(taskData.due_date ? new Date(taskData.due_date) : undefined);
-        setAssigneeId(taskData.assignee?.id?.toString() || '');
+        setAssigneeId(taskData.assigned_to?.toString() || '');
       }
 
       const usersData = (usersRes as any)?.data || usersRes || [];
@@ -110,14 +115,14 @@ const TaskEdit: React.FC = () => {
       const payload: any = {
         title: title.trim(),
         description: description.trim(),
-        status,
-        priority,
+        status: status.toLowerCase(),
+        priority: priority.toLowerCase(),
         due_date: dueDate ? format(dueDate, 'yyyy-MM-dd') : null,
       };
 
-      // Only include assignee_id if it's set
+      // Only include assigned_to if it's set
       if (assigneeId) {
-        payload.assignee_id = assigneeId;
+        payload.assigned_to = assigneeId;
       }
 
       await api.updateTask(id, payload);

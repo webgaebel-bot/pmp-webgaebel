@@ -13,9 +13,14 @@ class ApiService {
     const token = this.getToken();
     
     const headers: HeadersInit = {
-      'Content-Type': 'application/json',
       ...options.headers,
     };
+
+    // Only set Content-Type if body is not FormData
+    // FormData needs browser to auto-set multipart/form-data with boundary
+    if (!(options.body instanceof FormData)) {
+      (headers as Record<string, string>)['Content-Type'] = 'application/json';
+    }
 
     if (token) {
       (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
@@ -80,7 +85,7 @@ class ApiService {
     return this.request(`/project/get${query}`);
   }
 
-  async getProject(id: string) {
+  async getProject(id: string): Promise<any> {
     return this.request(`/project/${id}`);
   }
 
@@ -106,7 +111,7 @@ class ApiService {
     return this.request(`/project/${userId}/projects`);
   }
 
-  async getProjectMembers(projectId: string) {
+  async getProjectMembers(projectId: string): Promise<any> {
     return this.request(`/project/projects/${projectId}/members`);
   }
 
@@ -124,7 +129,7 @@ class ApiService {
   }
 
   // Tasks APIs
-  async getTasks(params?: Record<string, string>) {
+  async getTasks(params?: Record<string, string>): Promise<any> {
     const query = params ? `?${new URLSearchParams(params).toString()}` : '';
     return this.request(`/task/tasks${query}`);
   }
@@ -210,7 +215,7 @@ class ApiService {
     return response.json();
   }
 
-  async getFiles(relatedId: string) {
+  async getFiles(relatedId: string): Promise<any> {
     return this.request(`/files/files/${relatedId}`);
   }
 
@@ -223,7 +228,7 @@ class ApiService {
   }
 
   // Users APIs
-  async getUsers(params?: Record<string, string>) {
+  async getUsers(params?: Record<string, string>): Promise<any> {
     const query = params ? `?${new URLSearchParams(params).toString()}` : '';
     return this.request(`/users/get${query}`);
   }
@@ -281,10 +286,10 @@ class ApiService {
     return this.request(`/role/${id}`, { method: 'DELETE' });
   }
 
-  async assignPermissions(roleId: string, permissionIds: string[]) {
-    return this.request(`/${roleId}/permissionsassign`, {
-      method: 'POST',
-      body: JSON.stringify({ permissionIds }),
+  async assignPermissions(roleId: string, permissionIds: string[] | number[]) {
+    return this.request(`/roles/${roleId}/permissions`, {
+      method: 'PUT',
+      body: JSON.stringify({ permissions: permissionIds }),
     });
   }
 
@@ -317,6 +322,15 @@ class ApiService {
   }
 
   async updateProfile(data: any) {
+    // If data is FormData (has entries method), send it directly without JSON.stringify
+    if (data instanceof FormData) {
+      return this.request('/profile/profile', {
+        method: 'PUT',
+        body: data,
+        // Don't set Content-Type header - let browser set it with multipart boundary
+      });
+    }
+    // Otherwise, treat it as a regular JSON object
     return this.request('/profile/profile', {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -327,6 +341,44 @@ class ApiService {
     return this.request('/profile/profile/change-password', {
       method: 'PUT',
       body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+
+  // Report APIs
+  async getDashboardReport(): Promise<any> {
+    return this.request('/report/reports/dashboard');
+  }
+
+  async getProjectProgressReport(): Promise<any> {
+    return this.request('/report/reports/project-progress');
+  }
+
+  async getTaskDistributionReport(): Promise<any> {
+    return this.request('/report/reports/task-distribution');
+  }
+
+  async getTaskActivityReport(): Promise<any> {
+    return this.request('/report/reports/task-activity');
+  }
+
+  async getTeamPerformanceReport(): Promise<any> {
+    return this.request('/report/reports/team-performance');
+  }
+
+  // Notifications APIs
+  async getNotifications(): Promise<any> {
+    return this.request('/notifications');
+  }
+
+  async markNotificationAsRead(id: string): Promise<any> {
+    return this.request(`/notifications/${id}/read`, {
+      method: 'PUT',
+    });
+  }
+
+  async deleteNotification(id: string): Promise<any> {
+    return this.request(`/notifications/${id}`, {
+      method: 'DELETE',
     });
   }
 }

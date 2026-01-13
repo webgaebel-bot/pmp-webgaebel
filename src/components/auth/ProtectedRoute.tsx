@@ -33,21 +33,30 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   }
 
   // Check single permission
-  if (permission && !hasPermission(permission)) {
-    return <Navigate to="/unauthorized" replace />;
+  if (permission) {
+    // allow exact permission or a '.view.all' fallback for view permissions
+    const hasExact = hasPermission(permission);
+    let hasFallback = false;
+    if (!hasExact && permission.endsWith('.view')) {
+      const fallback = `${permission}.all`;
+      hasFallback = hasPermission(fallback);
+    }
+    if (!hasExact && !hasFallback) {
+      return <Navigate to="/unauthorized" replace />;
+    }
   }
 
   // Check multiple permissions
   if (permissions && permissions.length > 0) {
     if (requireAll) {
       // User must have ALL permissions
-      const hasAll = permissions.every(p => hasPermission(p));
+      const hasAll = permissions.every(p => hasPermission(p) || (p.endsWith('.view') && hasPermission(`${p}.all`)));
       if (!hasAll) {
         return <Navigate to="/unauthorized" replace />;
       }
     } else {
       // User must have ANY permission
-      if (!hasAnyPermission(permissions)) {
+      if (!permissions.some(p => hasPermission(p) || (p.endsWith('.view') && hasPermission(`${p}.all`)))) {
         return <Navigate to="/unauthorized" replace />;
       }
     }

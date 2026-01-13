@@ -201,12 +201,15 @@ const Roles: React.FC = () => {
     // Try to fetch role's assigned permissions
     try {
       const response: any = await api.getRolePermissions(String(role.id));
-      const assignedPermissions = response?.data || response || [];
-      setSelectedPermissions(
-        Array.isArray(assignedPermissions) 
-          ? assignedPermissions.map((p: Permission | string) => typeof p === 'string' ? p : p.id)
-          : role.permissions?.map(p => p.id) || []
-      );
+      // Handle the API response format: { success, role_id, permissions: [...] }
+      const assignedPermissions = response?.permissions || response?.data || response || [];
+      const permissionIds = Array.isArray(assignedPermissions) 
+        ? assignedPermissions.map((p: Permission | string | number) => {
+            if (typeof p === 'string' || typeof p === 'number') return p;
+            return p.id;
+          })
+        : [];
+      setSelectedPermissions(permissionIds);
     } catch {
       // Fallback to role's existing permissions
       setSelectedPermissions(role.permissions?.map(p => p.id) || []);
@@ -280,29 +283,30 @@ const Roles: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
       <PageHeader
         title="Roles & Permissions"
         description="Manage user roles and their permissions"
         breadcrumbs={[{ label: 'Roles' }]}
         actions={
           canManage && (
-            <Button onClick={() => setIsCreateDialogOpen(true)} className="bg-accent hover:bg-accent/90">
+            <Button onClick={() => setIsCreateDialogOpen(true)} className="bg-accent hover:bg-accent/90 w-full sm:w-auto">
               <Plus className="mr-2 h-4 w-4" />
-              Add Role
+              <span className="hidden xs:inline">Add Role</span>
+              <span className="xs:hidden">Add Role</span>
             </Button>
           )
         }
       />
 
       {/* Search */}
-      <div className="relative max-w-md">
+      <div className="relative w-full sm:max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder="Search roles..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10"
+          className="pl-10 w-full"
         />
       </div>
 
@@ -314,20 +318,20 @@ const Roles: React.FC = () => {
           action={canManage && roles.length === 0 ? { label: 'Create Role', onClick: () => setIsCreateDialogOpen(true) } : undefined}
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {filteredRoles.map((role) => (
             <div
               key={role.id}
-              className="bg-card rounded-lg border border-border p-5 shadow-card hover:shadow-elevated transition-shadow"
+              className="bg-card rounded-lg border border-border p-4 sm:p-5 shadow-card hover:shadow-elevated transition-shadow"
             >
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10">
-                    <Shield className="h-5 w-5 text-accent" />
+              <div className="flex items-start justify-between mb-3 sm:mb-4">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                  <div className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-accent/10 flex-shrink-0">
+                    <Shield className="h-4 w-4 sm:h-5 sm:w-5 text-accent" />
                   </div>
-                  <div>
-                    <h3 className="font-semibold">{role.name}</h3>
-                    <p className="text-sm text-muted-foreground">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-sm sm:text-base truncate">{role.name}</h3>
+                    <p className="text-xs sm:text-sm text-muted-foreground">
                       {role.permission_count || role.permissions?.length || 0} permissions
                     </p>
                   </div>
@@ -335,7 +339,7 @@ const Roles: React.FC = () => {
                 {canManage && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0">
                         <MoreVertical className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -358,20 +362,20 @@ const Roles: React.FC = () => {
                 )}
               </div>
 
-              <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
+              <p className="text-xs sm:text-sm text-muted-foreground mb-3 sm:mb-4 line-clamp-2">
                 {role.description || 'No description provided'}
               </p>
 
-              <div className="flex items-center justify-between pt-4 border-t border-border">
-                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Users className="h-4 w-4" />
+              <div className="flex items-center justify-between pt-3 sm:pt-4 border-t border-border">
+                <div className="flex items-center gap-1 text-xs sm:text-sm text-muted-foreground">
+                  <Users className="h-3 w-3 sm:h-4 sm:w-4" />
                   <span>0 users</span>
                 </div>
                 {canManage && (
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-accent"
+                    className="text-accent h-8 text-xs sm:text-sm"
                     onClick={() => handleOpenPermissions(role)}
                   >
                     Manage
@@ -385,7 +389,7 @@ const Roles: React.FC = () => {
 
       {/* Create Role Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto">
           <DialogHeader>
             <DialogTitle>Create New Role</DialogTitle>
             <DialogDescription>
@@ -413,11 +417,11 @@ const Roles: React.FC = () => {
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)} disabled={isSaving}>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)} disabled={isSaving} className="w-full sm:w-auto">
               Cancel
             </Button>
-            <Button onClick={handleCreateRole} className="bg-accent hover:bg-accent/90" disabled={isSaving}>
+            <Button onClick={handleCreateRole} className="bg-accent hover:bg-accent/90 w-full sm:w-auto" disabled={isSaving}>
               {isSaving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -433,7 +437,7 @@ const Roles: React.FC = () => {
 
       {/* Edit Role Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto">
           <DialogHeader>
             <DialogTitle>Edit Role</DialogTitle>
             <DialogDescription>
@@ -461,11 +465,11 @@ const Roles: React.FC = () => {
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving} className="w-full sm:w-auto">
               Cancel
             </Button>
-            <Button onClick={handleEditRole} className="bg-accent hover:bg-accent/90" disabled={isSaving}>
+            <Button onClick={handleEditRole} className="bg-accent hover:bg-accent/90 w-full sm:w-auto" disabled={isSaving}>
               {isSaving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -481,13 +485,13 @@ const Roles: React.FC = () => {
 
       {/* Permission Matrix Dialog */}
       <Dialog open={isPermissionDialogOpen} onOpenChange={setIsPermissionDialogOpen}>
-        <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-4xl max-h-[90vh] sm:max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-accent" />
-              Manage Permissions - {selectedRole?.name}
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Shield className="h-4 w-4 sm:h-5 sm:w-5 text-accent flex-shrink-0" />
+              <span className="truncate">Manage Permissions - {selectedRole?.name}</span>
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs sm:text-sm">
               Select the permissions for this role. Changes will apply to all users with this role.
             </DialogDescription>
           </DialogHeader>
@@ -499,7 +503,7 @@ const Roles: React.FC = () => {
                 description="No permissions have been configured in the system."
               />
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3 sm:space-y-4">
                 {Object.entries(groupedPermissions).map(([module, modulePermissions]) => {
                   const selectionState = getModuleSelectionState(modulePermissions);
                   const selectedCount = modulePermissions.filter(p => selectedPermissions.includes(p.id)).length;
@@ -509,22 +513,22 @@ const Roles: React.FC = () => {
                     <div key={module} className="border border-border rounded-lg overflow-hidden">
                       {/* Module Header */}
                       <div
-                        className="flex items-center justify-between p-4 bg-muted/50 cursor-pointer hover:bg-muted/70 transition-colors"
+                        className="flex items-center justify-between p-3 sm:p-4 bg-muted/50 cursor-pointer hover:bg-muted/70 transition-colors"
                         onClick={() => handleToggleModule(modulePermissions)}
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10">
-                            <ModuleIcon className="h-5 w-5 text-accent" />
+                        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                          <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-accent/10 flex-shrink-0">
+                            <ModuleIcon className="h-4 w-4 sm:h-5 sm:w-5 text-accent" />
                           </div>
-                          <div>
-                            <h4 className="font-semibold text-foreground">{module}</h4>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="font-semibold text-sm sm:text-base text-foreground truncate">{module}</h4>
                             <p className="text-xs text-muted-foreground">
-                              {selectedCount} of {modulePermissions.length} permissions selected
+                              {selectedCount} of {modulePermissions.length} selected
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <Badge variant="secondary" className="text-xs">
+                        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                          <Badge variant="secondary" className="text-xs hidden xs:inline-flex">
                             {selectedCount} / {modulePermissions.length}
                           </Badge>
                           <div className="w-5 h-5 flex items-center justify-center">
@@ -542,11 +546,11 @@ const Roles: React.FC = () => {
                       </div>
                       
                       {/* Permission Items */}
-                      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-2 gap-2 sm:gap-3">
                         {modulePermissions.map((permission) => (
                           <div
                             key={permission.id}
-                            className={`flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                            className={`flex items-center gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg border transition-all cursor-pointer ${
                               selectedPermissions.includes(permission.id)
                                 ? 'border-accent bg-accent/5'
                                 : 'border-border hover:border-muted-foreground/30 hover:bg-muted/30'
@@ -556,10 +560,10 @@ const Roles: React.FC = () => {
                             <Checkbox
                               checked={selectedPermissions.includes(permission.id)}
                               onCheckedChange={() => handleTogglePermission(permission.id)}
-                              className="data-[state=checked]:bg-accent data-[state=checked]:border-accent"
+                              className="data-[state=checked]:bg-accent data-[state=checked]:border-accent flex-shrink-0"
                             />
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm truncate">{permission.name}</p>
+                              <p className="font-medium text-xs sm:text-sm truncate">{permission.name}</p>
                               <p className="text-xs text-muted-foreground font-mono truncate">
                                 {permission.key}
                               </p>
@@ -574,25 +578,27 @@ const Roles: React.FC = () => {
             )}
           </div>
           
-          <DialogFooter className="border-t pt-4">
-            <div className="flex items-center justify-between w-full">
-              <p className="text-sm text-muted-foreground">
+          <DialogFooter className="border-t pt-4 flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between w-full gap-3">
+              <p className="text-xs sm:text-sm text-muted-foreground">
                 {selectedPermissions.length} of {permissions.length} permissions selected
               </p>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setIsPermissionDialogOpen(false)} disabled={isSaving}>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <Button variant="outline" onClick={() => setIsPermissionDialogOpen(false)} disabled={isSaving} className="flex-1 sm:flex-none">
                   Cancel
                 </Button>
-                <Button onClick={handleSavePermissions} className="bg-accent hover:bg-accent/90" disabled={isSaving}>
+                <Button onClick={handleSavePermissions} className="bg-accent hover:bg-accent/90 flex-1 sm:flex-none" disabled={isSaving}>
                   {isSaving ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
+                      <span className="hidden xs:inline">Saving...</span>
+                      <span className="xs:hidden">Save</span>
                     </>
                   ) : (
                     <>
                       <Check className="mr-2 h-4 w-4" />
-                      Save Changes
+                      <span className="hidden xs:inline">Save Changes</span>
+                      <span className="xs:hidden">Save</span>
                     </>
                   )}
                 </Button>
