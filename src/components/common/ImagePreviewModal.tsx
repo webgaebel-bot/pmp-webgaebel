@@ -51,7 +51,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
                 aria-label="Close preview"
               >
-                <X className="h-5 w-5" />
+
               </Button>
             </div>
           </div>

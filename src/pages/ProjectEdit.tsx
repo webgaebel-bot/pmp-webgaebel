@@ -247,6 +247,7 @@ const ProjectEdit: React.FC = () => {
                 type="date"
                 value={formData.start_date}
                 onChange={handleInputChange}
+                min={new Date().toISOString().split('T')[0]}
               />
             </div>
 
@@ -258,6 +259,7 @@ const ProjectEdit: React.FC = () => {
                 type="date"
                 value={formData.end_date}
                 onChange={handleInputChange}
+                min={new Date().toISOString().split('T')[0]}
               />
             </div>
           </div>

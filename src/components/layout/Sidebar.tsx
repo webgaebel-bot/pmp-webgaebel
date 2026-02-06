@@ -14,6 +14,8 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Mail,
+  Calendar,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -53,16 +55,24 @@ const navigation: NavItem[] = [
     icon: FolderKanban,
     path: '/projects',
     permission: 'projects.view',
-  },
+  }, 
   {
     label: 'Tasks',
     icon: CheckSquare,
     path: '/tasks',
     permission: 'tasks.view',
-    children: [
-      { label: 'All Tasks', icon: CheckSquare, path: '/tasks', permission: 'tasks.view' },
-      { label: 'My Tasks', icon: CheckSquare, path: '/tasks/my', permission: 'tasks.view' },
-    ],
+  },
+  {
+    label: 'Mails',
+    icon: Mail,
+    path: '/mails',
+    permission: 'mails.view',
+  },
+  {
+    label: 'Calendar',
+    icon: Calendar,
+    path: '/calendar',
+    permission: 'calendar.view',
   },
   {
     label: 'Users',
@@ -189,7 +199,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     // Expanded state
     if (hasChildren) {
-      const visibleChildren = item.children?.filter(child => !child.permission || hasPermission(child.permission)) || [];
+      const visibleChildren = item.children?.filter(child => {
+        // Hide "My Tasks" for super admin
+        if (child.label === 'My Tasks' && user?.role?.name === 'Super Admin') {
+          return false;
+        }
+        return !child.permission || hasPermission(child.permission);
+      }) || [];
       return (
         <div key={item.path}>
           <button

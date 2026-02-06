@@ -121,6 +121,8 @@ const Tasks: React.FC = () => {
 
   useEffect(() => {
     fetchTasks();
+    fetchUsers();
+    fetchProjects();
   }, [activeTab]);
 
   useEffect(() => {
@@ -317,6 +319,33 @@ const Tasks: React.FC = () => {
     }
   };
 
+  const handleAssignTaskQuick = async (task: Task, userId: string) => {
+    try {
+      await api.assignTask(task.id, userId);
+      const assignedUser = users.find(u => u.id?.toString() === userId);
+      setTasks(tasks.map(t => 
+        t.id === task.id 
+          ? { 
+              ...t, 
+              assignee: assignedUser,
+              assigned_user_id: assignedUser?.id,
+              assigned_user_name: assignedUser?.name
+            } 
+          : t
+      ));
+      toast({
+        title: 'Success',
+        description: `Task assigned to ${assignedUser?.name || 'user'}.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to assign task.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   if (isLoading) {
     return <LoadingPage text="Loading tasks..." />;
   }
@@ -480,7 +509,9 @@ const Tasks: React.FC = () => {
           {canViewAllTasks && (
             <TabsTrigger value="all">All Tasks</TabsTrigger>
           )}
-          <TabsTrigger value="my">My Tasks</TabsTrigger>
+          {!canViewAllTasks && (
+            <TabsTrigger value="my">My Tasks</TabsTrigger>
+          )}
         </TabsList>
       </Tabs>
 
@@ -602,7 +633,7 @@ const Tasks: React.FC = () => {
                       <Select
                         value={task.status}
                         onValueChange={(value) => handleStatusChange(task.id, value)}
-                        disabled={!canEdit}
+                        disabled={!canUpdateStatus}
                       >
                         <SelectTrigger className="w-32 h-8 text-xs">
                           <StatusBadge status={task.status?.toLowerCase() || 'todo'} />
@@ -620,7 +651,7 @@ const Tasks: React.FC = () => {
                       <Select
                         value={task.priority}
                         onValueChange={(value) => handlePriorityChange(task.id, value)}
-                        disabled={!canEdit}
+                        disabled={!canUpdatePriority}
                       >
                         <SelectTrigger className="w-28 h-8 text-xs">
                           <PriorityBadge priority={task.priority?.toLowerCase() || 'medium'} showIcon={false} />
@@ -636,12 +667,24 @@ const Tasks: React.FC = () => {
                     <td>
                       <div className="flex items-center gap-2">
                         <Avatar className="h-7 w-7">
-                          <AvatarImage src={task.assignee?.avatar ? `${IMAGE_BASE_URL}${task.assignee.avatar}` : undefined} />
+                          <AvatarImage src={
+                            (task as any).assigned_to_profile_image 
+                              ? `${IMAGE_BASE_URL}${(task as any).assigned_to_profile_image}` 
+                              : (task as any).assigned_user_profile_image
+                              ? `${IMAGE_BASE_URL}${(task as any).assigned_user_profile_image}`
+                              : task.assignee?.avatar 
+                              ? `${IMAGE_BASE_URL}${task.assignee.avatar}` 
+                              : undefined
+                          } />
                           <AvatarFallback className="bg-accent/20 text-accent text-xs">
-                            {((task as any).assigned_user || task.assignee?.name || '?')?.split(' ').map((n: string) => n[0]).join('') || '?'}
+                            {((task as any).assigned_to_name || (task as any).assigned_user_name || (task as any).assigned_user || task.assignee?.name || '?')?.split(' ').map((n: string) => n[0]).join('') || '?'}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="text-sm">{(task as any).assigned_user || task.assignee?.name || 'Unassigned'}</span>
+                        <span className="text-sm">
+                          {((task as any).assigned_to_id || (task as any).assigned_user_id) === user?.id 
+                            ? 'You' 
+                            : (task as any).assigned_to_name || (task as any).assigned_user_name || (task as any).assigned_user || task.assignee?.name || 'Unassigned'}
+                        </span>
                       </div>
                     </td>
                     <td>

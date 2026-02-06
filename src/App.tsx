@@ -14,6 +14,8 @@ import ProjectEdit from "@/pages/ProjectEdit";
 import Tasks from "@/pages/Tasks";
 import TaskDetail from "@/pages/TaskDetail";
 import TaskEdit from "@/pages/TaskEdit";
+import Mails from "@/pages/Mails";
+import Calendar from "@/pages/Calendar";
 import Users from "@/pages/Users";
 import UserDetail from "@/pages/UserDetail";
 import UserEdit from "@/pages/UserEdit";
@@ -90,6 +92,16 @@ const App = () => (
               <Route path="/tasks/:id/edit" element={
                 <ProtectedRoute permission="tasks.update">
                   <TaskEdit />
+                </ProtectedRoute>
+              } />
+              <Route path="/mails" element={
+                <ProtectedRoute permission="mails.view">
+                  <Mails />
+                </ProtectedRoute>
+              } />
+              <Route path="/calendar" element={
+                <ProtectedRoute permission="calendar.view">
+                  <Calendar />
                 </ProtectedRoute>
               } />
               <Route path="/users" element={

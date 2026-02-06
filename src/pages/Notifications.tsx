@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { format } from 'date-fns';
 import {
   Bell,
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import api from '@/services/api';
+import { initSocket, onNotificationUpdate } from '@/services/socket';
 import type { Notification } from '@/types';
 
 const Notifications: React.FC = () => {
@@ -33,34 +34,51 @@ const Notifications: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'unread' | 'read'>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
 
-  useEffect(() => {
-    const fetchNotifications = async () => {
-      setIsLoading(true);
-      try {
-        const response: any = await api.getNotifications();
-        const notificationsData = response.data || [];
-        
-        // Map API response to component format
-        const mappedNotifications = notificationsData.map((notif: any) => ({
+  const fetchNotifications = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response: any = await api.getNotifications();
+      const notificationsData = response.data || [];
+      
+      // Map API response to component format and filter out COMMENT_ADDED
+      const mappedNotifications = notificationsData
+        .filter((notif: any) => notif.type !== 'COMMENT_ADDED')
+        .map((notif: any) => ({
           id: String(notif.id),
           title: notif.title || notif.type,
           message: notif.message || notif.description || '',
-          type: (notif.type || 'info').toLowerCase(),
-          read: notif.read || notif.is_read || false,
+          
+          read: notif.is_read === 1 ? true : (notif.read || false),
           created_at: notif.created_at || new Date().toISOString(),
+          name: notif.name || '',
+          email: notif.email || '',
+          entity_type: notif.entity_type || '',
+          entity_id: notif.entity_id || '',
+          user_id: notif.user_id || '',
         }));
-        
-        setNotifications(mappedNotifications);
-      } catch (error) {
-        console.error('Error fetching notifications:', error);
-        setNotifications([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchNotifications();
+      
+      setNotifications(mappedNotifications);
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+      setNotifications([]);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchNotifications();
+  }, [fetchNotifications]);
+
+  useEffect(() => {
+    initSocket();
+    const unsub = onNotificationUpdate(() => {
+      fetchNotifications();
+    });
+    return () => {
+      unsub();
+    };
+  }, [fetchNotifications]);
 
   const handleMarkAsRead = async (id: string) => {
     try {
@@ -106,29 +124,37 @@ const Notifications: React.FC = () => {
   };
 
   const getTypeIcon = (type: Notification['type']) => {
-    switch (type) {
-      case 'success':
-        return <CheckCircle className="h-5 w-5 text-green-500" />;
-      case 'warning':
-        return <AlertTriangle className="h-5 w-5 text-yellow-500" />;
-      case 'error':
-        return <AlertCircle className="h-5 w-5 text-red-500" />;
-      default:
-        return <Info className="h-5 w-5 text-blue-500" />;
+    if (typeof type !== 'string') {
+      return <Info className="h-5 w-5 text-blue-500" />;
     }
+    
+    const typeStr = type.toLowerCase();
+    if (typeStr.includes('success') || typeStr.includes('completed') || typeStr.includes('added')) {
+      return <CheckCircle className="h-5 w-5 text-green-500" />;
+    }
+    if (typeStr.includes('warning') || typeStr.includes('updated')) {
+      return <AlertTriangle className="h-5 w-5 text-yellow-500" />;
+    }
+    if (typeStr.includes('error') || typeStr.includes('failed')) {
+      return <AlertCircle className="h-5 w-5 text-red-500" />;
+    }
+    return <Info className="h-5 w-5 text-blue-500" />;
   };
 
   const getTypeBadgeVariant = (type: Notification['type']) => {
-    switch (type) {
-      case 'success':
-        return 'default';
-      case 'warning':
-        return 'secondary';
-      case 'error':
-        return 'destructive';
-      default:
-        return 'outline';
+    if (typeof type !== 'string') return 'outline';
+    
+    const typeStr = type.toLowerCase();
+    if (typeStr.includes('success') || typeStr.includes('completed') || typeStr.includes('added')) {
+      return 'default';
     }
+    if (typeStr.includes('warning') || typeStr.includes('updated')) {
+      return 'secondary';
+    }
+    if (typeStr.includes('error') || typeStr.includes('failed')) {
+      return 'destructive';
+    }
+    return 'outline';
   };
 
   const formatRelativeTime = (dateString: string) => {
@@ -244,9 +270,7 @@ const Notifications: React.FC = () => {
                 !notification.read && 'bg-accent/5'
               )}
             >
-              <div className="flex-shrink-0 mt-0.5">
-                {getTypeIcon(notification.type)}
-              </div>
+             
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -265,13 +289,21 @@ const Notifications: React.FC = () => {
                 <p className="text-sm text-muted-foreground mb-2">
                   {notification.message}
                 </p>
+                {notification.name && (
+                  <p className="text-sm font-medium mb-2">
+                    <span className="text-foreground">{notification.name}</span>
+                    {notification.email && (
+                      <span className="text-muted-foreground ml-1">({notification.email})</span>
+                    )}
+                  </p>
+                )}
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-muted-foreground">
                     {formatRelativeTime(notification.created_at)}
                   </span>
-                  <Badge variant={getTypeBadgeVariant(notification.type)} className="text-xs">
+                  {/* <Badge variant={getTypeBadgeVariant(notification.type)} className="text-xs">
                     {notification.type}
-                  </Badge>
+                  </Badge> */}
                 </div>
               </div>
 

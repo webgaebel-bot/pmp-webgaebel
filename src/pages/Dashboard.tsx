@@ -26,6 +26,7 @@ import { StatusBadge } from '@/components/common/StatusBadge';
 import { ProgressBar } from '@/components/common/ProgressBar';
 import { LoadingPage } from '@/components/common/LoadingSpinner';
 import { EmptyState } from '@/components/common/EmptyState';
+import Calendar from '@/components/common/Calendar';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -261,6 +262,11 @@ const Dashboard: React.FC = () => {
             description={`${stats.active_users} online`}
           />
         )}
+      </div>
+
+      {/* Calendar Section */}
+      <div>
+        <Calendar />
       </div>
 
       {/* Charts Row */}

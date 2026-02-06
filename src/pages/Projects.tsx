@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Plus,
@@ -51,6 +51,7 @@ import { usePermission } from '@/hooks/usePermission';
 import { PermissionGuard } from '@/components/auth/PermissionGuard';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
+import { initSocket, onProjectAssignment } from '@/services/socket';
 import type { Project } from '@/types';
 
 const Projects: React.FC = () => {
@@ -102,18 +103,7 @@ const Projects: React.FC = () => {
     );
   }
 
-  useEffect(() => {
-    fetchProjects();
-  }, []);
-
-  useEffect(() => {
-    if (id && projects.length > 0) {
-      const project = projects.find(p => p.id === id);
-      setSelectedProject(project || null);
-    }
-  }, [id, projects]);
-
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     setIsLoading(true);
     try {
       const response: any = await api.getProjects();
@@ -125,7 +115,28 @@ const Projects: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchProjects();
+  }, [fetchProjects]);
+
+  useEffect(() => {
+    if (id && projects.length > 0) {
+      const project = projects.find(p => p.id === id);
+      setSelectedProject(project || null);
+    }
+  }, [id, projects]);
+
+  useEffect(() => {
+    initSocket();
+    const unsub = onProjectAssignment(() => {
+      fetchProjects();
+    });
+    return () => {
+      unsub();
+    };
+  }, [fetchProjects]);
 
   const filteredProjects = projects.filter((project) => {
     const matchesSearch = project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -401,7 +412,6 @@ const Projects: React.FC = () => {
 
               <div className="flex items-center gap-2 mb-4">
                 <StatusBadge status={project.status} />
-                <PriorityBadge priority={project.priority} />
               </div>
 
               <div className="mb-4">

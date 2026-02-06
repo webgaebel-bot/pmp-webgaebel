@@ -8,19 +8,6 @@ interface PermissionGuardProps {
   requireAll?: boolean;
 }
 
-/**
- * PermissionGuard Component
- * Conditionally renders children based on user permissions
- * 
- * Usage:
- * <PermissionGuard permission="projects.create">
- *   <CreateProjectButton />
- * </PermissionGuard>
- * 
- * <PermissionGuard permission={['projects.create', 'projects.edit']} requireAll={true}>
- *   <ManageProjectButton />
- * </PermissionGuard>
- */
 export const PermissionGuard: React.FC<PermissionGuardProps> = ({
   children,
   permission,

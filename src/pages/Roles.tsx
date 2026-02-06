@@ -12,6 +12,7 @@ import {
   Square,
   Minus,
   Loader2,
+  ChevronDown,
 } from 'lucide-react';
 import { PageHeader } from '@/components/common/PageHeader';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -37,6 +38,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/services/api';
@@ -69,6 +76,7 @@ const Roles: React.FC = () => {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>(['dashboard']);
   const [newRole, setNewRole] = useState({
     name: '',
     description: '',
@@ -111,13 +119,16 @@ const Roles: React.FC = () => {
     role.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Group permissions by module
+  // Group permissions by category (first part before the dot)
   const groupedPermissions = permissions.reduce((acc, permission) => {
-    const module = permission.module || 'Other';
-    if (!acc[module]) {
-      acc[module] = [];
+    const parts = permission.name.split('.');
+    const category = parts[0] || 'other';
+    const categoryKey = category.charAt(0).toUpperCase() + category.slice(1);
+    
+    if (!acc[categoryKey]) {
+      acc[categoryKey] = [];
     }
-    acc[module].push(permission);
+    acc[categoryKey].push(permission);
     return acc;
   }, {} as Record<string, Permission[]>);
 
@@ -233,28 +244,6 @@ const Roles: React.FC = () => {
     );
   };
 
-  const handleToggleModule = (modulePermissions: Permission[]) => {
-    const modulePermissionIds = modulePermissions.map(p => p.id);
-    const allSelected = modulePermissionIds.every(id => selectedPermissions.includes(id));
-    
-    if (allSelected) {
-      // Deselect all permissions in this module
-      setSelectedPermissions(prev => prev.filter(id => !modulePermissionIds.includes(id)));
-    } else {
-      // Select all permissions in this module
-      setSelectedPermissions(prev => [...new Set([...prev, ...modulePermissionIds])]);
-    }
-  };
-
-  const getModuleSelectionState = (modulePermissions: Permission[]): 'all' | 'none' | 'partial' => {
-    const modulePermissionIds = modulePermissions.map(p => p.id);
-    const selectedCount = modulePermissionIds.filter(id => selectedPermissions.includes(id)).length;
-    
-    if (selectedCount === 0) return 'none';
-    if (selectedCount === modulePermissionIds.length) return 'all';
-    return 'partial';
-  };
-
   const handleSavePermissions = async () => {
     if (!selectedRole) return;
     
@@ -344,9 +333,6 @@ const Roles: React.FC = () => {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleOpenPermissions(role)}>
-                        <Shield className="mr-2 h-4 w-4" /> Manage Permissions
-                      </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleOpenEdit(role)}>
                         <Edit className="mr-2 h-4 w-4" /> Edit
                       </DropdownMenuItem>
@@ -503,38 +489,38 @@ const Roles: React.FC = () => {
                 description="No permissions have been configured in the system."
               />
             ) : (
-              <div className="space-y-3 sm:space-y-4">
-                {Object.entries(groupedPermissions).map(([module, modulePermissions]) => {
-                  const selectionState = getModuleSelectionState(modulePermissions);
-                  const selectedCount = modulePermissions.filter(p => selectedPermissions.includes(p.id)).length;
-                  const ModuleIcon = moduleIcons[module] || Shield;
+              <Accordion 
+                type="multiple" 
+                value={expandedCategories}
+                onValueChange={setExpandedCategories}
+                className="space-y-2 sm:space-y-3"
+              >
+                {Object.entries(groupedPermissions)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([category, categoryPermissions]) => {
+                  const categoryPermissionIds = categoryPermissions.map(p => p.id);
+                  const selectedCount = categoryPermissionIds.filter(id => selectedPermissions.includes(id)).length;
+                  const allSelected = selectedCount === categoryPermissionIds.length;
+                  const partialSelected = selectedCount > 0 && !allSelected;
                   
                   return (
-                    <div key={module} className="border border-border rounded-lg overflow-hidden">
-                      {/* Module Header */}
-                      <div
-                        className="flex items-center justify-between p-3 sm:p-4 bg-muted/50 cursor-pointer hover:bg-muted/70 transition-colors"
-                        onClick={() => handleToggleModule(modulePermissions)}
+                    <AccordionItem key={category} value={category} className="border border-border rounded-lg overflow-hidden">
+                      <AccordionTrigger 
+                        className="hover:no-underline px-3 sm:px-4 py-3 sm:py-4 bg-muted/50 hover:bg-muted/70 transition-colors flex items-center justify-between"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (expandedCategories.includes(category)) {
+                            setExpandedCategories(expandedCategories.filter(c => c !== category));
+                          } else {
+                            setExpandedCategories([...expandedCategories, category]);
+                          }
+                        }}
                       >
-                        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-                          <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-accent/10 flex-shrink-0">
-                            <ModuleIcon className="h-4 w-4 sm:h-5 sm:w-5 text-accent" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="font-semibold text-sm sm:text-base text-foreground truncate">{module}</h4>
-                            <p className="text-xs text-muted-foreground">
-                              {selectedCount} of {modulePermissions.length} selected
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-                          <Badge variant="secondary" className="text-xs hidden xs:inline-flex">
-                            {selectedCount} / {modulePermissions.length}
-                          </Badge>
-                          <div className="w-5 h-5 flex items-center justify-center">
-                            {selectionState === 'all' ? (
+                        <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
+                          <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                            {allSelected ? (
                               <CheckSquare className="h-5 w-5 text-accent" />
-                            ) : selectionState === 'partial' ? (
+                            ) : partialSelected ? (
                               <div className="h-5 w-5 border-2 border-accent rounded flex items-center justify-center">
                                 <Minus className="h-3 w-3 text-accent" />
                               </div>
@@ -542,39 +528,53 @@ const Roles: React.FC = () => {
                               <Square className="h-5 w-5 text-muted-foreground" />
                             )}
                           </div>
-                        </div>
-                      </div>
-                      
-                      {/* Permission Items */}
-                      <div className="p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-2 gap-2 sm:gap-3">
-                        {modulePermissions.map((permission) => (
-                          <div
-                            key={permission.id}
-                            className={`flex items-center gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg border transition-all cursor-pointer ${
-                              selectedPermissions.includes(permission.id)
-                                ? 'border-accent bg-accent/5'
-                                : 'border-border hover:border-muted-foreground/30 hover:bg-muted/30'
-                            }`}
-                            onClick={() => handleTogglePermission(permission.id)}
-                          >
-                            <Checkbox
-                              checked={selectedPermissions.includes(permission.id)}
-                              onCheckedChange={() => handleTogglePermission(permission.id)}
-                              className="data-[state=checked]:bg-accent data-[state=checked]:border-accent flex-shrink-0"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium text-xs sm:text-sm truncate">{permission.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono truncate">
-                                {permission.key}
-                              </p>
-                            </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="font-semibold text-sm sm:text-base text-foreground truncate">{category}</h4>
+                            <p className="text-xs text-muted-foreground">
+                              {selectedCount} of {categoryPermissionIds.length} selected
+                            </p>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        </div>
+                        <Badge variant="secondary" className="text-xs flex-shrink-0 ml-2">
+                          {selectedCount}/{categoryPermissionIds.length}
+                        </Badge>
+                        <ChevronDown className="h-4 w-4 flex-shrink-0 ml-2 transition-transform" />
+                      </AccordionTrigger>
+                      
+                      <AccordionContent className="p-3 sm:p-4 border-t border-border">
+                        <div className="space-y-3 sm:space-y-4">
+                          {categoryPermissions.map((permission) => (
+                            <div
+                              key={permission.id}
+                              className={`flex items-start gap-3 p-3 sm:p-4 rounded-lg border transition-all cursor-pointer ${
+                                selectedPermissions.includes(permission.id)
+                                  ? 'border-accent bg-accent/5'
+                                  : 'border-border hover:border-muted-foreground/30 hover:bg-muted/30'
+                              }`}
+                              onClick={() => handleTogglePermission(permission.id)}
+                            >
+                              <Checkbox
+                                checked={selectedPermissions.includes(permission.id)}
+                                onCheckedChange={() => handleTogglePermission(permission.id)}
+                                className="data-[state=checked]:bg-accent data-[state=checked]:border-accent flex-shrink-0 mt-1"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-start gap-2 flex-wrap mb-2">
+                                  <p className="font-semibold text-xs sm:text-sm text-foreground break-words">{permission.name}</p>
+                                  
+                                </div>
+                                <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                                  {permission.description || 'No description available'}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
                   );
                 })}
-              </div>
+              </Accordion>
             )}
           </div>
           

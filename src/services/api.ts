@@ -32,6 +32,11 @@ class ApiService {
     });
 
     if (response.status === 401) {
+      const isAuthEndpoint = endpoint.startsWith('/auth/login');
+      if (isAuthEndpoint) {
+        const error = await response.json().catch(() => ({ message: 'Unauthorized' }));
+        throw new Error(error.message || 'Unauthorized');
+      }
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user');
       window.location.href = '/login';
@@ -142,6 +147,10 @@ class ApiService {
   async getTask(id: string) {
     return this.request(`/task/tasks/${id}`);
   }
+ 
+  async getTasksByProjectId(projectId: string) {
+    return this.request(`/task/projects/${projectId}/tasks`);
+  }
 
   async createTask(data: any) {
     return this.request('/task/tasks', {
@@ -186,15 +195,25 @@ class ApiService {
     });
   }
 
+  async unassignTask(taskId: string) {
+    return this.request(`/task/tasks/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ assignee_id: null }),
+    });
+  }
+
   // Task Comments APIs
   async getTaskComments(taskId: string) {
     return this.request(`/taskcomment/tasks/${taskId}/comments`);
   }
 
-  async addTaskComment(taskId: string, content: string) {
+  async addTaskComment(taskId: string, content: string, parentId?: string | number) {
     return this.request(`/taskcomment/tasks/${taskId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ 
+        content,
+        parent_id: parentId || null
+      }),
     });
   }
 
@@ -380,6 +399,98 @@ class ApiService {
     return this.request(`/notifications/${id}`, {
       method: 'DELETE',
     });
+  }
+
+  // Calendar APIs
+  async getCalendar(startDate?: string, endDate?: string): Promise<any> {
+    if (startDate && endDate) {
+      return this.request('/calendar', {
+        method: 'POST',
+        body: JSON.stringify({ start_date: startDate, end_date: endDate }),
+      });
+    }
+    return this.request('/calendar');
+  }
+
+  // Mail APIs
+  async getInbox(): Promise<any> {
+    return this.request('/mails/inbox');
+  }
+
+  async getSentMails(): Promise<any> {
+    return this.request('/mails/sent');
+  }
+
+  async getAllMails(): Promise<any> {
+    return this.request('/mails/admin/all');
+  }
+
+  async getMailDetail(id: string): Promise<any> {
+    return this.request(`/mails/${id}`);
+  }
+
+  async sendMail(mailData: {
+    recipients: string[] | number[];
+    subject: string;
+    body: string;
+  } | FormData): Promise<any> {
+    const token = this.getToken();
+    
+    if (mailData instanceof FormData) {
+      // For FormData with attachments
+      const response = await fetch(`${API_BASE_URL}/mails`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: mailData,
+      });
+
+      if (response.status === 401) {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+        throw new Error('Unauthorized');
+      }
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+        throw new Error(error.message || 'An error occurred');
+      }
+
+      return response.json();
+    }
+
+    // For JSON payload
+    return this.request('/mails', {
+      method: 'POST',
+      body: JSON.stringify(mailData),
+    });
+  }
+
+  async replyMail(threadId: string, replyData: {
+    body: string;
+  }): Promise<any> {
+    return this.request(`/mails/${threadId}/reply`, {
+      method: 'POST',
+      body: JSON.stringify(replyData),
+    });
+  }
+
+  async markMailAsRead(id: string): Promise<any> {
+    return this.request(`/mails/${id}/read`, {
+      method: 'PUT',
+    });
+  }
+
+  async deleteMail(id: string): Promise<any> {
+    return this.request(`/mails/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // System/Mails Users APIs
+  async getSystemUsers(search: string = ''): Promise<any> {
+    const query = search ? `?q=${encodeURIComponent(search)}` : '';
+    return this.request(`/mails/users/suggestions${query}`);
   }
 }
 

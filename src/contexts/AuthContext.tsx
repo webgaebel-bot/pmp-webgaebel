@@ -54,6 +54,15 @@ const getProfileImage = (): string | null => {
   return localStorage.getItem('profile_image');
 };
 
+const isUserActive = (user: User | null): boolean => {
+  if (!user || user.status === undefined || user.status === null) return true;
+  const status = user.status as any;
+  if (typeof status === 'string') return status.toLowerCase() === 'active';
+  if (typeof status === 'number') return status === 1;
+  if (typeof status === 'boolean') return status === true;
+  return true;
+};
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AuthState>({
     user: getStoredUser(),
@@ -87,6 +96,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Try to fetch current user from API
         const response: any = await api.getCurrentUser();
         const user = response.data || response;
+
+        if (!isUserActive(user)) {
+          console.log('User inactive, clearing session');
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user');
+          setState({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            isLoading: false,
+          });
+          setAuthCheckCompleted(true);
+          return;
+        }
         
         // Store updated user in localStorage
         storeUser(user);
@@ -140,6 +163,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [authCheckCompleted]);
 
+  useEffect(() => {
+    if (!state.isAuthenticated) return;
+    const interval = setInterval(() => {
+      refreshAuth();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [state.isAuthenticated]);
+
   const refreshAuth = async () => {
     const token = localStorage.getItem('auth_token');
     if (!token) return;
@@ -147,6 +178,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const response: any = await api.getCurrentUser();
       const user = response.data || response;
+      if (!isUserActive(user)) {
+        await logout();
+        return;
+      }
       storeUser(user);
       
       // Store profile image separately for easy access
@@ -166,6 +201,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const login = async (email: string, password: string) => {
     const response: any = await api.login(email, password);
     const { token, user } = response.data || response;
+
+    if (!isUserActive(user)) {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
+      throw new Error('Account is inactive. Please contact admin.');
+    }
     
     // Store token
     localStorage.setItem('auth_token', token);

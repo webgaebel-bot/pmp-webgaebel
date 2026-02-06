@@ -16,7 +16,8 @@ import {
   Download, 
   ImageIcon,
   Calendar,
-  User
+  User,
+  Clock
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -362,10 +363,10 @@ const TaskDetail: React.FC = () => {
 
   if (!task) {
     return (
-      <div className="space-y-6">
+      <div className="min-h-screen bg-gradient-to-br from-background to-muted/20 p-6">
         <button
           onClick={() => navigate('/tasks')}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Tasks
@@ -381,43 +382,43 @@ const TaskDetail: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-background to-muted/20 p-6">
       <button
         onClick={() => navigate('/tasks')}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Tasks
       </button>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
         {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-8">
           {/* Task Header */}
-          <div className="bg-card rounded-lg border border-border p-6 shadow-card">
-            <div className="flex items-start justify-between mb-4">
-              <h1 className="text-2xl font-bold">{task.title}</h1>
+          <div className="bg-card rounded-xl border border-border p-8 shadow-lg hover:shadow-xl transition-shadow">
+            <div className="flex items-start justify-between mb-6">
+              <h1 className="text-3xl font-bold text-foreground leading-tight">{task.title}</h1>
               {(canEdit || canDelete) && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon">
-                      <MoreVertical className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="hover:bg-muted">
+                      <MoreVertical className="h-5 w-5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
+                  <DropdownMenuContent align="end" className="w-48">
                     {canEdit && (
-                      <DropdownMenuItem onClick={() => navigate(`/tasks/${id}/edit`)}>
-                        <Edit className="mr-2 h-4 w-4" /> Edit
+                      <DropdownMenuItem onClick={() => navigate(`/tasks/${id}/edit`)} className="cursor-pointer">
+                        <Edit className="mr-2 h-4 w-4" /> Edit Task
                       </DropdownMenuItem>
                     )}
                     {canDelete && (
                       <>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
-                          className="text-destructive"
+                          className="text-destructive focus:text-destructive cursor-pointer"
                           onClick={handleDeleteTask}
                         >
-                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete Task
                         </DropdownMenuItem>
                       </>
                     )}
@@ -426,11 +427,11 @@ const TaskDetail: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex flex-wrap items-center gap-4 mb-8">
               {canEdit ? (
                 <>
                   <Select value={task.status} onValueChange={handleStatusChange}>
-                    <SelectTrigger className="w-auto">
+                    <SelectTrigger className="w-auto border-0 bg-transparent hover:bg-muted/50">
                       <StatusBadge status={task.status} />
                     </SelectTrigger>
                     <SelectContent>
@@ -442,7 +443,7 @@ const TaskDetail: React.FC = () => {
                     </SelectContent>
                   </Select>
                   <Select value={task.priority} onValueChange={handlePriorityChange}>
-                    <SelectTrigger className="w-auto">
+                    <SelectTrigger className="w-auto border-0 bg-transparent hover:bg-muted/50">
                       <PriorityBadge priority={task.priority} />
                     </SelectTrigger>
                     <SelectContent>
@@ -462,56 +463,153 @@ const TaskDetail: React.FC = () => {
             </div>
 
             <div>
-              <h2 className="text-sm font-semibold text-muted-foreground mb-2">Description</h2>
-              <p className="text-foreground whitespace-pre-wrap">
+              <h2 className="text-lg font-semibold text-muted-foreground mb-3">Description</h2>
+              <p className="text-foreground whitespace-pre-wrap leading-relaxed">
                 {task.description || 'No description provided'}
               </p>
             </div>
           </div>
 
           {/* Comments Section */}
-          <div className="bg-card rounded-lg border border-border shadow-card">
-            <div className="flex items-center gap-2 p-4 border-b border-border">
-              <MessageSquare className="h-5 w-5 text-muted-foreground" />
-              <h3 className="font-semibold">Comments ({comments.length})</h3>
+          <div className="bg-card rounded-xl border border-border shadow-lg">
+            <div className="flex items-center gap-3 p-6 border-b border-border bg-muted/30">
+              <MessageSquare className="h-6 w-6 text-primary" />
+              <h3 className="font-bold text-lg">Comments ({comments.length})</h3>
             </div>
 
-            <ScrollArea className={`${comments.length >= 4 ? 'max-h-96' : 'max-h-auto'}`}>
-              <div className="divide-y divide-border">
+            <ScrollArea className="w-full h-96">
+              <div className="divide-y divide-border/50">
                 {comments.length === 0 ? (
-                  <div className="p-6 text-center text-muted-foreground">
+                  <div className="p-8 text-center text-muted-foreground">
+                    <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     No comments yet. Be the first to comment!
                   </div>
                 ) : (
-                  comments.map((comment) => (
-                    <div key={comment.id} className="p-4">
-                      <div className="flex items-start gap-3">
-                        <Avatar className="h-8 w-8">
-                          <AvatarImage src={comment.user?.avatar ? `${IMAGE_BASE_URL}${comment.user.avatar}` : ''} />
-                          <AvatarFallback>{(comment.user?.name || comment.user_name || '?')?.split(' ').map((n: string) => n[0]).join('').toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-sm">{comment.user?.name || comment.user_name || 'Unknown'}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {format(new Date(comment.created_at), 'MMM dd, yyyy HH:mm')}
-                              </span>
+                  getTopLevelComments().map((comment) => (
+                    <div key={comment.id} className="hover:bg-muted/20 transition-colors">
+                      <div className="p-6">
+                        <div className="flex items-start gap-4">
+                          <Avatar className="h-10 w-10 ring-2 ring-muted">
+                            <AvatarImage src={comment.user?.avatar ? `${IMAGE_BASE_URL}${comment.user.avatar}` : ''} />
+                            <AvatarFallback className="bg-primary text-primary-foreground">
+                              {(comment.user?.name || comment.user_name || '?')?.split(' ').map((n: string) => n[0]).join('').toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-3">
+                                                                <span className="font-medium text-sm">{comment.user?.name || comment.user_name || 'Unknown'}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {format(new Date(comment.created_at), 'MMM dd, yyyy HH:mm')}
+                                </span>
+                              </div>
+                              {canDeleteComment && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                  onClick={() => handleDeleteComment(comment.id)}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
                             </div>
-                            {canDeleteComment && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                                onClick={() => handleDeleteComment(comment.id)}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
+                            <p className="text-sm mt-1 whitespace-pre-wrap">{(comment as any).comment || comment.content || ''}</p>
+                            
+                            {/* Reply Button */}
+                            {canComment && (
+                              <div className="mt-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-auto p-0 text-xs text-muted-foreground hover:text-accent"
+                                  onClick={() => setReplyingToCommentId(replyingToCommentId === comment.id ? null : comment.id)}
+                                >
+                                  <Reply className="h-3 w-3 mr-1" />
+                                  Reply
+                                </Button>
+                              </div>
                             )}
                           </div>
-                          <p className="text-sm mt-1 whitespace-pre-wrap">{(comment as any).comment || comment.content || ''}</p>
                         </div>
                       </div>
+
+                      {/* Reply Form */}
+                      {replyingToCommentId === comment.id && canComment && (
+                        <div className="pl-4 pr-4 pb-4 pt-2 bg-muted/30 border-t border-border">
+                          <div className="ml-11 space-y-3">
+                            <Textarea
+                              value={replyText}
+                              onChange={(e) => setReplyText(e.target.value)}
+                              placeholder="Write a reply..."
+                              className="min-h-[60px] resize-none text-sm"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setReplyingToCommentId(null);
+                                  setReplyText('');
+                                }}
+                                disabled={isSubmittingComment}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="bg-accent hover:bg-accent/90"
+                                onClick={() => handleAddReply(comment.id)}
+                                disabled={isSubmittingComment || !replyText.trim()}
+                              >
+                                {isSubmittingComment ? (
+                                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Send className="mr-2 h-3 w-3" />
+                                )}
+                                Reply
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Replies (nested) */}
+                      {getReplies(comment.id).length > 0 && (
+                        <div className="bg-muted/20">
+                          {getReplies(comment.id).map((reply) => (
+                            <div key={reply.id} className="p-4 border-t border-border/50 ml-11">
+                              <div className="flex items-start gap-3">
+                                <Avatar className="h-7 w-7">
+                                  <AvatarImage src={reply.user?.avatar ? `${IMAGE_BASE_URL}${reply.user.avatar}` : ''} />
+                                  <AvatarFallback>{(reply.user?.name || reply.user_name || '?')?.split(' ').map((n: string) => n[0]).join('').toUpperCase()}</AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-xs sm:text-sm">{reply.user?.name || reply.user_name || 'Unknown'}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        {format(new Date(reply.created_at), 'MMM dd, yyyy HH:mm')}
+                                      </span>
+                                    </div>
+                                    {canDeleteComment && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-5 w-5 text-muted-foreground hover:text-destructive"
+                                        onClick={() => handleDeleteComment(reply.id)}
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                  <p className="text-xs sm:text-sm mt-1 whitespace-pre-wrap">{(reply as any).comment || reply.content || ''}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -548,12 +646,106 @@ const TaskDetail: React.FC = () => {
             )}
           </div>
 
+        </div>
+
+        {/* Sidebar */}
+        <div className="space-y-8">
+          {/* Task Details */}
+          <div className="bg-card rounded-xl border border-border p-6 shadow-lg">
+            <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
+              <CheckSquare className="h-5 w-5 text-primary" />
+              Details
+            </h3>
+            
+            <div className="space-y-6">
+              <div>
+                <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Project
+                </p>
+                <p className="text-sm font-medium">
+                  {(task as any).project_name || task.project?.name || 'No project'}
+                </p>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  Due Date
+                </p>
+                <p className="text-sm font-medium">
+                  {task.due_date ? format(new Date(task.due_date), 'MMM dd, yyyy') : 'Not set'}
+                </p>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  Assigned To
+                </p>
+                {(task as any).assigned_user ? (
+                  <p className="text-sm font-medium">{(task as any).assigned_user}</p>
+                ) : task.assignee ? (
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={task.assignee.avatar ? `${IMAGE_BASE_URL}${task.assignee.avatar}` : ''} />
+                      <AvatarFallback>{task.assignee.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    <span className="text-sm font-medium">{task.assignee.name}</span>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Unassigned</p>
+                )}
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  Created
+                </p>
+                <p className="text-sm font-medium">
+                  {task.created_at ? format(new Date(task.created_at), 'MMM dd, yyyy') : 'Not specified'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Time Tracking */}
+          {(task.estimated_hours || task.actual_hours) && (
+            <div className="bg-card rounded-xl border border-border p-6 shadow-lg">
+              <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
+                <Clock className="h-5 w-5 text-primary" />
+                Time Tracking
+              </h3>
+              <div className="space-y-4">
+                {task.estimated_hours && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Estimated</span>
+                    <span className="text-sm font-medium bg-muted px-2 py-1 rounded">{task.estimated_hours}h</span>
+                  </div>
+                )}
+                {task.actual_hours && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Actual</span>
+                    <span className="text-sm font-medium bg-muted px-2 py-1 rounded">{task.actual_hours}h</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Files Section */}
-          <div className="bg-card rounded-lg border border-border shadow-card">
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-muted-foreground" />
-                <h3 className="font-semibold">Attachments ({files.length})</h3>
+          <div className="bg-card rounded-xl border border-border shadow-lg">
+            <div className="flex items-center justify-between p-6 border-b border-border">
+              <div className="flex items-center gap-3">
+                <FileText className="h-6 w-6 text-primary" />
+                <h3 className="font-bold text-lg">Attachments ({files.length})</h3>
               </div>
               {canUploadFiles && (
                 <div>
@@ -576,19 +768,20 @@ const TaskDetail: React.FC = () => {
             </div>
 
             {files.length === 0 ? (
-              <div className="p-6 text-center text-muted-foreground">
+              <div className="p-8 text-center text-muted-foreground">
+                <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 No attachments yet.
               </div>
             ) : (
-              <div className="divide-y divide-border">
+              <div className="divide-y divide-border/50">
                 {files.map((file) => (
-                  <div key={file.id} className="flex items-center justify-between p-4 hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                  <div key={file.id} className="flex items-center justify-between p-6 hover:bg-muted/50 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
                         {isImageFile(file.name) ? (
-                          <ImageIcon className="h-5 w-5 text-muted-foreground" />
+                          <ImageIcon className="h-6 w-6 text-muted-foreground" />
                         ) : (
-                          <FileText className="h-5 w-5 text-muted-foreground" />
+                          <FileText className="h-6 w-6 text-muted-foreground" />
                         )}
                       </div>
                       <div>
@@ -623,111 +816,6 @@ const TaskDetail: React.FC = () => {
               </div>
             )}
           </div>
-        </div>
-
-        {/* Sidebar */}
-        <div className="space-y-6">
-          {/* Task Details */}
-          <div className="bg-card rounded-lg border border-border p-6 shadow-card">
-            <h3 className="font-semibold mb-4">Details</h3>
-            
-            <div className="space-y-4">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Project</p>
-                <p className="text-sm font-medium">
-                  {(task as any).project_name || task.project?.name || 'No project'}
-                </p>
-              </div>
-
-              <Separator />
-
-              <div>
-                <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Calendar className="h-3 w-3" />
-                  Due Date
-                </p>
-                <p className="text-sm font-medium">
-                  {task.due_date ? format(new Date(task.due_date), 'MMM dd, yyyy') : 'Not set'}
-                </p>
-              </div>
-
-              <Separator />
-
-              <div>
-                <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                  <User className="h-3 w-3" />
-                  Assigned To
-                </p>
-                {(task as any).assigned_user ? (
-                  <p className="text-sm font-medium">{(task as any).assigned_user}</p>
-                ) : task.assignee ? (
-                  <div className="flex items-center gap-2">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={task.assignee.avatar ? `${IMAGE_BASE_URL}${task.assignee.avatar}` : ''} />
-                      <AvatarFallback>{task.assignee.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
-                    </Avatar>
-                    <span className="text-sm font-medium">{task.assignee.name}</span>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Unassigned</p>
-                )}
-              </div>
-
-              <Separator />
-
-              <div>
-                <p className="text-xs text-muted-foreground mb-2">Reporter</p>
-                {task.reporter ? (
-                  <div className="flex items-center gap-2">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={task.reporter.avatar ? `${IMAGE_BASE_URL}${task.reporter.avatar}` : ''} />
-                      <AvatarFallback>{task.reporter.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
-                    </Avatar>
-                    <span className="text-sm font-medium">{task.reporter.name}</span>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Not assigned</p>
-                )}
-              </div>
-
-              <Separator />
-
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Created</p>
-                <p className="text-sm">
-                  {task.created_at ? format(new Date(task.created_at), 'MMM dd, yyyy HH:mm') : 'Unknown'}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Updated</p>
-                <p className="text-sm">
-                  {task.updated_at ? format(new Date(task.updated_at), 'MMM dd, yyyy HH:mm') : (task.created_at ? format(new Date(task.created_at), 'MMM dd, yyyy HH:mm') : 'Unknown')}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Time Tracking */}
-          {(task.estimated_hours || task.actual_hours) && (
-            <div className="bg-card rounded-lg border border-border p-6 shadow-card">
-              <h3 className="font-semibold mb-4">Time Tracking</h3>
-              <div className="space-y-3">
-                {task.estimated_hours && (
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Estimated</span>
-                    <span className="text-sm font-medium">{task.estimated_hours}h</span>
-                  </div>
-                )}
-                {task.actual_hours && (
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Actual</span>
-                    <span className="text-sm font-medium">{task.actual_hours}h</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 

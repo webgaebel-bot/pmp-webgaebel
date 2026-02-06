@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -15,6 +15,8 @@ import {
   Loader2,
   UserMinus,
   Mail,
+  Eye,
+  ImageIcon,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -23,6 +25,7 @@ import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { ProgressBar } from '@/components/common/ProgressBar';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingPage } from '@/components/common/LoadingSpinner';
+import { ImagePreviewModal } from '@/components/common/ImagePreviewModal';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -41,6 +44,8 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -54,6 +59,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermission';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
+import { initSocket, onProjectAssignment } from '@/services/socket';
 import type { Project, ProjectMember, Task, FileAttachment, User } from '@/types';
 
 const ProjectDetail: React.FC = () => {
@@ -76,20 +82,28 @@ const ProjectDetail: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState('member');
   const [isSaving, setIsSaving] = useState(false);
 
+  // Create task dialog
+  const [isCreateTaskDialogOpen, setIsCreateTaskDialogOpen] = useState(false);
+  const [newTask, setNewTask] = useState({
+    title: '',
+    description: '',
+    priority: 'medium',
+    due_date: '',
+    project_id: '',
+  });
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isTaskSaving, setIsTaskSaving] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+
   const canEdit = permission.canEditProject();
   const canDelete = permission.canDeleteProject();
   const canUploadFiles = permission.canUploadFiles();
   const canCreateMembers = permission.canCreateMembers() || permission.canAddProjectMembers();
   const canUpdateMembers = permission.canUpdateMembers() || permission.canUpdateProjectMembers();
   const canDeleteMembers = permission.canDeleteMembers() || permission.canRemoveProjectMembers();
+  const canCreateTask = permission.canCreateTask();
 
-  useEffect(() => {
-    if (id) {
-      fetchProjectData();
-    }
-  }, [id]);
-
-  const fetchProjectData = async () => {
+  const fetchProjectData = useCallback(async () => {
     if (!id) return;
     
     setIsLoading(true);
@@ -97,7 +111,7 @@ const ProjectDetail: React.FC = () => {
       const [projectRes, membersRes, tasksRes, filesRes] = await Promise.allSettled([
         api.getProject(id),
         api.getProjectMembers(id),
-        api.getTasks({ project_id: id }),
+        api.getTasksByProjectId(id),
         api.getFiles(id),
       ]);
 
@@ -144,7 +158,28 @@ const ProjectDetail: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [id, toast]);
+
+  useEffect(() => {
+    if (id) {
+      fetchProjectData();
+    }
+  }, [id, fetchProjectData]);
+
+  useEffect(() => {
+    if (!id) return;
+    initSocket();
+    const unsub = onProjectAssignment((payload?: any) => {
+      // If event has project_id, only refresh for this project
+      const payloadProjectId =
+        payload?.project_id ?? payload?.projectId ?? payload?.id;
+      if (payloadProjectId && String(payloadProjectId) !== String(id)) return;
+      fetchProjectData();
+    });
+    return () => {
+      unsub();
+    };
+  }, [id, fetchProjectData]);
 
   const fetchUsers = async () => {
     try {
@@ -155,6 +190,71 @@ const ProjectDetail: React.FC = () => {
       console.error('Failed to fetch users:', error);
       setUsers([]);
     }
+  };
+
+  const fetchProjects = async () => {
+    try {
+      const response = await api.getProjects();
+      const projectsData = (response as any)?.data || [];
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
+      setProjects([]);
+    }
+  };
+
+  const handleCreateTask = async () => {
+    if (!newTask.title.trim()) {
+      toast({
+        title: 'Validation Error',
+        description: 'Task title is required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!newTask.project_id) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a project.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsTaskSaving(true);
+    try {
+      await api.createTask(newTask);
+      toast({
+        title: 'Success',
+        description: 'Task created successfully.',
+      });
+      setIsCreateTaskDialogOpen(false);
+      setNewTask({ title: '', description: '', priority: 'medium', due_date: '', project_id: '' });
+      // Refresh tasks
+      if (id) {
+        const tasksRes = await api.getTasks({ project_id: id });
+        const tasksData = (tasksRes as any)?.data || [];
+        setTasks(Array.isArray(tasksData) ? tasksData : []);
+      }
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to create task.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsTaskSaving(false);
+    }
+  };
+
+  const handleOpenCreateTaskDialog = async () => {
+    await fetchProjects();
+    // Pre-select current project
+    if (id) {
+      setNewTask(prev => ({ ...prev, project_id: id }));
+    }
+    setIsCreateTaskDialogOpen(true);
   };
 
   const handleAddMember = async () => {
@@ -332,11 +432,22 @@ const ProjectDetail: React.FC = () => {
   }
 
   const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
+    if (bytes === 0 || !bytes) return '0 Bytes';
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const isImageFile = (fileName: string) => {
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'];
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    return ext ? imageExtensions.includes(ext) : false;
+  };
+
+  const handlePreviewImage = (file: FileAttachment) => {
+    const imageUrl = `${IMAGE_BASE_URL}${file.url}`;
+    setPreviewImage({ url: imageUrl, name: file.name });
   };
 
   return (
@@ -356,7 +467,7 @@ const ProjectDetail: React.FC = () => {
             <h1 className="text-2xl font-bold mb-2">{project.name}</h1>
             <div className="flex items-center gap-2">
               {project.status && <StatusBadge status={project.status} />}
-              {project.priority && <PriorityBadge priority={project.priority} />}
+
             </div>
           </div>
           {(canEdit || canDelete) && (
@@ -572,6 +683,16 @@ const ProjectDetail: React.FC = () => {
           <div className="bg-card rounded-lg border border-border shadow-card">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-semibold">Project Tasks ({tasks.length})</h3>
+              {canCreateTask && (
+                <Button 
+                  onClick={handleOpenCreateTaskDialog}
+                  size="sm"
+                  className="bg-accent hover:bg-accent/90"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Task
+                </Button>
+              )}
             </div>
             
             {tasks.length === 0 ? (
@@ -592,7 +713,7 @@ const ProjectDetail: React.FC = () => {
                       <p className="font-medium truncate">{task.title}</p>
                       <div className="flex items-center gap-2 mt-1">
                         <StatusBadge status={task.status} />
-                        <PriorityBadge priority={task.priority} />
+
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
@@ -740,6 +861,97 @@ const ProjectDetail: React.FC = () => {
             >
               {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Add Member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Task Dialog */}
+      <Dialog open={isCreateTaskDialogOpen} onOpenChange={setIsCreateTaskDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create New Task</DialogTitle>
+            <DialogDescription>
+              Add a new task to your project.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="task-project">Project <span className="text-destructive">*</span></Label>
+              <Select value={newTask.project_id} onValueChange={(value) => setNewTask({ ...newTask, project_id: value })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((proj) => (
+                    <SelectItem key={proj.id} value={String(proj.id)}>
+                      {proj.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="task-title">Title <span className="text-destructive">*</span></Label>
+              <Input
+                id="task-title"
+                value={newTask.title}
+                onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                placeholder="Enter task title"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="task-description">Description</Label>
+              <Textarea
+                id="task-description"
+                value={newTask.description}
+                onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
+                placeholder="Enter task description"
+                rows={3}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="task-priority">Priority</Label>
+                <Select
+                  value={newTask.priority}
+                  onValueChange={(value) => setNewTask({ ...newTask, priority: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="task-due-date">Due Date</Label>
+                <Input
+                  id="task-due-date"
+                  type="date"
+                  value={newTask.due_date}
+                  onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateTaskDialogOpen(false)} disabled={isTaskSaving}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateTask} className="bg-accent hover:bg-accent/90" disabled={isTaskSaving}>
+              {isTaskSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Task'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

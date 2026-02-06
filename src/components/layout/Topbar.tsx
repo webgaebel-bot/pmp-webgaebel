@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import {
@@ -32,6 +32,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { IMAGE_BASE_URL, api } from '@/services/api';
+import { initSocket, onNotificationUpdate } from '@/services/socket';
 import { cn } from '@/lib/utils';
 import type { Notification } from '@/types';
 
@@ -68,34 +69,51 @@ export const Topbar: React.FC<TopbarProps> = ({
     }
   }, [user]);
 
-  useEffect(() => {
-    const fetchNotifications = async () => {
-      try {
-        setIsLoadingNotifications(true);
-        const response: any = await api.getNotifications();
-        const notificationsData = response.data || [];
-        
-        // Map API response to component format
-        const mappedNotifications = notificationsData.map((notif: any) => ({
+  const fetchNotifications = useCallback(async () => {
+    try {
+      setIsLoadingNotifications(true);
+      const response: any = await api.getNotifications();
+      const notificationsData = response.data || [];
+      
+      // Map API response to component format and filter out COMMENT_ADDED
+      const mappedNotifications = notificationsData
+        .filter((notif: any) => notif.type !== 'COMMENT_ADDED')
+        .map((notif: any) => ({
           id: String(notif.id),
           title: notif.title || notif.type,
           message: notif.message || notif.description || '',
-          type: (notif.type || 'info').toLowerCase(),
-          read: notif.read || notif.is_read || false,
+          type: notif.type || 'info',
+          read: notif.is_read === 1 ? true : (notif.read || false),
           created_at: notif.created_at || new Date().toISOString(),
+          name: notif.name || '',
+          email: notif.email || '',
+          entity_type: notif.entity_type || '',
+          entity_id: notif.entity_id || '',
+          user_id: notif.user_id || '',
         }));
-        
-        setNotifications(mappedNotifications);
-      } catch (error) {
-        console.error('Error fetching notifications:', error);
-        setNotifications([]);
-      } finally {
-        setIsLoadingNotifications(false);
-      }
-    };
-
-    fetchNotifications();
+      
+      setNotifications(mappedNotifications);
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+      setNotifications([]);
+    } finally {
+      setIsLoadingNotifications(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchNotifications();
+  }, [fetchNotifications]);
+
+  useEffect(() => {
+    initSocket();
+    const unsub = onNotificationUpdate(() => {
+      fetchNotifications();
+    });
+    return () => {
+      unsub();
+    };
+  }, [fetchNotifications]);
 
   const handleLogout = async () => {
     await logout();
@@ -241,11 +259,18 @@ export const Topbar: React.FC<TopbarProps> = ({
                   <DropdownMenuItem
                     key={n.id}
                     onClick={() => handleMarkAsRead(n.id)}
-                    className="flex flex-col items-start gap-1 px-4 py-3 cursor-pointer"
+                    className="flex flex-col items-start gap-1.5 px-4 py-3 cursor-pointer"
                   >
-                    <span className="font-medium text-sm">{n.title}</span>
-                    <span className="text-xs text-muted-foreground">{n.message}</span>
-                    <span className="text-xs text-muted-foreground">{format(new Date(n.created_at), 'p, MMM d')}</span>
+                    <div className="flex flex-col gap-1 w-full">
+                      <span className="font-medium text-sm">{n.title}</span>
+                      <span className="text-xs text-muted-foreground">{n.message}</span>
+                      {n.name && (
+                        <span className="text-xs text-foreground font-medium">
+                          {n.name} {n.email && <span className="text-muted-foreground">({n.email})</span>}
+                        </span>
+                      )}
+                      <span className="text-xs text-muted-foreground">{format(new Date(n.created_at), 'p, MMM d')}</span>
+                    </div>
                   </DropdownMenuItem>
                 ))
               )}

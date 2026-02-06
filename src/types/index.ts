@@ -194,7 +194,12 @@ export interface Notification {
   id: string;
   title: string;
   message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
+  type: string; // Can be info, success, warning, error, or specific types like TASK_UPDATED, TASK_ASSIGNED
   read: boolean;
   created_at: string;
+  name?: string; // User who triggered the notification
+  email?: string; // User email
+  entity_type?: string; // Type of entity (Task, Project, etc.)
+  entity_id?: number | string; // ID of the entity
+  user_id?: number | string;
 }
