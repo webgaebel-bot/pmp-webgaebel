@@ -30,7 +30,7 @@ export function LeadsKanban({ leads, onOpenLead, onMoveLead }: LeadsKanbanProps)
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="grid gap-4 overflow-x-auto xl:grid-cols-7">
+      <div className="flex gap-4 overflow-x-auto pb-4">
         {grouped.map(({ stage, leads: stageLeads }) => (
           <KanbanColumn key={stage} stage={stage} leads={stageLeads} onOpenLead={onOpenLead} />
         ))}
@@ -44,15 +44,15 @@ function KanbanColumn({ stage, leads, onOpenLead }: { stage: PipelineStage; lead
   const totalBudget = leads.reduce((sum, lead) => sum + Number(lead.budget || 0), 0);
 
   return (
-    <div ref={setNodeRef} className={`min-h-[420px] min-w-[260px] rounded-2xl border bg-muted/30 p-3 transition-colors ${isOver ? 'border-teal-500 bg-teal-50/60' : ''}`}>
-      <div className="mb-3 flex items-start justify-between gap-2">
+    <div ref={setNodeRef} className={`flex-shrink-0 w-[280px] min-h-[500px] rounded-xl border bg-card p-4 transition-colors ${isOver ? 'border-teal-500 bg-teal-50/60' : 'border-slate-200'}`}>
+      <div className="mb-4 flex items-start justify-between gap-2">
         <div>
-          <h3 className="font-semibold capitalize">{stage.replace('_', ' ')}</h3>
+          <h3 className="font-semibold text-sm capitalize">{stage.replace('_', ' ')}</h3>
           <p className="text-xs text-muted-foreground">
             {leads.length} leads · PKR {totalBudget.toLocaleString()}
           </p>
         </div>
-        <Badge variant="outline">{leads.length}</Badge>
+        <Badge variant="outline" className="text-xs">{leads.length}</Badge>
       </div>
       <div className="space-y-3">
         {leads.map((lead) => (
@@ -71,22 +71,22 @@ function KanbanLeadCard({ lead, onOpenLead }: { lead: Lead; onOpenLead: (leadId:
       ref={setNodeRef}
       type="button"
       style={{ transform: CSS.Translate.toString(transform) }}
-      className={`w-full rounded-2xl border bg-background p-4 text-left transition-shadow ${isDragging ? 'opacity-70 shadow-lg' : ''}`}
+      className={`w-full rounded-lg border bg-background p-3 text-left transition-all hover:shadow-md hover:border-teal-300 ${isDragging ? 'opacity-70 shadow-lg rotate-2' : 'border-slate-200'}`}
       onClick={() => onOpenLead(lead.id)}
       {...listeners}
       {...attributes}
     >
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="font-medium">{lead.name}</p>
-            <p className="text-xs text-muted-foreground">{lead.company || 'No company'}</p>
+      <div className="space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-sm truncate">{lead.name}</p>
+            <p className="text-xs text-muted-foreground truncate">{lead.company || 'No company'}</p>
           </div>
           <LeadScoreBadge score={lead.lead_score} size="sm" />
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="outline" className="capitalize">{lead.priority}</Badge>
-          {lead.assigned_to_name ? <Badge variant="outline">{lead.assigned_to_name}</Badge> : null}
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant="outline" className="text-xs capitalize">{lead.priority}</Badge>
+          {lead.assigned_to_name ? <Badge variant="outline" className="text-xs">{lead.assigned_to_name}</Badge> : null}
         </div>
         <p className="text-xs text-muted-foreground">
           {lead.next_followup_at ? `Next follow-up: ${new Date(lead.next_followup_at).toLocaleDateString()}` : 'No follow-up scheduled'}

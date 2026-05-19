@@ -41,7 +41,7 @@ const FinanceDashboard: React.FC = () => {
       return response;
     },
   });
-  const chartData = chartDataResponse?.data;
+  const chartData = chartDataResponse?.data?.data || [];
   const distributionData = stats?.data?.distribution || [];
   const distributionColors = ['#0f766e', '#2563eb', '#f59e0b', '#7c3aed'];
 
@@ -155,7 +155,7 @@ const FinanceDashboard: React.FC = () => {
           <div>
             <CardTitle>Finance Actions</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Yahin se payments, expenses, clients aur founders ke records add karo.
+              Add payments, expenses, clients and founders records from here.
             </p>
           </div>
           <Button variant="outline" onClick={() => navigate('/finance/settings')}>
@@ -182,15 +182,15 @@ const FinanceDashboard: React.FC = () => {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <Card>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card className="xl:col-span-2">
           <CardHeader>
             <CardTitle>Revenue vs Expenses</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px] w-full">
+            <div className="h-[350px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData?.data || []}>
+                <AreaChart data={chartData || []}>
                   <defs>
                     <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#2FA7A3" stopOpacity={0.3} />
@@ -202,9 +202,11 @@ const FinanceDashboard: React.FC = () => {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                  />
                   <Area
                     type="monotone"
                     dataKey="revenue"
@@ -234,11 +236,13 @@ const FinanceDashboard: React.FC = () => {
           <CardContent>
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData?.data || []}>
+                <BarChart data={chartData || []}>
                   <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                  />
                   <Legend />
                   <Bar dataKey="revenue" fill="#0f766e" name="Revenue" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="expenses" fill="#ef4444" name="Expenses" radius={[4, 4, 0, 0]} />
@@ -255,26 +259,28 @@ const FinanceDashboard: React.FC = () => {
           <CardContent>
             <div className="space-y-4">
               {distributionData.length > 0 ? (
-                <div className="h-[220px] w-full">
+                <div className="h-[250px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={distributionData} dataKey="amount" nameKey="label" innerRadius={55} outerRadius={85} paddingAngle={3}>
+                      <Pie data={distributionData} dataKey="amount" nameKey="label" innerRadius={60} outerRadius={90} paddingAngle={3} label={(entry) => `${entry.percentage}%`} labelLine={false}>
                         {distributionData.map((_: any, index: number) => (
                           <Cell key={index} fill={distributionColors[index % distributionColors.length]} />
                         ))}
                       </Pie>
-                      <Tooltip />
+                      <Tooltip 
+                        contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
               ) : null}
               {distributionData.map((item: any, index: number) => (
-                <div key={index} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+                <div key={index} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
                   <div>
-                    <p className="font-medium"><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: distributionColors[index % distributionColors.length] }} />{item.label}</p>
-                    <p className="text-sm text-muted-foreground">{item.percentage}%</p>
+                    <p className="font-medium text-sm"><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: distributionColors[index % distributionColors.length] }} />{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.percentage}%</p>
                   </div>
-                  <p className="text-lg font-semibold">${item.amount.toLocaleString()}</p>
+                  <p className="text-base font-semibold">${item.amount.toLocaleString()}</p>
                 </div>
               ))}
               {!distributionData.length && (

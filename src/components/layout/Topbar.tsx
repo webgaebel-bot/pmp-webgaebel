@@ -16,6 +16,7 @@ import {
   CheckSquare,
   Users as UsersIcon,
   Target,
+  BookOpen,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -78,6 +79,7 @@ export const Topbar: React.FC<TopbarProps> = ({
     { id: 'calendar', label: 'Calendar', type: 'route', path: '/calendar' },
     { id: 'finance', label: 'Finance', type: 'route', path: '/finance' },
     { id: 'leads', label: 'Leads', type: 'route', path: '/leads' },
+    { id: 'guidance', label: 'Guidance', type: 'route', path: '/guidance' },
     { id: 'users', label: 'Users', type: 'route', path: '/users' },
     { id: 'notifications', label: 'Notifications', type: 'route', path: '/notifications' },
     { id: 'settings', label: 'Settings', type: 'route', path: '/settings/profile' },
@@ -392,6 +394,10 @@ export const Topbar: React.FC<TopbarProps> = ({
 
       {/* Right Section */}
       <div className="flex items-center gap-2 md:gap-3">
+        <Button variant="ghost" className="hidden gap-2 md:flex" onClick={() => navigate('/guidance')}>
+          <BookOpen className="h-4 w-4" />
+          Guidance
+        </Button>
         {/* Notifications */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

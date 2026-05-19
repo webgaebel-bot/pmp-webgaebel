@@ -2,7 +2,9 @@ import { ApiError } from '@/services/api';
 import { getSupabaseClient } from '@/lib/supabase';
 import type {
   AddLeadActivityPayload,
+  CreateFlexibleFollowupPayload,
   CreateLeadPayload,
+  FlexibleFollowupRecord,
   Lead,
   LeadActivity,
   LeadContact,
@@ -49,6 +51,11 @@ const DEFAULT_PERMISSIONS = [
   { key: 'files.upload', name: 'files.upload', module: 'files', description: 'Upload files' },
   { key: 'files.delete', name: 'files.delete', module: 'files', description: 'Delete files' },
   { key: 'leads.view', name: 'leads.view', module: 'leads', description: 'View leads CRM' },
+  { key: 'leads.view.all', name: 'leads.view.all', module: 'leads', description: 'View all users leads' },
+  { key: 'leads.followups.view', name: 'leads.followups.view', module: 'leads', description: 'View flexible follow-up sheet' },
+  { key: 'leads.followups.create', name: 'leads.followups.create', module: 'leads', description: 'Create follow-up rows' },
+  { key: 'leads.followups.update', name: 'leads.followups.update', module: 'leads', description: 'Edit follow-up rows' },
+  { key: 'leads.followups.delete', name: 'leads.followups.delete', module: 'leads', description: 'Delete follow-up rows' },
   { key: 'leads.detail.view', name: 'leads.detail.view', module: 'leads', description: 'View detailed lead CRM data' },
   { key: 'leads.create', name: 'leads.create', module: 'leads', description: 'Create leads' },
   { key: 'leads.update', name: 'leads.update', module: 'leads', description: 'Update leads' },
@@ -83,6 +90,19 @@ const ensureArray = <T>(value: T[] | null | undefined): T[] => (Array.isArray(va
 
 const normalizeStatus = (status?: string | null) => (status || '').toLowerCase();
 const isCompletedStatus = (status?: string | null) => ['done', 'completed', 'complete'].includes(normalizeStatus(status));
+const splitMultiValue = (value?: string | null): string[] =>
+  String(value || '')
+    .split(/[\n,;|]+/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+const normalizeDigits = (value?: string | null) => String(value || '').replace(/\D/g, '');
+const normalizeUrlValue = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/+$/, '');
 
 const monthKey = (value?: string | null) => {
   if (!value) return 'Unknown';
@@ -150,6 +170,96 @@ export class SupabaseApiService {
     return ensureArray(data)
       .map((row: any) => row.permission?.key)
       .filter(Boolean);
+  }
+
+  private async getCurrentAccessContext() {
+    const profile = await this.getCurrentProfileOrThrow();
+    const role = await this.getRoleById(profile.role_id);
+    const permissions = await this.getPermissionsByRoleId(profile.role_id);
+    const roleName = String(role?.name || '').toLowerCase().replace(/_/g, ' ');
+    const canViewAllLeads =
+      roleName === 'super admin' ||
+      roleName === 'superadmin' ||
+      roleName.includes('admin') ||
+      permissions.includes('leads.view.all');
+
+    return { profile, role, permissions, canViewAllLeads };
+  }
+
+  private extractDuplicateSignals(input: Partial<Lead> & Partial<CreateLeadPayload>) {
+    const emails = splitMultiValue(input.email);
+    const phones = splitMultiValue(input.phone).map(normalizeDigits).filter(Boolean);
+    const websites = splitMultiValue(input.website).map(normalizeUrlValue).filter(Boolean);
+    const linkedin = splitMultiValue(input.linkedin_url).map(normalizeUrlValue).filter(Boolean);
+    const facebook = splitMultiValue(input.facebook_url).map(normalizeUrlValue).filter(Boolean);
+    const instagram = splitMultiValue(input.instagram_url).map(normalizeUrlValue).filter(Boolean);
+
+    return {
+      emails,
+      phones,
+      websites,
+      linkedin,
+      facebook,
+      instagram,
+      fullName: String(input.name || '').trim().toLowerCase(),
+      company: String(input.company || '').trim().toLowerCase(),
+      niche: String(input.designation || input.custom_fields?.Niche || '').trim().toLowerCase(),
+      service: String(input.services_offered || '').trim().toLowerCase(),
+      source: String(input.source || '').trim().toLowerCase(),
+    };
+  }
+
+  private hasAnyOverlap(left: string[], right: string[]) {
+    return left.some((value) => right.includes(value));
+  }
+
+  private async assertLeadIsNotDuplicate(payload: Partial<Lead> & Partial<CreateLeadPayload>, ignoreLeadId?: string | number) {
+    const incoming = this.extractDuplicateSignals(payload);
+    const { data, error } = await this.client
+      .from('leads')
+      .select('id, name, email, phone, company, designation, website, linkedin_url, facebook_url, instagram_url, services_offered, source, metadata');
+
+    if (error) throw formatError(error, 'Unable to validate duplicate lead.');
+
+    const duplicate = ensureArray(data).find((row: any) => {
+      if (ignoreLeadId && String(row.id) === String(ignoreLeadId)) return false;
+      const existing = this.extractDuplicateSignals({
+        name: row.name,
+        email: row.email,
+        phone: row.phone,
+        company: row.company,
+        designation: row.designation,
+        website: row.website,
+        linkedin_url: row.linkedin_url,
+        facebook_url: row.facebook_url,
+        instagram_url: row.instagram_url,
+        services_offered: row.services_offered,
+        source: row.source,
+        custom_fields: row.metadata?.custom_fields || {},
+      });
+
+      const strongMatch =
+        this.hasAnyOverlap(incoming.emails, existing.emails) ||
+        this.hasAnyOverlap(incoming.phones, existing.phones) ||
+        this.hasAnyOverlap(incoming.websites, existing.websites) ||
+        this.hasAnyOverlap(incoming.linkedin, existing.linkedin) ||
+        this.hasAnyOverlap(incoming.facebook, existing.facebook) ||
+        this.hasAnyOverlap(incoming.instagram, existing.instagram);
+
+      const fullRecordMatch =
+        incoming.fullName &&
+        incoming.fullName === existing.fullName &&
+        incoming.company === existing.company &&
+        incoming.niche === existing.niche &&
+        incoming.service === existing.service &&
+        incoming.source === existing.source;
+
+      return strongMatch || fullRecordMatch;
+    });
+
+    if (duplicate) {
+      throw new ApiError('Ye record pehle se entry ho chuka hai.', 409, 'LEAD_DUPLICATE');
+    }
   }
 
   private async getRoleById(roleId?: string | null) {
@@ -528,6 +638,7 @@ export class SupabaseApiService {
 
   private mapLeadRecord(row: any): Lead {
     const followups = this.mapLeadFollowups(row.lead_followups);
+    const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
     const nextFollowup =
       followups
         .filter((followup) => !followup.completed)
@@ -566,6 +677,9 @@ export class SupabaseApiService {
         assigned_to: row.assigned_to ? String(row.assigned_to) : undefined,
       assigned_to_name: row.assignee?.name || undefined,
       assigned_to_avatar: row.assignee?.avatar_url || row.assignee?.profile_image || undefined,
+      created_by: row.created_by ? String(row.created_by) : undefined,
+      created_by_name: row.owner?.name || undefined,
+      created_by_email: row.owner?.email || undefined,
       lost_reason: row.lost_reason || undefined,
       last_contacted_at: row.last_contacted_at || row.last_contact_at || undefined,
       next_followup_at: nextFollowup,
@@ -575,6 +689,8 @@ export class SupabaseApiService {
       created_at: String(row.created_at),
       updated_at: String(row.updated_at),
       notes: row.notes || undefined,
+      custom_fields: metadata.custom_fields || {},
+      metadata,
       lead_activities: this.mapLeadActivities(row.lead_activities),
       lead_notes: this.mapLeadNotes(row.lead_notes),
       lead_followups: followups,
@@ -587,6 +703,7 @@ export class SupabaseApiService {
     return `
       *,
       assignee:profiles!leads_assigned_to_fkey(id, name, email, avatar_url, profile_image),
+      owner:profiles!leads_created_by_fkey(id, name, email),
       lead_activities(id, lead_id, activity_type, summary, description, duration_minutes, outcome, created_by, user_id, created_at, activity_at),
       lead_notes(id, lead_id, note, content, created_at, user_id),
       lead_followups(id, lead_id, followup_type, scheduled_at, due_at, completed, completed_at, reminder_sent, notes, description, status, created_at, assigned_to),
@@ -1897,6 +2014,7 @@ export class SupabaseApiService {
   }
 
   async updateLead(id: string | number, data: Partial<Lead> & { tags?: string[]; contacts?: CreateLeadPayload['contacts'] }) {
+    await this.assertLeadIsNotDuplicate(data, id);
     const payload: Record<string, unknown> = {
       name: data.name,
       email: data.email ? String(data.email).toLowerCase() : data.email,
@@ -1928,6 +2046,7 @@ export class SupabaseApiService {
       notes: data.notes || null,
       last_contacted_at: data.last_contacted_at || null,
       next_followup_at: data.next_followup_at || null,
+      metadata: data.metadata || data.custom_fields ? { ...(data.metadata || {}), custom_fields: data.custom_fields || {} } : undefined,
     };
 
     if (payload.pipeline_stage === 'won') {
@@ -2029,12 +2148,18 @@ export class SupabaseApiService {
   }
 
   async getLeads(filters?: LeadFilters & { page?: number; pageSize?: number }) {
+    const access = await this.getCurrentAccessContext();
     const buildQuery = (selectClause: string, includeExtendedSearch: boolean) => {
       let query = this.client
         .from('leads')
         .select(selectClause)
         .order('created_at', { ascending: false });
 
+      if (access.canViewAllLeads && filters?.owner_id) {
+        query = query.eq('created_by', filters.owner_id);
+      } else if (!access.canViewAllLeads) {
+        query = query.eq('created_by', access.profile.id);
+      }
       if (filters?.status?.length) query = query.in('status', filters.status);
       if (filters?.pipeline_stage?.length) query = query.in('pipeline_stage', filters.pipeline_stage);
       if (filters?.priority?.length) query = query.in('priority', filters.priority);
@@ -2115,6 +2240,7 @@ export class SupabaseApiService {
   async createLead(payload: CreateLeadPayload) {
     const currentUser = await this.getCurrentProfileOrThrow();
     const { tags, contacts, notes, ...leadData } = payload;
+    await this.assertLeadIsNotDuplicate(leadData);
 
     const insertPayload = {
       name: leadData.name,
@@ -2143,6 +2269,7 @@ export class SupabaseApiService {
         close_value: leadData.close_value || null,
         assigned_to: leadData.assigned_to || null,
       notes: notes || null,
+      metadata: { ...(leadData.metadata || {}), custom_fields: leadData.custom_fields || {} },
       created_by: currentUser.id,
         status: this.statusFromPipeline(leadData.pipeline_stage || 'new'),
         completed: ['won', 'lost'].includes(this.normalizeLeadStage(leadData.pipeline_stage || 'new')),
@@ -2471,6 +2598,84 @@ export class SupabaseApiService {
 
     const { error } = await this.client.from('lead_contacts').insert(normalizedContacts);
     if (error) throw formatError(error, 'Failed to save lead contacts.');
+  }
+
+  private mapFlexibleFollowup(row: any): FlexibleFollowupRecord {
+    return {
+      id: String(row.id),
+      owner_id: String(row.owner_id),
+      owner_name: row.owner?.name || undefined,
+      owner_email: row.owner?.email || undefined,
+      lead_id: row.lead_id ? String(row.lead_id) : undefined,
+      data: row.data && typeof row.data === 'object' ? row.data : {},
+      status: row.status || row.data?.Status || undefined,
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at || row.created_at),
+    };
+  }
+
+  async getFlexibleFollowups(filters?: { owner_id?: string; search?: string }) {
+    const access = await this.getCurrentAccessContext();
+    let query = this.client
+      .from('lead_followup_records')
+      .select('*, owner:profiles!lead_followup_records_owner_id_fkey(id, name, email)')
+      .order('created_at', { ascending: false });
+
+    if (access.canViewAllLeads && filters?.owner_id) {
+      query = query.eq('owner_id', filters.owner_id);
+    } else if (!access.canViewAllLeads) {
+      query = query.eq('owner_id', access.profile.id);
+    }
+
+    const { data, error } = await query;
+    if (error) throw formatError(error, 'Unable to load follow-up sheet.');
+
+    let rows = ensureArray(data).map((row) => this.mapFlexibleFollowup(row));
+    if (filters?.search?.trim()) {
+      const term = filters.search.trim().toLowerCase();
+      rows = rows.filter((row) => Object.values(row.data || {}).some((value) => String(value || '').toLowerCase().includes(term)));
+    }
+
+    return { success: true, data: rows };
+  }
+
+  async createFlexibleFollowup(payload: CreateFlexibleFollowupPayload) {
+    const currentUser = await this.getCurrentProfileOrThrow();
+    const { data, error } = await this.client
+      .from('lead_followup_records')
+      .insert({
+        owner_id: currentUser.id,
+        lead_id: payload.lead_id || null,
+        data: payload.data || {},
+        status: payload.status || payload.data?.Status || null,
+      })
+      .select('*, owner:profiles!lead_followup_records_owner_id_fkey(id, name, email)')
+      .single();
+
+    if (error || !data) throw formatError(error, 'Failed to create follow-up row.');
+    return { success: true, data: this.mapFlexibleFollowup(data) };
+  }
+
+  async updateFlexibleFollowup(id: string, payload: Partial<CreateFlexibleFollowupPayload>) {
+    const { data, error } = await this.client
+      .from('lead_followup_records')
+      .update({
+        data: payload.data,
+        lead_id: payload.lead_id,
+        status: payload.status || payload.data?.Status,
+      })
+      .eq('id', id)
+      .select('*, owner:profiles!lead_followup_records_owner_id_fkey(id, name, email)')
+      .single();
+
+    if (error || !data) throw formatError(error, 'Failed to update follow-up row.');
+    return { success: true, data: this.mapFlexibleFollowup(data) };
+  }
+
+  async deleteFlexibleFollowup(id: string) {
+    const { error } = await this.client.from('lead_followup_records').delete().eq('id', id);
+    if (error) throw formatError(error, 'Failed to delete follow-up row.');
+    return { success: true };
   }
 
   async getFinanceClients() {

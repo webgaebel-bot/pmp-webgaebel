@@ -142,6 +142,9 @@ export interface Lead {
   assigned_to?: string;
   assigned_to_name?: string;
   assigned_to_avatar?: string;
+  created_by?: string;
+  created_by_name?: string;
+  created_by_email?: string;
   lost_reason?: string;
   last_contacted_at?: string;
   next_followup_at?: string;
@@ -152,6 +155,8 @@ export interface Lead {
   updated_at: string;
   notes?: string;
   company_value?: number;
+  custom_fields?: Record<string, string>;
+  metadata?: Record<string, unknown>;
   lead_activities?: LeadActivity[];
   lead_notes?: LeadNote[];
   lead_followups?: LeadFollowup[];
@@ -186,6 +191,7 @@ export interface LeadFilters {
   has_followup_due?: boolean;
   overdue_only?: boolean;
   tags?: string[];
+  owner_id?: string;
 }
 
 export interface LeadListResponse {
@@ -222,6 +228,8 @@ export interface CreateLeadPayload {
   assigned_to?: string;
   notes?: string;
   lead_score?: number;
+  custom_fields?: Record<string, string>;
+  metadata?: Record<string, unknown>;
   tags?: string[];
   contacts?: Array<{
     name: string;
@@ -243,4 +251,31 @@ export interface ScheduleLeadFollowupPayload {
   followup_type: FollowupType;
   scheduled_at: string;
   notes?: string;
+}
+
+export interface FlexibleColumn {
+  id: string;
+  label: string;
+  systemField?: keyof Lead | keyof FlexibleFollowupRecord;
+  type?: 'text' | 'date' | 'boolean' | 'status' | 'email' | 'url' | 'phone';
+  required?: boolean;
+  width?: number;
+}
+
+export interface FlexibleFollowupRecord {
+  id: string;
+  owner_id: string;
+  owner_name?: string;
+  owner_email?: string;
+  data: Record<string, string>;
+  status?: string;
+  lead_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateFlexibleFollowupPayload {
+  data: Record<string, string>;
+  lead_id?: string;
+  status?: string;
 }

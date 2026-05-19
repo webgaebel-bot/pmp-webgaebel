@@ -375,6 +375,19 @@ create table if not exists public.lead_followups (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.lead_followup_records (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  lead_id uuid references public.leads(id) on delete set null,
+  data jsonb not null default '{}'::jsonb,
+  status text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists lead_followup_records_owner_id_idx on public.lead_followup_records(owner_id);
+create index if not exists lead_followup_records_data_gin_idx on public.lead_followup_records using gin(data);
+
 alter table public.leads add column if not exists source varchar(50) default 'manual';
 alter table public.leads add column if not exists lead_score integer default 0 check (lead_score >= 0 and lead_score <= 100);
 alter table public.leads add column if not exists designation varchar(255);
@@ -396,6 +409,7 @@ alter table public.leads add column if not exists last_reachout_at timestamptz;
 alter table public.leads add column if not exists followup_sent_at timestamptz;
 alter table public.leads add column if not exists followup_notes text;
 alter table public.leads add column if not exists close_value numeric(12,2);
+alter table public.leads add column if not exists metadata jsonb not null default '{}'::jsonb;
 
 alter table public.leads drop constraint if exists leads_source_check;
 alter table public.leads add constraint leads_source_check
@@ -442,6 +456,10 @@ alter table public.lead_followups add column if not exists reminder_sent boolean
 alter table public.lead_followups add column if not exists notes text;
 alter table public.lead_followups add column if not exists scheduled_at timestamptz;
 alter table public.lead_followups add column if not exists completed boolean default false;
+alter table public.lead_followup_records add column if not exists owner_id uuid references public.profiles(id) on delete cascade;
+alter table public.lead_followup_records add column if not exists lead_id uuid references public.leads(id) on delete set null;
+alter table public.lead_followup_records add column if not exists data jsonb not null default '{}'::jsonb;
+alter table public.lead_followup_records add column if not exists status text;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -701,6 +719,7 @@ alter table public.lead_activities enable row level security;
 alter table public.lead_notes enable row level security;
 alter table public.lead_followups enable row level security;
 alter table public.lead_contacts enable row level security;
+alter table public.lead_followup_records enable row level security;
 
 drop policy if exists "authenticated roles access" on public.roles;
 create policy "authenticated roles access"
@@ -918,6 +937,14 @@ to authenticated
 using (true)
 with check (true);
 
+drop policy if exists "authenticated lead_followup_records access" on public.lead_followup_records;
+create policy "authenticated lead_followup_records access"
+on public.lead_followup_records
+for all
+to authenticated
+using (true)
+with check (owner_id = auth.uid());
+
 drop policy if exists "authenticated lead_contacts access" on public.lead_contacts;
 create policy "authenticated lead_contacts access"
 on public.lead_contacts
@@ -970,11 +997,16 @@ values
   ('files.upload', 'files.upload', 'files', 'Upload files'),
   ('files.delete', 'files.delete', 'files', 'Delete files'),
   ('leads.view', 'leads.view', 'leads', 'View leads CRM'),
+  ('leads.view.all', 'leads.view.all', 'leads', 'View all users leads'),
   ('leads.detail.view', 'leads.detail.view', 'leads', 'View detailed lead CRM data'),
   ('leads.create', 'leads.create', 'leads', 'Create leads'),
   ('leads.update', 'leads.update', 'leads', 'Update leads'),
   ('leads.delete', 'leads.delete', 'leads', 'Delete leads'),
   ('leads.import', 'leads.import', 'leads', 'Import leads'),
+  ('leads.followups.view', 'leads.followups.view', 'leads', 'View flexible follow-up sheet'),
+  ('leads.followups.create', 'leads.followups.create', 'leads', 'Create follow-up rows'),
+  ('leads.followups.update', 'leads.followups.update', 'leads', 'Edit follow-up rows'),
+  ('leads.followups.delete', 'leads.followups.delete', 'leads', 'Delete follow-up rows'),
   ('users.view', 'users.view', 'users', 'View users'),
   ('users.create', 'users.create', 'users', 'Create users'),
   ('users.update', 'users.update', 'users', 'Edit users'),

@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Plus, Search, Edit, Trash2, Mail, Phone } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
+import Swal from 'sweetalert2';
 
 const Clients: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -89,9 +90,19 @@ const Clients: React.FC = () => {
   });
 
   const handleDelete = (id: string, name: string) => {
-    if (confirm(`Delete client "${name}"?`)) {
-      deleteMutation.mutate(id);
-    }
+    Swal.fire({
+      title: 'Delete Client?',
+      text: `Are you sure you want to delete client "${name}"?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, delete it!'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        deleteMutation.mutate(id);
+      }
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {

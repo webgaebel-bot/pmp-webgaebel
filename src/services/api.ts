@@ -781,6 +781,35 @@ class ApiService {
     return this.handleResponse<any>(response);
   }
 
+  async getFlexibleFollowups(params?: Record<string, unknown>): Promise<any> {
+    const query = params ? `?${new URLSearchParams(Object.entries(params).reduce<Record<string, string>>((acc, [key, value]) => {
+      if (value === undefined || value === null || value === '') return acc;
+      acc[key] = String(value);
+      return acc;
+    }, {})).toString()}` : '';
+    return this.request<any>(`/lead-followup-records${query}`);
+  }
+
+  async createFlexibleFollowup(data: any): Promise<any> {
+    return this.request<any>('/lead-followup-records', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateFlexibleFollowup(id: string | number, data: any): Promise<any> {
+    return this.request<any>(`/lead-followup-records/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteFlexibleFollowup(id: string | number): Promise<any> {
+    return this.request<any>(`/lead-followup-records/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // ==================== MAIL APIs ====================
   
   async getInbox(): Promise<{ success: boolean; data: any[] }> {

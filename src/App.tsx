@@ -36,6 +36,7 @@ import Founders from "@/pages/finance/Founders";
 import FinanceSettings from "@/pages/finance/FinanceSettings";
 import TimeTracking from "@/pages/time-tracking/TimeTracking";
 import Leads from "@/pages/leads/Leads";
+import Guidance from "@/pages/Guidance";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -175,6 +176,11 @@ const App = () => (
               <Route path="/leads" element={
                 <ProtectedRoute permission="leads.view">
                   <Leads />
+                </ProtectedRoute>
+              } />
+              <Route path="/guidance" element={
+                <ProtectedRoute>
+                  <Guidance />
                 </ProtectedRoute>
               } />
               <Route path="/activity" element={

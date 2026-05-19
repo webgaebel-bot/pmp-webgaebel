@@ -19,6 +19,7 @@ import { api } from '@/services/api';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import Swal from 'sweetalert2';
 
 const TimeTracking: React.FC = () => {
   const { user } = useAuth();
@@ -173,9 +174,19 @@ const TimeTracking: React.FC = () => {
   };
 
   const handleDelete = (id: string, projectName: string) => {
-    if (confirm(`Delete time log for "${projectName || 'selected entry'}"?`)) {
-      deleteMutation.mutate(id);
-    }
+    Swal.fire({
+      title: 'Delete Time Log?',
+      text: `Are you sure you want to delete time log for "${projectName || 'selected entry'}"?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, delete it!'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        deleteMutation.mutate(id);
+      }
+    });
   };
 
   const handleExport = () => {
