@@ -296,6 +296,7 @@ import {
   Chrome
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import portalLogo from '@/assets/images-removebg-preview.png';
 
 // Types
 interface Feature {
@@ -606,8 +607,8 @@ const LeftPanel: React.FC = () => {
           </div>
           
           <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="h-12 w-12 bg-gradient-to-br from-primary to-primary/60 rounded-xl flex items-center justify-center shadow-xl">
-              <span className="text-white font-bold text-xl">P</span>
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white/95 p-2 shadow-xl">
+              <img src={portalLogo} alt="Project Portal" className="h-full w-full object-contain" />
             </div>
             <span className="text-3xl font-bold text-white">Project Portal</span>
           </div>
@@ -671,8 +672,8 @@ const RightPanel: React.FC<{
         <div className="bg-card/50 backdrop-blur-sm rounded-2xl p-8 border border-border shadow-2xl">
           {/* Mobile Logo */}
           <div className="flex flex-col items-center mb-8 lg:hidden">
-            <div className="h-12 w-12 bg-gradient-to-br from-primary to-primary/60 rounded-xl flex items-center justify-center shadow-lg mb-3">
-              <span className="text-white font-bold text-xl">P</span>
+            <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-xl bg-background p-2 shadow-lg ring-1 ring-border">
+              <img src={portalLogo} alt="Project Portal" className="h-full w-full object-contain" />
             </div>
             <h2 className="text-2xl font-bold text-foreground">Welcome Back</h2>
             <p className="text-sm text-muted-foreground mt-1">Sign in to continue</p>

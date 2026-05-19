@@ -10,9 +10,10 @@ interface LeadsKanbanProps {
   leads: Lead[];
   onOpenLead: (leadId: string) => void;
   onMoveLead: (leadId: string, stage: PipelineStage) => void;
+  canMove?: boolean;
 }
 
-export function LeadsKanban({ leads, onOpenLead, onMoveLead }: LeadsKanbanProps) {
+export function LeadsKanban({ leads, onOpenLead, onMoveLead, canMove = true }: LeadsKanbanProps) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const grouped = PIPELINE_STAGES.map((stage) => ({
@@ -23,7 +24,7 @@ export function LeadsKanban({ leads, onOpenLead, onMoveLead }: LeadsKanbanProps)
   const handleDragEnd = (event: DragEndEvent) => {
     const leadId = String(event.active.id);
     const stage = event.over?.id as PipelineStage | undefined;
-    if (stage && leadId) {
+    if (canMove && stage && leadId) {
       onMoveLead(leadId, stage);
     }
   };
@@ -32,14 +33,14 @@ export function LeadsKanban({ leads, onOpenLead, onMoveLead }: LeadsKanbanProps)
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {grouped.map(({ stage, leads: stageLeads }) => (
-          <KanbanColumn key={stage} stage={stage} leads={stageLeads} onOpenLead={onOpenLead} />
+          <KanbanColumn key={stage} stage={stage} leads={stageLeads} onOpenLead={onOpenLead} canMove={canMove} />
         ))}
       </div>
     </DndContext>
   );
 }
 
-function KanbanColumn({ stage, leads, onOpenLead }: { stage: PipelineStage; leads: Lead[]; onOpenLead: (leadId: string) => void }) {
+function KanbanColumn({ stage, leads, onOpenLead, canMove }: { stage: PipelineStage; leads: Lead[]; onOpenLead: (leadId: string) => void; canMove: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
   const totalBudget = leads.reduce((sum, lead) => sum + Number(lead.budget || 0), 0);
 
@@ -56,15 +57,15 @@ function KanbanColumn({ stage, leads, onOpenLead }: { stage: PipelineStage; lead
       </div>
       <div className="space-y-3">
         {leads.map((lead) => (
-          <KanbanLeadCard key={lead.id} lead={lead} onOpenLead={onOpenLead} />
+          <KanbanLeadCard key={lead.id} lead={lead} onOpenLead={onOpenLead} canMove={canMove} />
         ))}
       </div>
     </div>
   );
 }
 
-function KanbanLeadCard({ lead, onOpenLead }: { lead: Lead; onOpenLead: (leadId: string) => void }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: lead.id });
+function KanbanLeadCard({ lead, onOpenLead, canMove }: { lead: Lead; onOpenLead: (leadId: string) => void; canMove: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: lead.id, disabled: !canMove });
 
   return (
     <button
@@ -73,7 +74,7 @@ function KanbanLeadCard({ lead, onOpenLead }: { lead: Lead; onOpenLead: (leadId:
       style={{ transform: CSS.Translate.toString(transform) }}
       className={`w-full rounded-lg border bg-background p-3 text-left transition-all hover:shadow-md hover:border-teal-300 ${isDragging ? 'opacity-70 shadow-lg rotate-2' : 'border-slate-200'}`}
       onClick={() => onOpenLead(lead.id)}
-      {...listeners}
+      {...(canMove ? listeners : {})}
       {...attributes}
     >
       <div className="space-y-2">

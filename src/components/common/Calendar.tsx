@@ -249,7 +249,7 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
       setDragOverDate(null);
       
       // If it's a project, update via API
-      if (draggedEvent.project_id && can('project.update')) {
+      if (draggedEvent.project_id && can('projects.update')) {
         await api.updateProject(draggedEvent.project_id.toString(), {
           start_date: newStartDate.toISOString().split('T')[0],
           end_date: newEndDate.toISOString().split('T')[0]

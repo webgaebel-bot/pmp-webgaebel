@@ -7,8 +7,8 @@ import { FOLLOWUP_TYPES, type LeadFollowup, type ScheduleLeadFollowupPayload } f
 
 interface FollowupSchedulerProps {
   followups: LeadFollowup[];
-  onSchedule: (payload: ScheduleLeadFollowupPayload) => void;
-  onComplete: (followupId: string, notes?: string) => void;
+  onSchedule?: (payload: ScheduleLeadFollowupPayload) => void;
+  onComplete?: (followupId: string, notes?: string) => void;
   loading?: boolean;
 }
 
@@ -22,12 +22,14 @@ export function FollowupScheduler({ followups, onSchedule, onComplete, loading }
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!form.scheduled_at) return;
+    if (!onSchedule) return;
     onSchedule(form);
     setForm({ followup_type: 'call', scheduled_at: '', notes: '' });
   };
 
   return (
     <div className="space-y-5">
+      {onSchedule ? (
       <form onSubmit={handleSubmit} className="space-y-3 rounded-xl border p-4">
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-2">
@@ -57,6 +59,7 @@ export function FollowupScheduler({ followups, onSchedule, onComplete, loading }
           {loading ? 'Scheduling...' : '+ Schedule Follow-up'}
         </Button>
       </form>
+      ) : null}
 
       <div className="space-y-3">
         {followups.length === 0 ? (
@@ -70,7 +73,7 @@ export function FollowupScheduler({ followups, onSchedule, onComplete, loading }
                   <p className="text-sm text-muted-foreground">{new Date(followup.scheduled_at).toLocaleString()}</p>
                   {followup.notes ? <p className="mt-2 text-sm">{followup.notes}</p> : null}
                 </div>
-                {!followup.completed ? (
+                {!followup.completed && onComplete ? (
                   <Button variant="outline" onClick={() => onComplete(followup.id, followup.notes)}>
                     Complete
                   </Button>

@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, AuthState } from '@/types';
 import api from '@/services/api';
+import {
+  expandPermissions,
+  isSuperAdminRole,
+  userHasAnyPermission,
+  userHasPermission,
+} from '@/lib/permissions';
 
 interface AuthContextType extends AuthState {
   login: (email: string, password: string) => Promise<void>;
@@ -42,7 +48,7 @@ const normalizeUser = (user: any): User | null => {
   return {
     ...user,
     role: normalizedRole,
-    permissions: Array.isArray(user.permissions) ? user.permissions : [],
+    permissions: expandPermissions(Array.isArray(user.permissions) ? user.permissions : []),
     profile_image: user.profile_image || user.avatar,
   } as User;
 };
@@ -288,24 +294,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const hasPermission = (permission: string): boolean => {
-    if (!state.user) return false;
-    // Super admin has all permissions
-    const roleName = state.user.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
-    if (roleName === 'super admin' || roleName === 'superadmin') {
-      return true;
-    }
-    // Check from state user permissions
-    return state.user.permissions?.includes(permission) || false;
+    return userHasPermission(state.user, permission);
   };
 
   const hasAnyPermission = (permissions: string[]): boolean => {
-    if (!state.user) return false;
-    // Super admin has all permissions
-    const roleName = state.user.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
-    if (roleName === 'super admin' || roleName === 'superadmin') {
-      return true;
-    }
-    return permissions.some(p => state.user?.permissions?.includes(p));
+    return userHasAnyPermission(state.user, permissions);
   };
 
   return (
@@ -334,9 +327,6 @@ export const useAuth = () => {
 export const hasPermissionHelper = (permission: string): boolean => {
   const user = normalizeUser(getStoredUser());
   if (!user) return false;
-  const roleName = user.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
-  if (roleName === 'super admin' || roleName === 'superadmin') {
-    return true;
-  }
-  return user.permissions?.includes(permission) || false;
+  if (isSuperAdminRole(user.role)) return true;
+  return userHasPermission(user, permission);
 };

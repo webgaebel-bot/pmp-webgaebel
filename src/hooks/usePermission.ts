@@ -1,4 +1,5 @@
 import { useAuth } from '@/contexts/AuthContext';
+import { isSuperAdminRole, normalizeRoleName, userHasAllPermissions } from '@/lib/permissions';
 
 /**
  * Custom hook for permission checking
@@ -26,21 +27,21 @@ export const usePermission = () => {
      * Check if user has ALL of the provided permissions
      */
     canAll: (permissions: string[]): boolean => {
-      return permissions.every(p => hasPermission(p));
+      return userHasAllPermissions(user, permissions);
     },
 
     /**
      * Check if user is Super Admin
      */
     isSuperAdmin: (): boolean => {
-      return user?.role?.name?.toLowerCase().includes('super admin') ?? false;
+      return isSuperAdminRole(user?.role);
     },
 
     /**
      * Check if user is Admin
      */
     isAdmin: (): boolean => {
-      const roleName = user?.role?.name?.toLowerCase() || '';
+      const roleName = normalizeRoleName(user?.role);
       return roleName.includes('admin');
     },
 
@@ -48,7 +49,7 @@ export const usePermission = () => {
      * Check if user is Project Manager
      */
     isProjectManager: (): boolean => {
-      const roleName = user?.role?.name?.toLowerCase() || '';
+      const roleName = normalizeRoleName(user?.role);
       return roleName.includes('project manager') || roleName.includes('manager');
     },
 
@@ -56,7 +57,7 @@ export const usePermission = () => {
      * Check if user is Developer
      */
     isDeveloper: (): boolean => {
-      const roleName = user?.role?.name?.toLowerCase() || '';
+      const roleName = normalizeRoleName(user?.role);
       return roleName.includes('developer') || roleName.includes('dev');
     },
 
@@ -64,7 +65,7 @@ export const usePermission = () => {
      * Check if user is Viewer (read-only access)
      */
     isViewer: (): boolean => {
-      const roleName = user?.role?.name?.toLowerCase() || '';
+      const roleName = normalizeRoleName(user?.role);
       return roleName.includes('viewer');
     },
 
@@ -167,5 +168,17 @@ export const usePermission = () => {
      */
     canViewActivityLogs: (): boolean => hasPermission('activity_logs.view'),
     canViewActivityLogsDashboard: (): boolean => hasPermission('activity_logs.dashboard'),
+
+    /**
+     * Mails/Email (7)
+     */
+    canSendMail: (): boolean => hasPermission('mails.send'),
+    canViewMails: (): boolean => hasPermission('mails.view'),
+    canViewAllMails: (): boolean => hasPermission('mails.view.all'),
+    canDeleteMails: (): boolean => hasPermission('mails.delete'),
+    canReplyMail: (): boolean => hasPermission('mails.reply'),
+    canManageMails: (): boolean => hasPermission('mails.manage'),
+    canViewMailThreads: (): boolean => hasPermission('mail_threads.view'),
+    canCreateMailThreads: (): boolean => hasPermission('mail_threads.create'),
   };
 };

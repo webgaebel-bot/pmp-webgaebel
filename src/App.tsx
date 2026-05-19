@@ -124,7 +124,7 @@ const App = () => (
                 </ProtectedRoute>
               } />
               <Route path="/users/:id/edit" element={
-                <ProtectedRoute permission="users.edit">
+                <ProtectedRoute permission="users.update">
                   <UserEdit />
                 </ProtectedRoute>
               } />
@@ -184,7 +184,7 @@ const App = () => (
                 </ProtectedRoute>
               } />
               <Route path="/activity" element={
-                <ProtectedRoute permission="activity.view">
+                <ProtectedRoute permission="activity_logs.view">
                   <Activity />
                 </ProtectedRoute>
               } />

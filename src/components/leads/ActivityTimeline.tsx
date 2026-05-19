@@ -7,7 +7,7 @@ import type { AddLeadActivityPayload, LeadActivity } from '@/types/leads';
 
 interface ActivityTimelineProps {
   activities: LeadActivity[];
-  onAdd: (payload: AddLeadActivityPayload) => void;
+  onAdd?: (payload: AddLeadActivityPayload) => void;
   loading?: boolean;
 }
 
@@ -28,12 +28,14 @@ export function ActivityTimeline({ activities, onAdd, loading }: ActivityTimelin
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!form.description.trim()) return;
+    if (!onAdd) return;
     onAdd(form);
     setForm({ activity_type: 'note', description: '' });
   };
 
   return (
     <div className="space-y-5">
+      {onAdd ? (
       <form onSubmit={handleSubmit} className="space-y-3 rounded-xl border p-4">
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-2">
@@ -67,6 +69,7 @@ export function ActivityTimeline({ activities, onAdd, loading }: ActivityTimelin
           {loading ? 'Saving...' : '+ Add Activity'}
         </Button>
       </form>
+      ) : null}
 
       <div className="space-y-3">
         {activities.length === 0 ? (

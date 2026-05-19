@@ -41,6 +41,10 @@ function LeadDetailInner({
   const [tag, setTag] = useState('');
   const permission = usePermission();
   const canViewDetailedLeadData = permission.isAdmin() || permission.can('leads.detail.view');
+  const canUpdateLead = permission.can('leads.update');
+  const canDeleteLead = permission.can('leads.delete');
+  const canCreateFollowup = permission.can('leads.followups.create');
+  const canUpdateFollowup = permission.can('leads.followups.update');
 
   if (!lead) {
     return <div className="p-6 text-sm text-muted-foreground">{loading ? 'Loading lead...' : 'Select a lead to view details.'}</div>;
@@ -74,9 +78,11 @@ function LeadDetailInner({
           </div>
           <div className="flex items-center gap-3">
             <LeadScoreBadge score={lead.lead_score} />
-            <Button variant="destructive" size="sm" onClick={() => onDelete(lead.id)}>
-              Delete
-            </Button>
+            {canDeleteLead ? (
+              <Button variant="destructive" size="sm" onClick={() => onDelete(lead.id)}>
+                Delete
+              </Button>
+            ) : null}
           </div>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
@@ -146,22 +152,24 @@ function LeadDetailInner({
         </TabsContent>
 
         <TabsContent value="activity">
-          <ActivityTimeline activities={lead.lead_activities || []} loading={loading} onAdd={(payload) => onAddActivity(lead.id, payload)} />
+          <ActivityTimeline activities={lead.lead_activities || []} loading={loading} onAdd={canUpdateLead ? (payload) => onAddActivity(lead.id, payload) : undefined} />
         </TabsContent>
 
         <TabsContent value="notes" className="space-y-4">
-          <div className="space-y-3 rounded-xl border p-4">
-            <Textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a structured note for this lead..." />
-            <Button
-              onClick={() => {
-                if (!note.trim()) return;
-                onAddNote(lead.id, note);
-                setNote('');
-              }}
-            >
-              Add Note
-            </Button>
-          </div>
+          {canUpdateLead ? (
+            <div className="space-y-3 rounded-xl border p-4">
+              <Textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a structured note for this lead..." />
+              <Button
+                onClick={() => {
+                  if (!note.trim()) return;
+                  onAddNote(lead.id, note);
+                  setNote('');
+                }}
+              >
+                Add Note
+              </Button>
+            </div>
+          ) : null}
           <div className="space-y-3">
             {(lead.lead_notes || []).map((item) => (
               <div key={item.id} className="rounded-xl border p-4">
@@ -176,8 +184,8 @@ function LeadDetailInner({
           <FollowupScheduler
             followups={lead.lead_followups || []}
             loading={loading}
-            onSchedule={(payload) => onScheduleFollowup(lead.id, payload)}
-            onComplete={onCompleteFollowup}
+            onSchedule={canCreateFollowup ? (payload) => onScheduleFollowup(lead.id, payload) : undefined}
+            onComplete={canUpdateFollowup ? onCompleteFollowup : undefined}
           />
         </TabsContent>
 
@@ -200,21 +208,23 @@ function LeadDetailInner({
         </TabsContent>
 
         <TabsContent value="tags" className="space-y-4">
-          <div className="flex gap-2">
-            <Textarea className="min-h-0" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Add tag" />
-            <Button
-              onClick={() => {
-                if (!tag.trim()) return;
-                onAddTag(lead.id, tag);
-                setTag('');
-              }}
-            >
-              Add
-            </Button>
-          </div>
+          {canUpdateLead ? (
+            <div className="flex gap-2">
+              <Textarea className="min-h-0" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Add tag" />
+              <Button
+                onClick={() => {
+                  if (!tag.trim()) return;
+                  onAddTag(lead.id, tag);
+                  setTag('');
+                }}
+              >
+                Add
+              </Button>
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             {(lead.lead_tags || []).map((leadTag) => (
-              <button key={leadTag.id} type="button" className="rounded-full border px-3 py-1 text-sm" onClick={() => onRemoveTag(lead.id, leadTag.tag_name)}>
+              <button key={leadTag.id} type="button" className="rounded-full border px-3 py-1 text-sm" onClick={() => canUpdateLead && onRemoveTag(lead.id, leadTag.tag_name)}>
                 {leadTag.tag_name} x
               </button>
             ))}

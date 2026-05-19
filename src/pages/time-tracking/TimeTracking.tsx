@@ -18,11 +18,11 @@ import { Clock, Play, Square, Search, Download, Trash2, TimerReset, FolderKanban
 import { api } from '@/services/api';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/AuthContext';
+import { usePermission } from '@/hooks/usePermission';
 import Swal from 'sweetalert2';
 
 const TimeTracking: React.FC = () => {
-  const { user } = useAuth();
+  const permission = usePermission();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [isTracking, setIsTracking] = useState(false);
@@ -53,8 +53,9 @@ const TimeTracking: React.FC = () => {
     queryFn: async () => (formData.project_id ? api.getTasksByProjectId(formData.project_id) : { data: [] }),
   });
   const tasks = tasksResponse?.data || [];
-  const roleName = user?.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
-  const isAdminViewerOnly = roleName.includes('admin');
+  const canCreateTime = permission.can('time.create');
+  const canDeleteTime = permission.can('time.delete');
+  const canManageTime = permission.canAny(['time.manage', 'time.approve']);
 
   const { data: timeStatsResponse } = useQuery({
     queryKey: ['time-stats'],
@@ -126,6 +127,7 @@ const TimeTracking: React.FC = () => {
   };
 
   const handleStartTracking = () => {
+    if (!canCreateTime) return;
     if (!formData.project_id) {
       toast.error('Please select a project before starting the timer');
       return;
@@ -135,6 +137,7 @@ const TimeTracking: React.FC = () => {
   };
 
   const handleStopTracking = () => {
+    if (!canCreateTime) return;
     if (currentTime <= 0) {
       toast.error('No tracked time to save');
       setIsTracking(false);
@@ -153,6 +156,7 @@ const TimeTracking: React.FC = () => {
   };
 
   const handleManualSave = () => {
+    if (!canCreateTime) return;
     if (!formData.project_id) {
       toast.error('Please select a project');
       return;
@@ -174,6 +178,7 @@ const TimeTracking: React.FC = () => {
   };
 
   const handleDelete = (id: string, projectName: string) => {
+    if (!canDeleteTime && !canManageTime) return;
     Swal.fire({
       title: 'Delete Time Log?',
       text: `Are you sure you want to delete time log for "${projectName || 'selected entry'}"?`,
@@ -224,10 +229,12 @@ const TimeTracking: React.FC = () => {
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
-          <Button variant="outline" onClick={resetEntryForm}>
-            <TimerReset className="mr-2 h-4 w-4" />
-            Reset
-          </Button>
+          {canCreateTime ? (
+            <Button variant="outline" onClick={resetEntryForm}>
+              <TimerReset className="mr-2 h-4 w-4" />
+              Reset
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -267,6 +274,7 @@ const TimeTracking: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr,1.4fr]">
+        {canCreateTime ? (
         <Card>
           <CardHeader>
             <CardTitle>Active Timer & Manual Entry</CardTitle>
@@ -336,27 +344,24 @@ const TimeTracking: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {!isAdminViewerOnly && !isTracking ? (
+              {!isTracking ? (
                 <Button onClick={handleStartTracking} disabled={createMutation.isPending}>
                   <Play className="mr-2 h-4 w-4" />
                   Start Timer
                 </Button>
-              ) : !isAdminViewerOnly && isTracking ? (
+              ) : (
                 <Button className="bg-red-500 hover:bg-red-600" onClick={handleStopTracking} disabled={createMutation.isPending}>
                   <Square className="mr-2 h-4 w-4" />
                   Stop & Save
                 </Button>
-              ) : null}
-              {!isAdminViewerOnly ? (
-                <Button variant="outline" onClick={handleManualSave} disabled={createMutation.isPending}>
-                  Save Manual Entry
-                </Button>
-              ) : (
-                <Badge variant="outline">Admin view only</Badge>
               )}
+              <Button variant="outline" onClick={handleManualSave} disabled={createMutation.isPending}>
+                Save Manual Entry
+              </Button>
             </div>
           </CardContent>
         </Card>
+        ) : null}
 
         <Card>
           <CardHeader className="space-y-4">
@@ -380,17 +385,17 @@ const TimeTracking: React.FC = () => {
                     <TableHead>Date</TableHead>
                     <TableHead>Hours</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
+                    {(canDeleteTime || canManageTime) ? <TableHead>Actions</TableHead> : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-10 text-center">Loading time logs...</TableCell>
+                      <TableCell colSpan={(canDeleteTime || canManageTime) ? 7 : 6} className="py-10 text-center">Loading time logs...</TableCell>
                     </TableRow>
                   ) : filteredLogs.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">No time logs found.</TableCell>
+                      <TableCell colSpan={(canDeleteTime || canManageTime) ? 7 : 6} className="py-10 text-center text-muted-foreground">No time logs found.</TableCell>
                     </TableRow>
                   ) : (
                     filteredLogs.map((log: any) => (
@@ -405,11 +410,13 @@ const TimeTracking: React.FC = () => {
                             {log.status}
                           </Badge>
                         </TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(log.id, log.project_name || log.user_name)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
+                        {(canDeleteTime || canManageTime) ? (
+                          <TableCell>
+                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(log.id, log.project_name || log.user_name)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        ) : null}
                       </TableRow>
                     ))
                   )}

@@ -28,6 +28,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import portalLogo from '@/assets/images-removebg-preview.png';
 
 interface NavItem {
   label: string;
@@ -116,7 +117,7 @@ const navigation: NavItem[] = [
     label: 'Activity Logs',
     icon: Activity,
     path: '/activity',
-    permission: 'activity.view',
+    permission: 'activity_logs.view',
   },
 ];
 
@@ -307,14 +308,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           isCollapsed && !isMobile ? 'justify-center px-2' : 'justify-between px-4'
         )}>
           {isCollapsed && !isMobile ? (
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-xl font-bold text-primary-foreground">
-              P
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-background p-1.5 ring-1 ring-sidebar-border">
+              <img src={portalLogo} alt="Project Portal" className="h-full w-full object-contain" />
             </div>
           ) : (
             <>
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-xl font-bold text-primary-foreground flex-shrink-0">
-                  P
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-background p-1.5 ring-1 ring-sidebar-border">
+                  <img src={portalLogo} alt="Project Portal" className="h-full w-full object-contain" />
                 </div>
                 <div>
                   <h1 className="text-base font-semibold text-sidebar-foreground">Project Portal</h1>

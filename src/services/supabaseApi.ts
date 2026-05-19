@@ -1,5 +1,6 @@
 import { ApiError } from '@/services/api';
 import { getSupabaseClient } from '@/lib/supabase';
+import { PERMISSION_DEFINITIONS } from '@/lib/permissions';
 import type {
   AddLeadActivityPayload,
   CreateFlexibleFollowupPayload,
@@ -21,60 +22,7 @@ import type {
 
 type RestFallback = Record<string, (...args: any[]) => Promise<any>>;
 
-const DEFAULT_PERMISSIONS = [
-  { key: 'dashboard.view', name: 'dashboard.view', module: 'dashboard', description: 'Access dashboard shell' },
-  { key: 'dashboard.stats.view', name: 'dashboard.stats.view', module: 'dashboard', description: 'View dashboard stats' },
-  { key: 'dashboard.project_progress', name: 'dashboard.project_progress', module: 'dashboard', description: 'View project progress widgets' },
-  { key: 'dashboard.team_performance', name: 'dashboard.team_performance', module: 'dashboard', description: 'View team performance widgets' },
-  { key: 'dashboard.task_charts', name: 'dashboard.task_charts', module: 'dashboard', description: 'View task charts' },
-  { key: 'dashboard.activity_logs', name: 'dashboard.activity_logs', module: 'dashboard', description: 'View dashboard activity widgets' },
-  { key: 'dashboard.view.total_projects', name: 'dashboard.view.total_projects', module: 'dashboard', description: 'View total projects stat' },
-  { key: 'dashboard.view.tasks', name: 'dashboard.view.tasks', module: 'dashboard', description: 'View total tasks stat' },
-  { key: 'dashboard.view.overdue', name: 'dashboard.view.overdue', module: 'dashboard', description: 'View overdue tasks stat' },
-  { key: 'dashboard.view.team', name: 'dashboard.view.team', module: 'dashboard', description: 'View team members stat' },
-  { key: 'dashboard.view.online_users', name: 'dashboard.view.online_users', module: 'dashboard', description: 'View online users stat' },
-  { key: 'projects.view', name: 'projects.view', module: 'projects', description: 'View projects' },
-  { key: 'projects.view.all', name: 'projects.view.all', module: 'projects', description: 'View all projects' },
-  { key: 'projects.create', name: 'projects.create', module: 'projects', description: 'Create projects' },
-  { key: 'projects.update', name: 'projects.update', module: 'projects', description: 'Edit projects' },
-  { key: 'projects.delete', name: 'projects.delete', module: 'projects', description: 'Delete projects' },
-  { key: 'tasks.view', name: 'tasks.view', module: 'tasks', description: 'View tasks' },
-  { key: 'tasks.view.all', name: 'tasks.view.all', module: 'tasks', description: 'View all tasks' },
-  { key: 'tasks.create', name: 'tasks.create', module: 'tasks', description: 'Create tasks' },
-  { key: 'tasks.update', name: 'tasks.update', module: 'tasks', description: 'Edit tasks' },
-  { key: 'tasks.delete', name: 'tasks.delete', module: 'tasks', description: 'Delete tasks' },
-  { key: 'tasks.assign', name: 'tasks.assign', module: 'tasks', description: 'Assign tasks' },
-  { key: 'tasks.update_status', name: 'tasks.update_status', module: 'tasks', description: 'Update task status' },
-  { key: 'tasks.update_priority', name: 'tasks.update_priority', module: 'tasks', description: 'Update task priority' },
-  { key: 'comments.create', name: 'comments.create', module: 'comments', description: 'Add task comments' },
-  { key: 'comments.delete', name: 'comments.delete', module: 'comments', description: 'Delete task comments' },
-  { key: 'files.upload', name: 'files.upload', module: 'files', description: 'Upload files' },
-  { key: 'files.delete', name: 'files.delete', module: 'files', description: 'Delete files' },
-  { key: 'leads.view', name: 'leads.view', module: 'leads', description: 'View leads CRM' },
-  { key: 'leads.view.all', name: 'leads.view.all', module: 'leads', description: 'View all users leads' },
-  { key: 'leads.followups.view', name: 'leads.followups.view', module: 'leads', description: 'View flexible follow-up sheet' },
-  { key: 'leads.followups.create', name: 'leads.followups.create', module: 'leads', description: 'Create follow-up rows' },
-  { key: 'leads.followups.update', name: 'leads.followups.update', module: 'leads', description: 'Edit follow-up rows' },
-  { key: 'leads.followups.delete', name: 'leads.followups.delete', module: 'leads', description: 'Delete follow-up rows' },
-  { key: 'leads.detail.view', name: 'leads.detail.view', module: 'leads', description: 'View detailed lead CRM data' },
-  { key: 'leads.create', name: 'leads.create', module: 'leads', description: 'Create leads' },
-  { key: 'leads.update', name: 'leads.update', module: 'leads', description: 'Update leads' },
-  { key: 'leads.delete', name: 'leads.delete', module: 'leads', description: 'Delete leads' },
-  { key: 'leads.import', name: 'leads.import', module: 'leads', description: 'Import leads' },
-  { key: 'users.view', name: 'users.view', module: 'users', description: 'View users' },
-  { key: 'users.create', name: 'users.create', module: 'users', description: 'Create users' },
-  { key: 'users.update', name: 'users.update', module: 'users', description: 'Edit users' },
-  { key: 'users.delete', name: 'users.delete', module: 'users', description: 'Delete users' },
-  { key: 'roles.manage', name: 'roles.manage', module: 'roles', description: 'Manage roles' },
-  { key: 'permissions.manage', name: 'permissions.manage', module: 'permissions', description: 'Manage permissions' },
-  { key: 'reports.view', name: 'reports.view', module: 'reports', description: 'View reports' },
-  { key: 'members.view', name: 'members.view', module: 'members', description: 'View project members' },
-  { key: 'members.create', name: 'members.create', module: 'members', description: 'Add project members' },
-  { key: 'members.update', name: 'members.update', module: 'members', description: 'Update project members' },
-  { key: 'members.delete', name: 'members.delete', module: 'members', description: 'Remove project members' },
-  { key: 'activity_logs.view', name: 'activity_logs.view', module: 'activity_logs', description: 'View activity logs' },
-  { key: 'activity_logs.dashboard', name: 'activity_logs.dashboard', module: 'activity_logs', description: 'View dashboard activity logs' },
-];
+const DEFAULT_PERMISSIONS = PERMISSION_DEFINITIONS;
 
 const sortByCreatedAtDesc = <T extends { created_at?: string | null }>(items: T[]): T[] =>
   [...items].sort((a, b) => {
@@ -1773,6 +1721,14 @@ export class SupabaseApiService {
   }
 
   async getPermissions() {
+    const { error: seedError } = await this.client
+      .from('permissions')
+      .upsert(DEFAULT_PERMISSIONS, { onConflict: 'key', ignoreDuplicates: true });
+
+    if (seedError) {
+      console.warn('Unable to sync default permissions:', seedError);
+    }
+
     const { data, error } = await this.client
       .from('permissions')
       .select('id, name, key, module, description')

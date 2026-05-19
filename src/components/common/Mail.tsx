@@ -599,7 +599,7 @@ const Mail: React.FC = () => {
                         setActiveTab(v);
                         setSelectedMail(null);
 
-                        if (v === 'all' && can('view_all_mails')) setView('all');
+                        if (v === 'all' && can('mails.view.all')) setView('all');
                         else setView('inbox');
                     }}
                     className="flex-1 flex flex-col overflow-hidden"
@@ -619,7 +619,7 @@ const Mail: React.FC = () => {
                                         <MailIcon className="h-4 w-4" />
                                         Messages
                                     </TabsTrigger>
-                                    {can('view_all_mails') && (
+                                    {can('mails.view.all') && (
                                         <TabsTrigger value="all" className="gap-2">
                                             <Users className="h-4 w-4" />
                                             All Mails
@@ -725,7 +725,7 @@ const Mail: React.FC = () => {
                         </Sheet>
                     </TabsContent>
 
-                    {can('view_all_mails') && (
+                    {can('mails.view.all') && (
                         <TabsContent value="all" className="flex-1 overflow-hidden border-0">
                             {/* Mail List - Full Width */}
                             <div className="flex-1 overflow-hidden">

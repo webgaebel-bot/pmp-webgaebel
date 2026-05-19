@@ -206,7 +206,7 @@ const Dashboard: React.FC = () => {
   }
 
   // Check if stats data is available
-  if (!stats) {
+  if (permission.canViewDashboardStats() && !stats) {
     return (
       <EmptyState
         title="No Data Available"
@@ -224,8 +224,9 @@ const Dashboard: React.FC = () => {
       />
 
       {/* Stats Cards */}
+      {stats ? (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {permission.canViewTotalProjects() && (
+        {(permission.canViewDashboardStats() || permission.canViewTotalProjects()) && (
           <StatsCard
             title="Total Projects"
             value={stats.total_projects}
@@ -234,7 +235,7 @@ const Dashboard: React.FC = () => {
             description={`${stats.active_projects} active`}
           />
         )}
-        {permission.canViewTotalTasks() && (
+        {(permission.canViewDashboardStats() || permission.canViewTotalTasks()) && (
           <StatsCard
             title="Total Tasks"
             value={stats.total_tasks}
@@ -244,7 +245,7 @@ const Dashboard: React.FC = () => {
             description="this month"
           />
         )}
-        {permission.canViewOverdueTasks() && (
+        {(permission.canViewDashboardStats() || permission.canViewOverdueTasks()) && (
           <StatsCard
             title="Overdue Tasks"
             value={stats.overdue_tasks}
@@ -253,7 +254,7 @@ const Dashboard: React.FC = () => {
             description="needs attention"
           />
         )}
-        {permission.canViewTeamMembers() && permission.canViewOnlineUsers() && (
+        {(permission.canViewDashboardStats() || (permission.canViewTeamMembers() && permission.canViewOnlineUsers())) && (
           <StatsCard
             title="Team Members"
             value={stats.total_users}
@@ -263,11 +264,14 @@ const Dashboard: React.FC = () => {
           />
         )}
       </div>
+      ) : null}
 
       {/* Calendar Section */}
+      {permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']) ? (
       <div>
         <Calendar />
       </div>
+      ) : null}
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

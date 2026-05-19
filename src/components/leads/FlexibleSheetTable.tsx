@@ -21,9 +21,13 @@ interface FlexibleSheetTableProps {
   emptyText?: string;
   savingId?: string;
   onColumnsChange: (columns: FlexibleColumn[]) => void;
-  onSaveRow: (rowId: string, values: Record<string, string>, raw?: unknown) => void;
-  onAddRow: () => void;
+  onSaveRow?: (rowId: string, values: Record<string, string>, raw?: unknown) => void;
+  onAddRow?: () => void;
   onDeleteRow?: (rowId: string) => void;
+  canAdd?: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canManageColumns?: boolean;
 }
 
 const makeColumnId = (label: string) =>
@@ -45,6 +49,10 @@ export function FlexibleSheetTable({
   onSaveRow,
   onAddRow,
   onDeleteRow,
+  canAdd = true,
+  canEdit = true,
+  canDelete = Boolean(onDeleteRow),
+  canManageColumns = true,
 }: FlexibleSheetTableProps) {
   const [draftRows, setDraftRows] = useState<Record<string, Record<string, string>>>({});
   const [newColumnName, setNewColumnName] = useState('');
@@ -64,6 +72,7 @@ export function FlexibleSheetTable({
   };
 
   const saveRow = (row: FlexibleSheetRow) => {
+    if (!onSaveRow) return;
     const values = { ...row.values, ...(draftRows[row.id] || {}) };
     onSaveRow(row.id, values, row.raw);
     setDraftRows((current) => {
@@ -102,28 +111,36 @@ export function FlexibleSheetTable({
           <h2 className="text-lg font-semibold">{title}</h2>
           <p className="text-sm text-muted-foreground">Cells accept multiple values with comma, semicolon, pipe, or new line.</p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            value={newColumnName}
-            onChange={(event) => setNewColumnName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                addColumn();
-              }
-            }}
-            placeholder="New column name"
-            className="sm:w-56"
-          />
-          <Button type="button" variant="outline" onClick={addColumn}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Column
-          </Button>
-          <Button type="button" onClick={onAddRow}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Row
-          </Button>
-        </div>
+        {(canManageColumns || canAdd) ? (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {canManageColumns ? (
+              <>
+                <Input
+                  value={newColumnName}
+                  onChange={(event) => setNewColumnName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      addColumn();
+                    }
+                  }}
+                  placeholder="New column name"
+                  className="sm:w-56"
+                />
+                <Button type="button" variant="outline" onClick={addColumn}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Column
+                </Button>
+              </>
+            ) : null}
+            {canAdd && onAddRow ? (
+              <Button type="button" onClick={onAddRow}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Row
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
@@ -134,12 +151,16 @@ export function FlexibleSheetTable({
               {visibleColumns.map((column) => (
                 <th key={column.id} className="min-w-44 border-r px-2 py-2 text-left align-top font-medium">
                   <div className="flex items-center gap-2">
-                    <Input
-                      value={column.label}
-                      onChange={(event) => renameColumn(column.id, event.target.value)}
-                      className="h-8 border-transparent bg-transparent px-1 font-medium shadow-none"
-                    />
-                    {!column.systemField ? (
+                    {canManageColumns ? (
+                      <Input
+                        value={column.label}
+                        onChange={(event) => renameColumn(column.id, event.target.value)}
+                        className="h-8 border-transparent bg-transparent px-1 font-medium shadow-none"
+                      />
+                    ) : (
+                      <span className="px-1">{column.label}</span>
+                    )}
+                    {canManageColumns && !column.systemField ? (
                       <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => deleteColumn(column.id)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -174,6 +195,7 @@ export function FlexibleSheetTable({
                         <textarea
                           value={getValue(row, column.id)}
                           onChange={(event) => setValue(row.id, column.id, event.target.value)}
+                          readOnly={!canEdit}
                           className="min-h-16 w-full resize-y rounded-md border border-transparent bg-transparent px-2 py-2 outline-none focus:border-ring focus:bg-background"
                           placeholder="-"
                         />
@@ -181,10 +203,12 @@ export function FlexibleSheetTable({
                     ))}
                     <td className="p-2 align-top">
                       <div className="flex gap-1">
-                        <Button type="button" size="icon" variant={dirty ? 'default' : 'ghost'} disabled={savingId === row.id} onClick={() => saveRow(row)}>
-                          <Save className="h-4 w-4" />
-                        </Button>
-                        {onDeleteRow ? (
+                        {canEdit && onSaveRow ? (
+                          <Button type="button" size="icon" variant={dirty ? 'default' : 'ghost'} disabled={savingId === row.id} onClick={() => saveRow(row)}>
+                            <Save className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {canDelete && onDeleteRow ? (
                           <Button type="button" size="icon" variant="ghost" className="text-rose-600" onClick={() => onDeleteRow(row.id)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>

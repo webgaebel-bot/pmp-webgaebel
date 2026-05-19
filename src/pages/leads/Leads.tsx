@@ -133,6 +133,14 @@ const Leads: React.FC = () => {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [bulkAction, setBulkAction] = useState('');
   const [bulkAssignTo, setBulkAssignTo] = useState('');
+  const canCreateLead = hasPermission('leads.create');
+  const canUpdateLead = hasPermission('leads.update');
+  const canDeleteLead = hasPermission('leads.delete');
+  const canImportLeads = hasPermission('leads.import');
+  const canViewFollowups = hasPermission('leads.followups.view');
+  const canCreateFollowups = hasPermission('leads.followups.create');
+  const canUpdateFollowups = hasPermission('leads.followups.update');
+  const canDeleteFollowups = hasPermission('leads.followups.delete');
 
   const { data: usersResponse } = useQuery({
     queryKey: ['lead-users'],
@@ -185,6 +193,12 @@ const Leads: React.FC = () => {
     setFilters((current) => ({ ...current, owner_id: selectedOwnerId || undefined }));
   }, [selectedOwnerId]);
 
+  React.useEffect(() => {
+    if (view === 'followups' && !canViewFollowups) {
+      setView('table');
+    }
+  }, [canViewFollowups, view]);
+
   const openLead = (leadId: string) => {
     setActiveLeadId(leadId);
     setLeadDrawerOpen(true);
@@ -192,6 +206,7 @@ const Leads: React.FC = () => {
 
   const handleCreateOrUpdate = (payload: CreateLeadPayload) => {
     if (editingLead) {
+      if (!canUpdateLead) return;
       mutations.updateLead.mutate(
         { id: editingLead.id, data: payload },
         {
@@ -204,6 +219,7 @@ const Leads: React.FC = () => {
       return;
     }
 
+    if (!canCreateLead) return;
     mutations.createLead.mutate(payload, {
       onSuccess: () => {
         setLeadFormOpen(false);
@@ -224,6 +240,7 @@ const Leads: React.FC = () => {
   }));
 
   const saveLeadRow = (_rowId: string, values: Record<string, string>, raw?: unknown) => {
+    if (!canUpdateLead) return;
     const lead = raw as Lead | undefined;
     if (!lead) return;
     const custom_fields = leadColumns.reduce<Record<string, string>>((acc, column) => {
@@ -255,6 +272,7 @@ const Leads: React.FC = () => {
   };
 
   const addLeadRow = () => {
+    if (!canCreateLead) return;
     const stamp = new Date().toLocaleString();
     mutations.createLead.mutate({
       name: `New Lead ${stamp}`,
@@ -277,6 +295,7 @@ const Leads: React.FC = () => {
   }));
 
   const handleDeleteLead = (leadId: string) => {
+    if (!canDeleteLead) return;
     const lead = allLeads.find((item: Lead) => item.id === leadId);
     Swal.fire({
       title: 'Delete Lead?',
@@ -303,6 +322,7 @@ const Leads: React.FC = () => {
   const handleBulkAction = () => {
     if (!selectedLeadIds.length || !bulkAction) return;
     if (bulkAction === 'delete') {
+      if (!canDeleteLead) return;
       Swal.fire({
         title: 'Delete Selected Leads?',
         text: `Are you sure you want to delete ${selectedLeadIds.length} selected leads?`,
@@ -319,10 +339,12 @@ const Leads: React.FC = () => {
       return;
     }
     if (bulkAction === 'assign' && bulkAssignTo) {
+      if (!canUpdateLead) return;
       mutations.bulkAssign.mutate({ leadIds: selectedLeadIds, userId: bulkAssignTo }, { onSuccess: () => setSelectedLeadIds([]) });
       return;
     }
     if (bulkAction.startsWith('status:')) {
+      if (!canUpdateLead) return;
       mutations.bulkUpdateStatus.mutate(
         { leadIds: selectedLeadIds, status: bulkAction.replace('status:', '') },
         { onSuccess: () => setSelectedLeadIds([]) }
@@ -348,18 +370,22 @@ const Leads: React.FC = () => {
               mutations.importLeads.mutate(file);
               event.target.value = '';
             }} />
-            <Button variant="secondary" onClick={() => importInputRef.current?.click()} disabled={mutations.importLeads.isPending}>
-              <Upload className="mr-2 h-4 w-4" />
-              {mutations.importLeads.isPending ? 'Importing...' : 'Import CSV'}
-            </Button>
+            {canImportLeads ? (
+              <Button variant="secondary" onClick={() => importInputRef.current?.click()} disabled={mutations.importLeads.isPending}>
+                <Upload className="mr-2 h-4 w-4" />
+                {mutations.importLeads.isPending ? 'Importing...' : 'Import CSV'}
+              </Button>
+            ) : null}
             <Button variant="secondary" onClick={() => downloadCsv(selectedLeadIds.length ? allLeads.filter((lead: Lead) => selectedLeadIds.includes(lead.id)) : allLeads)}>
               <Download className="mr-2 h-4 w-4" />
               Export
             </Button>
-            <Button onClick={() => { setEditingLead(null); setLeadFormOpen(true); }}>
-              <Plus className="mr-2 h-4 w-4" />
-              New Lead
-            </Button>
+            {canCreateLead ? (
+              <Button onClick={() => { setEditingLead(null); setLeadFormOpen(true); }}>
+                <Plus className="mr-2 h-4 w-4" />
+                New Lead
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -373,7 +399,7 @@ const Leads: React.FC = () => {
             <Tabs value={view} onValueChange={(value) => setView(value as LeadsView)}>
               <TabsList className="grid h-auto grid-cols-2 gap-1 sm:grid-cols-4">
                 <TabsTrigger value="table"><TableProperties className="mr-2 h-4 w-4" />Leads</TabsTrigger>
-                <TabsTrigger value="followups"><ListChecks className="mr-2 h-4 w-4" />Follow-ups</TabsTrigger>
+                {canViewFollowups ? <TabsTrigger value="followups"><ListChecks className="mr-2 h-4 w-4" />Follow-ups</TabsTrigger> : null}
                 <TabsTrigger value="kanban"><LayoutGrid className="mr-2 h-4 w-4" />Kanban</TabsTrigger>
                 <TabsTrigger value="analytics"><BarChart3 className="mr-2 h-4 w-4" />Analytics</TabsTrigger>
               </TabsList>
@@ -482,13 +508,13 @@ const Leads: React.FC = () => {
               <div className="flex flex-wrap gap-2">
                 <select className="rounded-md border bg-background px-3 py-2" value={bulkAction} onChange={(event) => setBulkAction(event.target.value)}>
                   <option value="">Bulk Action</option>
-                  <option value="delete">Delete</option>
-                  <option value="status:new">Change Status: New</option>
-                  <option value="status:contacted">Change Status: Contacted</option>
-                  <option value="status:qualified">Change Status: Qualified</option>
-                  <option value="status:converted">Change Status: Converted</option>
-                  <option value="status:lost">Change Status: Lost</option>
-                  <option value="assign">Assign To</option>
+                  {canDeleteLead ? <option value="delete">Delete</option> : null}
+                  {canUpdateLead ? <option value="status:new">Change Status: New</option> : null}
+                  {canUpdateLead ? <option value="status:contacted">Change Status: Contacted</option> : null}
+                  {canUpdateLead ? <option value="status:qualified">Change Status: Qualified</option> : null}
+                  {canUpdateLead ? <option value="status:converted">Change Status: Converted</option> : null}
+                  {canUpdateLead ? <option value="status:lost">Change Status: Lost</option> : null}
+                  {canUpdateLead ? <option value="assign">Assign To</option> : null}
                 </select>
                 {bulkAction === 'assign' ? (
                   <select className="rounded-md border bg-background px-3 py-2" value={bulkAssignTo} onChange={(event) => setBulkAssignTo(event.target.value)}>
@@ -519,9 +545,13 @@ const Leads: React.FC = () => {
                 showOwner={canViewAllLeads}
                 emptyText="No leads found for the selected filters."
                 onColumnsChange={setLeadColumns}
-                onSaveRow={saveLeadRow}
-                onAddRow={addLeadRow}
-                onDeleteRow={handleDeleteLead}
+                onSaveRow={canUpdateLead ? saveLeadRow : undefined}
+                onAddRow={canCreateLead ? addLeadRow : undefined}
+                onDeleteRow={canDeleteLead ? handleDeleteLead : undefined}
+                canAdd={canCreateLead}
+                canEdit={canUpdateLead}
+                canDelete={canDeleteLead}
+                canManageColumns={canUpdateLead}
               />
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-muted-foreground">
@@ -556,14 +586,18 @@ const Leads: React.FC = () => {
                 showOwner={canViewAllLeads}
                 emptyText={followupQuery.isLoading ? 'Loading follow-ups...' : 'No follow-up rows found.'}
                 onColumnsChange={setFollowupColumns}
-                onSaveRow={(rowId, values) =>
+                onSaveRow={canUpdateFollowups ? (rowId, values) =>
                   followupMutations.updateFollowup.mutate({
                     id: rowId,
                     data: { data: values, status: values.status || values.Status },
                   })
-                }
-                onAddRow={() => followupMutations.createFollowup.mutate({ data: {} })}
-                onDeleteRow={(rowId) => followupMutations.deleteFollowup.mutate(rowId)}
+                : undefined}
+                onAddRow={canCreateFollowups ? () => followupMutations.createFollowup.mutate({ data: {} }) : undefined}
+                onDeleteRow={canDeleteFollowups ? (rowId) => followupMutations.deleteFollowup.mutate(rowId) : undefined}
+                canAdd={canCreateFollowups}
+                canEdit={canUpdateFollowups}
+                canDelete={canDeleteFollowups}
+                canManageColumns={canUpdateFollowups}
               />
             </div>
           ) : null}
@@ -572,6 +606,7 @@ const Leads: React.FC = () => {
             <LeadsKanban
               leads={allLeads}
               onOpenLead={openLead}
+              canMove={canUpdateLead}
               onMoveLead={(leadId, stage) =>
                 mutations.updateLead.mutate({
                   id: leadId,
