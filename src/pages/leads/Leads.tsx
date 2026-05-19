@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Filter, LayoutGrid, Plus, TableProperties, BarChart3, Upload, Download, ChevronLeft, ChevronRight, ListChecks } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { Button } from '@/components/ui/button';
@@ -25,7 +25,8 @@ import { useFlexibleFollowupMutations, useFlexibleFollowups } from '@/hooks/lead
 
 type LeadsView = 'table' | 'followups' | 'kanban' | 'analytics';
 
-const pageSize = 25;
+const pageSize = 1000;
+const defaultSheetRowCount = 1000;
 
 const emptyFilters: LeadFiltersType = {
   search: '',
@@ -117,7 +118,14 @@ function downloadCsv(rows: Lead[]) {
 
 const Leads: React.FC = () => {
   const { user, hasPermission } = useAuth();
+  const queryClient = useQueryClient();
   const importInputRef = useRef<HTMLInputElement>(null);
+  const blankRowLeadIds = useRef<Record<string, string>>({});
+  const blankRowFollowupIds = useRef<Record<string, string>>({});
+  const pendingBlankRows = useRef<Record<string, boolean>>({});
+  const pendingBlankFollowupRows = useRef<Record<string, boolean>>({});
+  const queuedBlankValues = useRef<Record<string, Record<string, string>>>({});
+  const queuedBlankFollowupValues = useRef<Record<string, Record<string, string>>>({});
   const [view, setView] = useState<LeadsView>('table');
   const [filters, setFilters] = useState<LeadFiltersType>(emptyFilters);
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
@@ -133,6 +141,8 @@ const Leads: React.FC = () => {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [bulkAction, setBulkAction] = useState('');
   const [bulkAssignTo, setBulkAssignTo] = useState('');
+  const [sheetRowCount, setSheetRowCount] = useState(defaultSheetRowCount);
+  const [followupSheetRowCount, setFollowupSheetRowCount] = useState(defaultSheetRowCount);
   const canCreateLead = hasPermission('leads.create');
   const canUpdateLead = hasPermission('leads.update');
   const canDeleteLead = hasPermission('leads.delete');
@@ -159,7 +169,7 @@ const Leads: React.FC = () => {
   const { data: leadsResponse, isLoading } = useLeads(filters, page, pageSize);
   const { data: allLeadsResponse } = useQuery({
     queryKey: ['leads-all', filters],
-    queryFn: async () => api.getLeads({ ...filters, page: 1, pageSize: 500 }),
+    queryFn: async () => api.getLeads({ ...filters, page: 1, pageSize: 1000 }),
   });
   const { data: stats } = useLeadStats();
   const { data: leadDetail, isLoading: leadDetailLoading } = useLeadDetail(activeLeadId);
@@ -177,7 +187,7 @@ const Leads: React.FC = () => {
   );
   const allSelected = leads.length > 0 && leads.every((lead) => selectedLeadIds.includes(lead.id));
   const roleName = user?.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
-  const canViewAllLeads = roleName.includes('admin') || hasPermission('leads.view.all');
+  const canViewAllLeads = roleName === 'super admin' || roleName === 'superadmin' || hasPermission('leads.view.all');
   const ownerOptions = assignedUsers.length ? assignedUsers : user ? [{ id: String(user.id), name: user.name || user.email || 'Me' }] : [];
 
   React.useEffect(() => {
@@ -227,72 +237,228 @@ const Leads: React.FC = () => {
     });
   };
 
-  const leadRows: FlexibleSheetRow[] = leads.map((lead) => ({
-    id: lead.id,
-    ownerName: lead.created_by_name || lead.created_by_email,
-    raw: lead,
-    values: leadColumns.reduce<Record<string, string>>((acc, column) => {
-      if (column.id === 'company_name') acc[column.id] = lead.company || lead.name || '';
-      else if (column.systemField) acc[column.id] = String((lead as unknown as Record<string, unknown>)[column.systemField as string] ?? '');
-      else acc[column.id] = String(lead.custom_fields?.[column.id] ?? '');
-      return acc;
-    }, {}),
-  }));
+  const leadRows: FlexibleSheetRow[] = useMemo(() => {
+    const dataRows = leads.map((lead) => ({
+      id: lead.id,
+      ownerName: lead.created_by_name || lead.created_by_email,
+      raw: lead,
+      values: leadColumns.reduce<Record<string, string>>((acc, column) => {
+        if (column.id === 'company_name') acc[column.id] = lead.company || lead.name || '';
+        else if (column.systemField) acc[column.id] = String((lead as unknown as Record<string, unknown>)[column.systemField as string] ?? '');
+        else acc[column.id] = String(lead.custom_fields?.[column.id] ?? '');
+        return acc;
+      }, {}),
+    }));
 
-  const saveLeadRow = (_rowId: string, values: Record<string, string>, raw?: unknown) => {
-    if (!canUpdateLead) return;
-    const lead = raw as Lead | undefined;
-    if (!lead) return;
+    const blankRows = Array.from({ length: Math.max(sheetRowCount - dataRows.length, 0) }, (_, index) => ({
+      id: `blank-${page}-${index + 1}`,
+      ownerName: '',
+      raw: null,
+      values: {},
+    }));
+
+    return [...dataRows, ...blankRows];
+  }, [leadColumns, leads, page]);
+
+  const buildLeadPayloadFromRow = (values: Record<string, string>, lead?: Lead): CreateLeadPayload & { custom_fields?: Record<string, string> } | null => {
+    const hasValue = Object.values(values).some((value) => String(value || '').trim());
+    if (!hasValue) return null;
+
     const custom_fields = leadColumns.reduce<Record<string, string>>((acc, column) => {
       if (!column.systemField) acc[column.id] = values[column.id] || '';
       return acc;
     }, {});
 
-    mutations.updateLead.mutate({
-      id: lead.id,
-      data: {
-        name: values.company_name || lead.name,
-        company: values.company_name || undefined,
-        designation: values.niche || undefined,
-        services_offered: values.service || undefined,
-        source: normalizeSourceValue(values.platform_source || lead.source || 'manual'),
-        email: values.email || undefined,
-        phone: values.phone || undefined,
-        website: values.website || undefined,
-        linkedin_url: values.linkedin || undefined,
-        facebook_url: values.facebook || undefined,
-        instagram_url: values.insta || undefined,
-        status: normalizeStatusValue(values.status, lead.status),
-        pipeline_stage: lead.pipeline_stage,
-        priority: lead.priority,
-        lead_score: lead.lead_score,
-        custom_fields,
-      },
-    });
+    const fallbackName = values.company_name || values.email || values.phone || values.niche || lead?.name || `Lead ${new Date().toLocaleString()}`;
+
+    return {
+      name: fallbackName,
+      company: values.company_name || undefined,
+      designation: values.niche || undefined,
+      services_offered: values.service || undefined,
+      source: normalizeSourceValue(values.platform_source || lead?.source || 'manual'),
+      email: values.email || undefined,
+      phone: values.phone || undefined,
+      website: values.website || undefined,
+      linkedin_url: values.linkedin || undefined,
+      facebook_url: values.facebook || undefined,
+      instagram_url: values.insta || undefined,
+      status: normalizeStatusValue(values.status, lead?.status || 'new'),
+      pipeline_stage: lead?.pipeline_stage || 'new',
+      priority: lead?.priority || 'medium',
+      lead_score: lead?.lead_score || 0,
+      custom_fields,
+    };
+  };
+
+  const saveLeadRow = async (rowId: string, values: Record<string, string>, raw?: unknown) => {
+    const lead = raw as Lead | null | undefined;
+    const existingId = lead?.id || blankRowLeadIds.current[rowId];
+    const payload = buildLeadPayloadFromRow(values, lead || undefined);
+    if (!payload) return;
+
+    try {
+      if (existingId) {
+        if (!canUpdateLead) return;
+        await api.updateLead(existingId, payload);
+        return;
+      }
+
+      if (!canCreateLead || pendingBlankRows.current[rowId]) {
+        queuedBlankValues.current[rowId] = values;
+        return;
+      }
+
+      pendingBlankRows.current[rowId] = true;
+      const response = await api.createLead(payload);
+      const createdId = response?.data?.id || response?.id;
+      if (createdId) {
+        blankRowLeadIds.current[rowId] = String(createdId);
+      }
+
+      const queuedValues = queuedBlankValues.current[rowId];
+      delete queuedBlankValues.current[rowId];
+      if (createdId && queuedValues) {
+        const queuedPayload = buildLeadPayloadFromRow(queuedValues);
+        if (queuedPayload) {
+          await api.updateLead(String(createdId), queuedPayload);
+        }
+      }
+    } catch (error: any) {
+      console.error('Lead autosave failed:', error);
+      Swal.fire('Save failed', error?.message || 'Unable to autosave this lead row.', 'error');
+    } finally {
+      pendingBlankRows.current[rowId] = false;
+    }
   };
 
   const addLeadRow = () => {
     if (!canCreateLead) return;
-    const stamp = new Date().toLocaleString();
-    mutations.createLead.mutate({
-      name: `New Lead ${stamp}`,
-      source: 'manual',
-      priority: 'medium',
-      pipeline_stage: 'new',
-      lead_score: 0,
-      custom_fields: {},
+    Swal.fire({
+      title: 'Add Rows',
+      text: 'How many blank rows do you want to add?',
+      input: 'number',
+      inputValue: 1,
+      inputAttributes: {
+        min: '1',
+        max: '5000',
+        step: '1',
+      },
+      showCancelButton: true,
+      confirmButtonText: 'Add Rows',
+      confirmButtonColor: '#0f766e',
+      inputValidator: (value) => {
+        const count = Number(value);
+        if (!Number.isInteger(count) || count < 1) return 'Enter a valid row count.';
+        if (count > 5000) return 'Please add 5000 rows or fewer at a time.';
+        return null;
+      },
+    }).then((result) => {
+      if (!result.isConfirmed) return;
+      setSheetRowCount((current) => current + Number(result.value || 1));
     });
   };
 
-  const followupRows: FlexibleSheetRow[] = (followupQuery.data?.data || []).map((row) => ({
-    id: row.id,
-    ownerName: row.owner_name || row.owner_email,
-    raw: row,
-    values: followupColumns.reduce<Record<string, string>>((acc, column) => {
-      acc[column.id] = String(row.data?.[column.id] ?? row.data?.[column.label] ?? '');
-      return acc;
-    }, {}),
-  }));
+  const followupRows: FlexibleSheetRow[] = useMemo(() => {
+    const dataRows = (followupQuery.data?.data || []).map((row) => ({
+      id: row.id,
+      ownerName: row.owner_name || row.owner_email,
+      raw: row,
+      values: followupColumns.reduce<Record<string, string>>((acc, column) => {
+        acc[column.id] = String(row.data?.[column.id] ?? row.data?.[column.label] ?? '');
+        return acc;
+      }, {}),
+    }));
+
+    const blankRows = Array.from({ length: Math.max(followupSheetRowCount - dataRows.length, 0) }, (_, index) => ({
+      id: `followup-blank-${index + 1}`,
+      ownerName: '',
+      raw: null,
+      values: {},
+    }));
+
+    return [...dataRows, ...blankRows];
+  }, [followupColumns, followupQuery.data?.data, followupSheetRowCount]);
+
+  const buildFollowupPayloadFromRow = (values: Record<string, string>) => {
+    const hasValue = Object.values(values).some((value) => String(value || '').trim());
+    if (!hasValue) return null;
+    return {
+      data: values,
+      status: values.status || values.Status || values.follow_up_status || values.followup_status || undefined,
+    };
+  };
+
+  const saveFollowupRow = async (rowId: string, values: Record<string, string>, raw?: unknown) => {
+    const record = raw as { id?: string } | null | undefined;
+    const existingId = record?.id || blankRowFollowupIds.current[rowId];
+    const payload = buildFollowupPayloadFromRow(values);
+    if (!payload) return;
+
+    try {
+      if (existingId) {
+        if (!canUpdateFollowups) return;
+        await api.updateFlexibleFollowup(existingId, payload);
+        queryClient.invalidateQueries({ queryKey: ['flexible-followups'] });
+        return;
+      }
+
+      if (!canCreateFollowups || pendingBlankFollowupRows.current[rowId]) {
+        queuedBlankFollowupValues.current[rowId] = values;
+        return;
+      }
+
+      pendingBlankFollowupRows.current[rowId] = true;
+      const response = await api.createFlexibleFollowup(payload);
+      const createdId = response?.data?.id || response?.id;
+      if (createdId) {
+        blankRowFollowupIds.current[rowId] = String(createdId);
+      }
+
+      const queuedValues = queuedBlankFollowupValues.current[rowId];
+      delete queuedBlankFollowupValues.current[rowId];
+      if (createdId && queuedValues) {
+        const queuedPayload = buildFollowupPayloadFromRow(queuedValues);
+        if (queuedPayload) {
+          await api.updateFlexibleFollowup(String(createdId), queuedPayload);
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['flexible-followups'] });
+    } catch (error: any) {
+      console.error('Follow-up autosave failed:', error);
+      Swal.fire('Save failed', error?.message || 'Unable to autosave this follow-up row.', 'error');
+    } finally {
+      pendingBlankFollowupRows.current[rowId] = false;
+    }
+  };
+
+  const addFollowupRows = () => {
+    if (!canCreateFollowups) return;
+    Swal.fire({
+      title: 'Add Follow-up Rows',
+      text: 'How many blank rows do you want to add?',
+      input: 'number',
+      inputValue: 1,
+      inputAttributes: {
+        min: '1',
+        max: '5000',
+        step: '1',
+      },
+      showCancelButton: true,
+      confirmButtonText: 'Add Rows',
+      confirmButtonColor: '#0f766e',
+      inputValidator: (value) => {
+        const count = Number(value);
+        if (!Number.isInteger(count) || count < 1) return 'Enter a valid row count.';
+        if (count > 5000) return 'Please add 5000 rows or fewer at a time.';
+        return null;
+      },
+    }).then((result) => {
+      if (!result.isConfirmed) return;
+      setFollowupSheetRowCount((current) => current + Number(result.value || 1));
+    });
+  };
 
   const handleDeleteLead = (leadId: string) => {
     if (!canDeleteLead) return;
@@ -545,13 +711,14 @@ const Leads: React.FC = () => {
                 showOwner={canViewAllLeads}
                 emptyText="No leads found for the selected filters."
                 onColumnsChange={setLeadColumns}
-                onSaveRow={canUpdateLead ? saveLeadRow : undefined}
+                onSaveRow={(canUpdateLead || canCreateLead) ? saveLeadRow : undefined}
                 onAddRow={canCreateLead ? addLeadRow : undefined}
                 onDeleteRow={canDeleteLead ? handleDeleteLead : undefined}
                 canAdd={canCreateLead}
-                canEdit={canUpdateLead}
+                canEdit={canUpdateLead || canCreateLead}
                 canDelete={canDeleteLead}
                 canManageColumns={canUpdateLead}
+                autoSave
               />
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-muted-foreground">
@@ -586,18 +753,14 @@ const Leads: React.FC = () => {
                 showOwner={canViewAllLeads}
                 emptyText={followupQuery.isLoading ? 'Loading follow-ups...' : 'No follow-up rows found.'}
                 onColumnsChange={setFollowupColumns}
-                onSaveRow={canUpdateFollowups ? (rowId, values) =>
-                  followupMutations.updateFollowup.mutate({
-                    id: rowId,
-                    data: { data: values, status: values.status || values.Status },
-                  })
-                : undefined}
-                onAddRow={canCreateFollowups ? () => followupMutations.createFollowup.mutate({ data: {} }) : undefined}
+                onSaveRow={(canUpdateFollowups || canCreateFollowups) ? saveFollowupRow : undefined}
+                onAddRow={canCreateFollowups ? addFollowupRows : undefined}
                 onDeleteRow={canDeleteFollowups ? (rowId) => followupMutations.deleteFollowup.mutate(rowId) : undefined}
                 canAdd={canCreateFollowups}
-                canEdit={canUpdateFollowups}
+                canEdit={canUpdateFollowups || canCreateFollowups}
                 canDelete={canDeleteFollowups}
                 canManageColumns={canUpdateFollowups}
+                autoSave
               />
             </div>
           ) : null}

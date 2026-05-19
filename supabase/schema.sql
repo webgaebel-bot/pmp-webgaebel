@@ -218,6 +218,7 @@ create table if not exists public.time_logs (
   user_id uuid not null references public.profiles(id) on delete cascade,
   project_id uuid references public.projects(id) on delete set null,
   task_id uuid references public.tasks(id) on delete set null,
+  lead_id uuid references public.leads(id) on delete set null,
   log_date date not null,
   hours numeric(5,2) not null default 0,
   minutes integer generated always as ((hours * 60)::integer) stored,
@@ -229,6 +230,7 @@ create table if not exists public.time_logs (
 );
 
 create index if not exists time_logs_user_date_idx on public.time_logs (user_id, log_date);
+create index if not exists time_logs_lead_id_idx on public.time_logs (lead_id);
 
 create table if not exists public.mail_threads (
   id uuid primary key default gen_random_uuid(),
@@ -410,6 +412,7 @@ alter table public.leads add column if not exists followup_sent_at timestamptz;
 alter table public.leads add column if not exists followup_notes text;
 alter table public.leads add column if not exists close_value numeric(12,2);
 alter table public.leads add column if not exists metadata jsonb not null default '{}'::jsonb;
+alter table public.time_logs add column if not exists lead_id uuid references public.leads(id) on delete set null;
 
 alter table public.leads drop constraint if exists leads_source_check;
 alter table public.leads add constraint leads_source_check

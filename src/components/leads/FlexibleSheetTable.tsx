@@ -28,6 +28,10 @@ interface FlexibleSheetTableProps {
   canEdit?: boolean;
   canDelete?: boolean;
   canManageColumns?: boolean;
+  autoSave?: boolean;
+  autoSaveDelay?: number;
+  initialRenderRows?: number;
+  renderBatchSize?: number;
 }
 
 const makeColumnId = (label: string) =>
@@ -53,33 +57,76 @@ export function FlexibleSheetTable({
   canEdit = true,
   canDelete = Boolean(onDeleteRow),
   canManageColumns = true,
+  autoSave = false,
+  autoSaveDelay = 900,
+  initialRenderRows = 120,
+  renderBatchSize = 120,
 }: FlexibleSheetTableProps) {
   const [draftRows, setDraftRows] = useState<Record<string, Record<string, string>>>({});
   const [newColumnName, setNewColumnName] = useState('');
+  const [visibleRowLimit, setVisibleRowLimit] = useState(initialRenderRows);
+  const autoSaveTimers = React.useRef<Record<string, number>>({});
 
   const visibleColumns = useMemo(() => columns.filter((column) => column.label.trim()), [columns]);
+  const renderedRows = rows.slice(0, visibleRowLimit);
+
+  React.useEffect(() => {
+    setVisibleRowLimit(initialRenderRows);
+  }, [initialRenderRows, rows.length]);
+
+  const handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+    const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 240;
+    if (nearBottom && visibleRowLimit < rows.length) {
+      setVisibleRowLimit((current) => Math.min(current + renderBatchSize, rows.length));
+    }
+  };
 
   const getValue = (row: FlexibleSheetRow, columnId: string) => draftRows[row.id]?.[columnId] ?? row.values[columnId] ?? '';
 
+  const hasAnyValue = (values: Record<string, string>) =>
+    Object.values(values).some((value) => String(value || '').trim());
+
+  const saveValues = (row: FlexibleSheetRow, values: Record<string, string>) => {
+    if (!onSaveRow || !hasAnyValue(values)) return;
+    onSaveRow(row.id, values, row.raw);
+  };
+
+  const queueAutoSave = (rowId: string, values: Record<string, string>) => {
+    if (!autoSave || !canEdit || !onSaveRow || !hasAnyValue(values)) return;
+    window.clearTimeout(autoSaveTimers.current[rowId]);
+    autoSaveTimers.current[rowId] = window.setTimeout(() => {
+      const row = rows.find((item) => item.id === rowId);
+      if (!row) return;
+      saveValues(row, values);
+    }, autoSaveDelay);
+  };
+
+  React.useEffect(() => {
+    return () => {
+      Object.values(autoSaveTimers.current).forEach((timerId) => window.clearTimeout(timerId));
+    };
+  }, []);
+
   const setValue = (rowId: string, columnId: string, value: string) => {
+    const baseValues = rows.find((row) => row.id === rowId)?.values || {};
+    const nextValues = {
+      ...(draftRows[rowId] || baseValues),
+      [columnId]: value,
+    };
+
     setDraftRows((current) => ({
       ...current,
-      [rowId]: {
-        ...(current[rowId] || rows.find((row) => row.id === rowId)?.values || {}),
-        [columnId]: value,
-      },
+      [rowId]: nextValues,
     }));
+
+    queueAutoSave(rowId, nextValues);
   };
 
   const saveRow = (row: FlexibleSheetRow) => {
     if (!onSaveRow) return;
     const values = { ...row.values, ...(draftRows[row.id] || {}) };
-    onSaveRow(row.id, values, row.raw);
-    setDraftRows((current) => {
-      const next = { ...current };
-      delete next[row.id];
-      return next;
-    });
+    saveValues(row, values);
   };
 
   const addColumn = () => {
@@ -143,11 +190,12 @@ export function FlexibleSheetTable({
         ) : null}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border" onScroll={handleScroll}>
         <table className="w-full min-w-[1100px] border-collapse text-sm">
           <thead className="bg-muted/60">
             <tr>
-              {showOwner ? <th className="sticky left-0 z-10 w-44 border-r bg-muted/90 px-3 py-2 text-left font-medium">{ownerLabel}</th> : null}
+              <th className="sticky left-0 z-20 w-14 border-r bg-muted/90 px-3 py-2 text-center font-medium">#</th>
+              {showOwner ? <th className="sticky left-14 z-10 w-44 border-r bg-muted/90 px-3 py-2 text-left font-medium">{ownerLabel}</th> : null}
               {visibleColumns.map((column) => (
                 <th key={column.id} className="min-w-44 border-r px-2 py-2 text-left align-top font-medium">
                   <div className="flex items-center gap-2">
@@ -174,17 +222,20 @@ export function FlexibleSheetTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={visibleColumns.length + (showOwner ? 2 : 1)} className="py-12 text-center text-muted-foreground">
+                <td colSpan={visibleColumns.length + (showOwner ? 3 : 2)} className="py-12 text-center text-muted-foreground">
                   {emptyText}
                 </td>
               </tr>
             ) : (
-              rows.map((row) => {
+              renderedRows.map((row, rowIndex) => {
                 const dirty = Boolean(draftRows[row.id]);
                 return (
                   <tr key={row.id} className="border-t hover:bg-muted/30">
+                    <td className="sticky left-0 z-20 border-r bg-background px-3 py-2 text-center text-xs text-muted-foreground">
+                      {rowIndex + 1}
+                    </td>
                     {showOwner ? (
-                      <td className="sticky left-0 z-10 border-r bg-background px-3 py-2">
+                      <td className="sticky left-14 z-10 border-r bg-background px-3 py-2">
                         <Badge variant="outline" className="max-w-40 truncate">
                           {row.ownerName || 'Unknown'}
                         </Badge>
@@ -195,6 +246,18 @@ export function FlexibleSheetTable({
                         <textarea
                           value={getValue(row, column.id)}
                           onChange={(event) => setValue(row.id, column.id, event.target.value)}
+                          onBlur={() => {
+                            if (!autoSave || !canEdit || !onSaveRow) return;
+                            const values = { ...row.values, ...(draftRows[row.id] || {}) };
+                            window.clearTimeout(autoSaveTimers.current[row.id]);
+                            saveValues(row, values);
+                          }}
+                          onKeyDown={(event) => {
+                            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                              event.preventDefault();
+                              saveRow(row);
+                            }
+                          }}
                           readOnly={!canEdit}
                           className="min-h-16 w-full resize-y rounded-md border border-transparent bg-transparent px-2 py-2 outline-none focus:border-ring focus:bg-background"
                           placeholder="-"
@@ -219,6 +282,13 @@ export function FlexibleSheetTable({
                 );
               })
             )}
+            {visibleRowLimit < rows.length ? (
+              <tr>
+                <td colSpan={visibleColumns.length + (showOwner ? 3 : 2)} className="py-4 text-center text-xs text-muted-foreground">
+                  Scroll down to load more rows ({visibleRowLimit} of {rows.length})
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

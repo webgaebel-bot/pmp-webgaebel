@@ -128,7 +128,6 @@ export class SupabaseApiService {
     const canViewAllLeads =
       roleName === 'super admin' ||
       roleName === 'superadmin' ||
-      roleName.includes('admin') ||
       permissions.includes('leads.view.all');
 
     return { profile, role, permissions, canViewAllLeads };
@@ -2910,6 +2909,9 @@ export class SupabaseApiService {
       .from('time_logs')
       .select(`
         id,
+        user_id,
+        project_id,
+        task_id,
         log_date,
         hours,
         description,
@@ -2926,6 +2928,9 @@ export class SupabaseApiService {
       success: true,
       data: ensureArray(data).map((log: any) => ({
         id: String(log.id),
+        user_id: log.user_id ? String(log.user_id) : '',
+        project_id: log.project_id ? String(log.project_id) : '',
+        task_id: log.task_id ? String(log.task_id) : '',
         date: log.log_date,
         hours: log.hours,
         description: log.description,
