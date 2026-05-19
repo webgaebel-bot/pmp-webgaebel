@@ -1699,7 +1699,25 @@ export class SupabaseApiService {
   }
 
   async assignPermissions(roleId: string, permissionIds: string[] | number[]) {
-    const normalizedIds = permissionIds.map(String);
+    const requestedValues = [...new Set(permissionIds.map((value) => String(value).trim()).filter(Boolean))];
+    const { data: permissions, error: permissionsError } = await this.client
+      .from('permissions')
+      .select('id, key');
+
+    if (permissionsError) throw formatError(permissionsError, 'Unable to validate selected permissions.');
+
+    const matchedPermissions = ensureArray(permissions).filter((permission: any) =>
+      requestedValues.includes(String(permission.id)) || requestedValues.includes(String(permission.key))
+    );
+    const normalizedIds = matchedPermissions.map((permission: any) => String(permission.id));
+    const missingValues = requestedValues.filter((value) =>
+      !matchedPermissions.some((permission: any) => String(permission.id) === value || String(permission.key) === value)
+    );
+
+    if (missingValues.length > 0) {
+      throw new ApiError(`Invalid permission selection: ${missingValues.join(', ')}`, 400, 'INVALID_PERMISSION_IDS');
+    }
+
     const { error: deleteError } = await this.client.from('role_permissions').delete().eq('role_id', roleId);
     if (deleteError) throw formatError(deleteError, 'Failed to clear role permissions.');
 
@@ -3048,6 +3066,18 @@ export class SupabaseApiService {
   }
 
   async getAllMails() {
+    const access = await this.getCurrentAccessContext();
+    const roleName = String(access.role?.name || '').toLowerCase().replace(/_/g, ' ');
+    const canViewAllMails =
+      roleName === 'super admin' ||
+      roleName === 'superadmin' ||
+      roleName === 'admin' ||
+      access.permissions.includes('mails.view.all');
+
+    if (!canViewAllMails) {
+      throw new ApiError('You do not have permission to view all mails.', 403, 'MAILS_VIEW_ALL_REQUIRED');
+    }
+
     const { data, error } = await this.client
       .from('mail_threads')
       .select(`

@@ -15,7 +15,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { BarChart3, BriefcaseBusiness, Clock, Download, FolderKanban, Play, Search, Square, Target, TimerReset, Trash2, Users } from 'lucide-react';
+import { BarChart3, BriefcaseBusiness, Clock, Download, FolderKanban, Pause, Play, Search, Square, Target, TimerReset, Trash2, Users } from 'lucide-react';
 import { api } from '@/services/api';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -36,6 +36,7 @@ const TimeTracking: React.FC = () => {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [isTracking, setIsTracking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState<string | null>(null);
   const roleName = String(user?.role?.name || '').toLowerCase();
@@ -92,13 +93,13 @@ const TimeTracking: React.FC = () => {
 
   useEffect(() => {
     let interval: NodeJS.Timeout | undefined;
-    if (isTracking) {
+    if (isTracking && !isPaused) {
       interval = setInterval(() => setCurrentTime((prev) => prev + 1), 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTracking]);
+  }, [isPaused, isTracking]);
 
   useEffect(() => {
     if ((roleName.includes('sales') || roleName.includes('selles')) && trackingMode === 'project' && !isTracking) {
@@ -246,6 +247,7 @@ const TimeTracking: React.FC = () => {
     }));
     setCurrentTime(0);
     setIsTracking(false);
+    setIsPaused(false);
     setSessionStartedAt(null);
   };
 
@@ -253,6 +255,7 @@ const TimeTracking: React.FC = () => {
     if (!value) return;
     setTrackingMode(value as TrackingMode);
     setIsTracking(false);
+    setIsPaused(false);
     setCurrentTime(0);
     setFormData((current) => ({
       ...current,
@@ -274,7 +277,18 @@ const TimeTracking: React.FC = () => {
     }
     setCurrentTime(0);
     setSessionStartedAt(new Date().toISOString());
+    setIsPaused(false);
     setIsTracking(true);
+  };
+
+  const handlePauseTracking = () => {
+    if (!canCreateTime || !isTracking) return;
+    setIsPaused(true);
+  };
+
+  const handleResumeTracking = () => {
+    if (!canCreateTime || !isTracking) return;
+    setIsPaused(false);
   };
 
   const handleStopTracking = () => {
@@ -535,7 +549,9 @@ const TimeTracking: React.FC = () => {
                 <div className="text-sm text-muted-foreground">{trackingMode === 'sales' ? 'Sales Session Timer' : 'Current Session'}</div>
                 <div className="mt-2 font-mono text-4xl font-bold tracking-tight">{formatTime(currentTime)}</div>
                 {trackingMode === 'sales' && isTracking && sessionStartedAt ? (
-                  <p className="mt-2 text-xs text-muted-foreground">Counting leads created after {format(new Date(sessionStartedAt), 'p')}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {isPaused ? 'Paused' : `Counting leads created after ${format(new Date(sessionStartedAt), 'p')}`}
+                  </p>
                 ) : (
                   <p className="mt-2 text-xs text-muted-foreground">{trackingMode === 'sales' ? 'Start before filling leads in the sheet.' : 'Select project, then start timer.'}</p>
                 )}
@@ -668,10 +684,23 @@ const TimeTracking: React.FC = () => {
                       {trackingMode === 'sales' ? 'Start Lead Session' : 'Start Timer'}
                     </Button>
                   ) : (
-                    <Button className="bg-red-500 hover:bg-red-600 sm:w-auto" onClick={handleStopTracking} disabled={createMutation.isPending}>
-                      <Square className="mr-2 h-4 w-4" />
-                      {trackingMode === 'sales' ? 'Stop Session & Save' : 'Stop & Save'}
-                    </Button>
+                    <>
+                      {isPaused ? (
+                        <Button onClick={handleResumeTracking} disabled={createMutation.isPending} className="sm:w-auto">
+                          <Play className="mr-2 h-4 w-4" />
+                          Resume
+                        </Button>
+                      ) : (
+                        <Button variant="outline" onClick={handlePauseTracking} disabled={createMutation.isPending} className="sm:w-auto">
+                          <Pause className="mr-2 h-4 w-4" />
+                          Pause
+                        </Button>
+                      )}
+                      <Button className="bg-red-500 hover:bg-red-600 sm:w-auto" onClick={handleStopTracking} disabled={createMutation.isPending}>
+                        <Square className="mr-2 h-4 w-4" />
+                        {trackingMode === 'sales' ? 'Stop Session & Save' : 'Stop & Save'}
+                      </Button>
+                    </>
                   )}
                   <Button variant="outline" onClick={handleManualSave} disabled={createMutation.isPending} className="sm:w-auto">
                     Save Manual Entry

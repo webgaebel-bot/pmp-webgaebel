@@ -216,8 +216,8 @@ const Roles: React.FC = () => {
       const assignedPermissions = response?.permissions || response?.data || response || [];
       const permissionIds = Array.isArray(assignedPermissions) 
         ? assignedPermissions.map((p: Permission | string | number) => {
-            if (typeof p === 'string' || typeof p === 'number') return p;
-            return p.id || p;
+            if (typeof p === 'string' || typeof p === 'number') return String(p);
+            return String(p.id || p);
           })
         : [];
       setSelectedPermissions(permissionIds);
@@ -555,6 +555,7 @@ const Roles: React.FC = () => {
                             >
                               <Checkbox
                                 checked={selectedPermissions.includes(permission.id)}
+                                onClick={(event) => event.stopPropagation()}
                                 onCheckedChange={() => handleTogglePermission(permission.id)}
                                 className="data-[state=checked]:bg-accent data-[state=checked]:border-accent flex-shrink-0 mt-1"
                               />

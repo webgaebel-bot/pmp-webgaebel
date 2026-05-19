@@ -98,7 +98,7 @@ const PERMISSION_ALIASES: Record<string, string[]> = {
 const IMPLIED_PERMISSIONS: Record<string, string[]> = {
   'roles.manage': ['roles.view'],
   'permissions.manage': ['roles.view'],
-  'mails.manage': ['mails.view', 'mails.view.all', 'mail_threads.view'],
+  'mails.manage': ['mails.view', 'mail_threads.view'],
   'calendar.manage': ['calendar.view'],
   'finance.payments.manage': ['finance.view', 'finance.payments.view'],
   'finance.expenses.manage': ['finance.view', 'finance.expenses.view'],

@@ -865,24 +865,63 @@ create policy "authenticated mail_threads access"
 on public.mail_threads
 for all
 to authenticated
-using (true)
-with check (true);
+using (created_by = auth.uid())
+with check (created_by = auth.uid());
 
 drop policy if exists "authenticated mails access" on public.mails;
 create policy "authenticated mails access"
 on public.mails
-for all
+for select
 to authenticated
-using (true)
-with check (true);
+using (
+  sender_id = auth.uid() 
+  or exists (
+    select 1 from public.mail_recipients 
+    where mail_id = public.mails.id 
+    and recipient_id = auth.uid() 
+    and is_deleted = false
+  )
+);
+
+create policy "authenticated mails insert"
+on public.mails
+for insert
+to authenticated
+with check (sender_id = auth.uid());
+
+create policy "authenticated mails update"
+on public.mails
+for update
+to authenticated
+using (sender_id = auth.uid())
+with check (sender_id = auth.uid());
 
 drop policy if exists "authenticated mail_recipients access" on public.mail_recipients;
 create policy "authenticated mail_recipients access"
 on public.mail_recipients
-for all
+for select
 to authenticated
-using (true)
-with check (true);
+using (
+  recipient_id = auth.uid()
+  or exists (
+    select 1 from public.mails 
+    where id = public.mail_recipients.mail_id 
+    and sender_id = auth.uid()
+  )
+);
+
+create policy "authenticated mail_recipients insert"
+on public.mail_recipients
+for insert
+to authenticated
+with check (recipient_id = auth.uid());
+
+create policy "authenticated mail_recipients update"
+on public.mail_recipients
+for update
+to authenticated
+using (recipient_id = auth.uid())
+with check (recipient_id = auth.uid());
 
 drop policy if exists "authenticated mail_attachments access" on public.mail_attachments;
 create policy "authenticated mail_attachments access"
