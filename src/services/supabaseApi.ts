@@ -1602,13 +1602,48 @@ export class SupabaseApiService {
     return { success: true, data: await this.hydrateUser(data) };
   }
 
-  async createUser() {
-    throw new ApiError(
-      'Direct browser-side user creation is not safe with Supabase Auth. Create users from Supabase Auth dashboard, or add an Edge Function invite flow for this action.',
-      501,
-      'SUPABASE_AUTH_ADMIN_REQUIRED'
-    );
+  async createUser(payload: {
+  email: string;
+  password: string;
+  full_name?: string;
+  name?: string;
+  role_id?: string;      // ← ye UUID hai roles table se e.g. "ffd85053-c24b-48b4-87cb-e3377021ba43"
+  phone?: string;
+}) {
+  // Current session ka token lo
+  const { data: { session } } = await this.client.auth.getSession();
+ 
+  if (!session?.access_token) {
+    throw new ApiError('Not authenticated', 401, 'UNAUTHORIZED');
   }
+ 
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+ 
+  const response = await fetch(`${supabaseUrl}/functions/v1/create-user`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+      'apikey': anonKey,
+    },
+    body: JSON.stringify({
+      email: payload.email,
+      password: payload.password,
+      full_name: payload.full_name || payload.name || '',
+      role_id: payload.role_id || null,
+      phone: payload.phone || null,
+    }),
+  });
+ 
+  const result = await response.json();
+ 
+  if (!response.ok) {
+    throw new ApiError(result.error || 'Failed to create user', response.status, 'USER_CREATE_FAILED');
+  }
+ 
+  return { success: true, data: result.user, message: result.message };
+}
 
   async updateUser(id: string, payload: any) {
     const updatePayload: any = {
