@@ -17,6 +17,7 @@ import {
   Users as UsersIcon,
   Target,
   BookOpen,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -40,6 +41,7 @@ import { IMAGE_BASE_URL, api } from '@/services/api';
 import { initSocket, onNotificationUpdate } from '@/services/socket';
 import { cn } from '@/lib/utils';
 import type { Notification } from '@/types';
+import { formatDurationHms, getSnapshotElapsed, readTimerSnapshot, TIMER_STORAGE_EVENT } from '@/lib/timeTrackingTimer';
 
 interface SearchResultItem {
   id: string;
@@ -71,6 +73,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
+  const [activeTimerSeconds, setActiveTimerSeconds] = useState(0);
 
   const staticRoutes: SearchResultItem[] = [
     { id: 'dashboard', label: 'Dashboard', type: 'route', path: '/' },
@@ -253,6 +256,22 @@ export const Topbar: React.FC<TopbarProps> = ({
     };
   }, [fetchNotifications]);
 
+  useEffect(() => {
+    const syncTimer = () => {
+      setActiveTimerSeconds(getSnapshotElapsed(readTimerSnapshot()));
+    };
+
+    syncTimer();
+    const interval = window.setInterval(syncTimer, 1000);
+    window.addEventListener(TIMER_STORAGE_EVENT, syncTimer);
+    window.addEventListener('storage', syncTimer);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener(TIMER_STORAGE_EVENT, syncTimer);
+      window.removeEventListener('storage', syncTimer);
+    };
+  }, []);
+
   const handleLogout = async () => {
     await logout();
     navigate('/login');
@@ -398,6 +417,12 @@ export const Topbar: React.FC<TopbarProps> = ({
           <BookOpen className="h-4 w-4" />
           Guidance
         </Button>
+        {activeTimerSeconds > 0 ? (
+          <Button variant="outline" className="gap-2 font-mono" onClick={() => navigate('/time-tracking')}>
+            <Clock className="h-4 w-4 text-emerald-600" />
+            {formatDurationHms(activeTimerSeconds)}
+          </Button>
+        ) : null}
         {/* Notifications */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

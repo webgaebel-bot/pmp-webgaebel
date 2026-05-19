@@ -193,19 +193,21 @@ export class SupabaseApiService {
         this.hasAnyOverlap(incoming.facebook, existing.facebook) ||
         this.hasAnyOverlap(incoming.instagram, existing.instagram);
 
-      const fullRecordMatch =
-        incoming.fullName &&
-        incoming.fullName === existing.fullName &&
-        incoming.company === existing.company &&
-        incoming.niche === existing.niche &&
-        incoming.service === existing.service &&
-        incoming.source === existing.source;
+      const weakMatchFields = [
+        incoming.fullName && incoming.fullName === existing.fullName,
+        incoming.company && incoming.company === existing.company,
+        incoming.niche && incoming.niche === existing.niche,
+        incoming.service && incoming.service === existing.service,
+        incoming.source && incoming.source === existing.source,
+      ].filter(Boolean).length;
+
+      const fullRecordMatch = Boolean(incoming.fullName && incoming.company && weakMatchFields >= 3);
 
       return strongMatch || fullRecordMatch;
     });
 
     if (duplicate) {
-      throw new ApiError('Ye record pehle se entry ho chuka hai.', 409, 'LEAD_DUPLICATE');
+      throw new ApiError('This lead already exists.', 409, 'LEAD_DUPLICATE');
     }
   }
 
@@ -409,15 +411,28 @@ export class SupabaseApiService {
     };
   }
 
-  private mapAttachment = (attachment: any) => ({
-    id: attachment?.id,
-    original_name: attachment?.original_name || attachment?.file_name || 'attachment',
-    file_name: attachment?.file_name || '',
-    file_path: attachment?.file_path || '',
-    url: attachment?.file_url || attachment?.file_path || '',
-    mime_type: attachment?.mime_type || '',
-    file_size: attachment?.file_size || 0,
-  });
+  private getStoragePublicUrl(pathOrUrl?: string | null) {
+    const value = String(pathOrUrl || '');
+    if (!value) return '';
+    if (/^https?:\/\//i.test(value) || value.startsWith('data:') || value.startsWith('blob:')) return value;
+    return this.client.storage.from('files').getPublicUrl(value).data.publicUrl;
+  }
+
+  private mapAttachment = (attachment: any) => {
+    const storedPath = attachment?.file_path || attachment?.file_url || '';
+    const publicUrl = this.getStoragePublicUrl(storedPath);
+    return {
+      id: attachment?.id,
+      original_name: attachment?.original_name || attachment?.file_name || 'attachment',
+      file_name: attachment?.file_name || '',
+      file_path: publicUrl,
+      path: storedPath,
+      url: publicUrl,
+      file_url: publicUrl,
+      mime_type: attachment?.mime_type || '',
+      file_size: attachment?.file_size || 0,
+    };
+  };
 
   private mapFileRecord = (file: any) => ({
     id: String(file.id),
@@ -469,6 +484,87 @@ export class SupabaseApiService {
         sender_email: reply.sender?.email || '',
       })),
     };
+  }
+
+  private parseCsv(text: string) {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let value = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      const nextChar = text[index + 1];
+
+      if (char === '"' && inQuotes && nextChar === '"') {
+        value += '"';
+        index += 1;
+        continue;
+      }
+
+      if (char === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+
+      if (char === ',' && !inQuotes) {
+        row.push(value.trim());
+        value = '';
+        continue;
+      }
+
+      if ((char === '\n' || char === '\r') && !inQuotes) {
+        if (char === '\r' && nextChar === '\n') index += 1;
+        row.push(value.trim());
+        if (row.some((cell) => cell)) rows.push(row);
+        row = [];
+        value = '';
+        continue;
+      }
+
+      value += char;
+    }
+
+    row.push(value.trim());
+    if (row.some((cell) => cell)) rows.push(row);
+    return rows;
+  }
+
+  private normalizeCsvHeader(header: string) {
+    const normalized = header.trim().toLowerCase().replace(/^\uFEFF/, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const aliases: Record<string, string> = {
+      company_name: 'company',
+      company: 'company',
+      niche: 'designation',
+      industry_niche: 'designation',
+      designation: 'designation',
+      job_title: 'designation',
+      service: 'services_offered',
+      services: 'services_offered',
+      services_offered: 'services_offered',
+      platform_source: 'source',
+      source: 'source',
+      gmail_email: 'email',
+      email_address: 'email',
+      email: 'email',
+      phone_number: 'phone',
+      phone: 'phone',
+      linkedin: 'linkedin_url',
+      linked_in: 'linkedin_url',
+      facebook: 'facebook_url',
+      insta: 'instagram_url',
+      instagram: 'instagram_url',
+      twitter: 'x_url',
+      x: 'x_url',
+      x_url: 'x_url',
+      name: 'name',
+      client_name: 'name',
+      lead_name: 'name',
+      notes: 'notes',
+      note: 'notes',
+    };
+
+    return aliases[normalized] || normalized;
   }
 
   private readonly leadStageMap: Record<string, PipelineStage> = {
@@ -728,6 +824,9 @@ export class SupabaseApiService {
   async post<T = any>(endpoint: string, data?: any): Promise<T> {
     if (endpoint === '/leads') {
       return (await this.createLead(data)) as T;
+    }
+    if (endpoint === '/time-logs') {
+      return (await this.createTimeLog(data)) as T;
     }
     if (endpoint === '/finance/clients') {
       return (await this.createFinanceClient(data)) as T;
@@ -1837,11 +1936,45 @@ export class SupabaseApiService {
   }
 
   async updateProfile(data: any) {
+    const currentUser = await this.getCurrentProfileOrThrow();
+    let profileImageUrl: string | undefined;
+
+    // Handle FormData with file upload
     if (data instanceof FormData) {
-      return this.fallbackOrThrow('updateProfile', data);
+      const file = data.get('file') as File;
+      const name = data.get('name') as string;
+      const email = data.get('email') as string;
+      const phone = data.get('phone') as string;
+      const bio = data.get('bio') as string;
+
+      // Upload image to Supabase Storage if provided
+      if (file && file.size > 0) {
+        const uploadResult = await this.uploadToStorage(file, 'avatars');
+        profileImageUrl = uploadResult.url;
+      }
+
+      // Update profile with form data
+      const payload: any = {
+        name,
+        email,
+        phone,
+        bio,
+      };
+
+      if (profileImageUrl) {
+        payload.avatar_url = profileImageUrl;
+        payload.profile_image = profileImageUrl;
+      }
+
+      Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
+
+      const { error } = await this.client.from('profiles').update(payload).eq('id', currentUser.id);
+      if (error) throw formatError(error, 'Failed to update profile.');
+
+      return this.getCurrentUser();
     }
 
-    const currentUser = await this.getCurrentProfileOrThrow();
+    // Handle regular JSON data
     const payload: any = {
       name: data.name,
       email: data.email,
@@ -2086,9 +2219,6 @@ export class SupabaseApiService {
       await this.replaceLeadContacts(String(id), data.contacts);
     }
 
-    await this.logActivity('UPDATE', 'lead', String(id), data.name || String(id));
-    await this.addActivity(String(id), { activity_type: 'status_change', description: 'Lead updated' });
-
     return this.getLeadById(String(id));
   }
 
@@ -2098,30 +2228,33 @@ export class SupabaseApiService {
       throw new ApiError('Please provide a CSV file.', 400, 'LEAD_IMPORT_FILE_REQUIRED');
     }
 
-    const raw = await file.text();
-    const rows = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const rows = this.parseCsv(await file.text());
 
     if (rows.length < 2) {
       return { success: true, data: { inserted: 0, skipped: 0 } };
     }
 
-    const headers = rows[0].split(',').map((header) => header.trim().toLowerCase());
+    const headers = rows[0].map((header) => this.normalizeCsvHeader(header));
     let inserted = 0;
     let skipped = 0;
+    const errors: string[] = [];
 
-    for (const row of rows.slice(1)) {
-      const values = row.split(',').map((value) => value.trim());
+    for (const [index, row] of rows.slice(1).entries()) {
       const record = headers.reduce<Record<string, string>>((acc, header, index) => {
-        acc[header] = values[index] || '';
+        acc[header] = row[index] || '';
         return acc;
       }, {});
 
+      const leadName = record.name || record.company || record.email || record.phone;
+      if (!leadName) {
+        skipped += 1;
+        errors.push(`Row ${index + 2}: missing name, company, email, or phone.`);
+        continue;
+      }
+
       try {
         await this.createLead({
-          name: record.name,
+          name: leadName,
           email: record.email || undefined,
             phone: record.phone || undefined,
             company: record.company || undefined,
@@ -2147,12 +2280,13 @@ export class SupabaseApiService {
           lead_score: record.lead_score ? Number(record.lead_score) : undefined,
         });
         inserted += 1;
-      } catch {
+      } catch (error: any) {
         skipped += 1;
+        errors.push(`Row ${index + 2}: ${error?.message || 'Import failed.'}`);
       }
     }
 
-    return { success: true, data: { inserted, skipped } };
+    return { success: true, data: { inserted, skipped, errors: errors.slice(0, 10) } };
   }
 
   async getLeads(filters?: LeadFilters & { page?: number; pageSize?: number }) {
@@ -2304,12 +2438,6 @@ export class SupabaseApiService {
         },
       ]);
     }
-
-    await this.logActivity('CREATE', 'lead', String(lead.id), lead.name);
-    await this.addActivity(String(lead.id), {
-      activity_type: 'note',
-      description: 'Lead created',
-    });
 
     return this.getLeadById(String(lead.id));
   }
@@ -3222,7 +3350,7 @@ export class SupabaseApiService {
           mail_id: mail.id,
           original_name: uploaded.name,
           file_name: uploaded.name,
-          file_path: uploaded.url,
+          file_path: uploaded.path,
           mime_type: uploaded.type,
           file_size: uploaded.size,
         });

@@ -77,10 +77,12 @@ const Settings: React.FC = () => {
       // Handle both profile_image (new) and avatar (old) field names
       const imageUrl = data?.profile_image || data?.avatar;
       if (imageUrl) {
-        setAvatarPreview(imageUrl.startsWith('http') ? imageUrl : `${IMAGE_BASE_URL}${imageUrl}`);
+        setAvatarPreview(imageUrl);
       } else if (user?.profile_image || user?.avatar) {
         const fallbackImage = user?.profile_image || user?.avatar;
-        setAvatarPreview(fallbackImage?.startsWith('http') ? fallbackImage : `${IMAGE_BASE_URL}${fallbackImage}`);
+        setAvatarPreview(fallbackImage);
+      } else {
+        setAvatarPreview(null);
       }
     } catch (error) {
       console.error('Failed to fetch profile:', error);

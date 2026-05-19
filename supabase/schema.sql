@@ -869,16 +869,19 @@ using (created_by = auth.uid())
 with check (created_by = auth.uid());
 
 drop policy if exists "authenticated mails access" on public.mails;
+drop policy if exists "authenticated mails insert" on public.mails;
+drop policy if exists "authenticated mails update" on public.mails;
+
 create policy "authenticated mails access"
 on public.mails
 for select
 to authenticated
 using (
-  sender_id = auth.uid() 
+  sender_id = auth.uid()
   or exists (
-    select 1 from public.mail_recipients 
-    where mail_id = public.mails.id 
-    and recipient_id = auth.uid() 
+    select 1 from public.mail_recipients
+    where mail_id = public.mails.id
+    and recipient_id = auth.uid()
     and is_deleted = false
   )
 );
@@ -899,26 +902,7 @@ with check (sender_id = auth.uid());
 drop policy if exists "authenticated mail_recipients access" on public.mail_recipients;
 create policy "authenticated mail_recipients access"
 on public.mail_recipients
-for select
-to authenticated
-using (
-  recipient_id = auth.uid()
-  or exists (
-    select 1 from public.mails 
-    where id = public.mail_recipients.mail_id 
-    and sender_id = auth.uid()
-  )
-);
-
-create policy "authenticated mail_recipients insert"
-on public.mail_recipients
-for insert
-to authenticated
-with check (recipient_id = auth.uid());
-
-create policy "authenticated mail_recipients update"
-on public.mail_recipients
-for update
+for all
 to authenticated
 using (recipient_id = auth.uid())
 with check (recipient_id = auth.uid());

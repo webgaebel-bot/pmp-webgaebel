@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Filter, LayoutGrid, Plus, TableProperties, BarChart3, Upload, Download, ChevronLeft, ChevronRight, ListChecks } from 'lucide-react';
+import { Filter, LayoutGrid, Plus, TableProperties, BarChart3, Upload, Download, ChevronLeft, ChevronRight, ListChecks, Loader2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -126,6 +126,7 @@ const Leads: React.FC = () => {
   const pendingBlankFollowupRows = useRef<Record<string, boolean>>({});
   const queuedBlankValues = useRef<Record<string, Record<string, string>>>({});
   const queuedBlankFollowupValues = useRef<Record<string, Record<string, string>>>({});
+  const shownAutosaveErrors = useRef<Record<string, number>>({});
   const [view, setView] = useState<LeadsView>('table');
   const [filters, setFilters] = useState<LeadFiltersType>(emptyFilters);
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
@@ -166,7 +167,7 @@ const Leads: React.FC = () => {
     [usersResponse?.data]
   );
 
-  const { data: leadsResponse, isLoading } = useLeads(filters, page, pageSize);
+  const { data: leadsResponse, isLoading, isFetching } = useLeads(filters, page, pageSize);
   const { data: allLeadsResponse } = useQuery({
     queryKey: ['leads-all', filters],
     queryFn: async () => api.getLeads({ ...filters, page: 1, pageSize: 1000 }),
@@ -178,6 +179,7 @@ const Leads: React.FC = () => {
   const followupMutations = useFlexibleFollowupMutations();
 
   const leads = leadsResponse?.data || [];
+  const isLeadSheetLoading = isLoading || (isFetching && !leadsResponse);
   const allLeads = allLeadsResponse?.data || leads;
   const total = leadsResponse?.total || 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -326,7 +328,15 @@ const Leads: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Lead autosave failed:', error);
-      Swal.fire('Save failed', error?.message || 'Unable to autosave this lead row.', 'error');
+      const message = error?.error_code === 'LEAD_DUPLICATE'
+        ? 'This lead already exists. Autosave skipped the duplicate row.'
+        : error?.message || 'Unable to autosave this lead row.';
+      const errorKey = `${rowId}:${error?.error_code || message}`;
+      const now = Date.now();
+      if (!shownAutosaveErrors.current[errorKey] || now - shownAutosaveErrors.current[errorKey] > 5000) {
+        shownAutosaveErrors.current[errorKey] = now;
+        Swal.fire('Save failed', message, 'error');
+      }
     } finally {
       pendingBlankRows.current[rowId] = false;
     }
@@ -631,21 +641,6 @@ const Leads: React.FC = () => {
               <option value="high">High</option>
               <option value="urgent">Urgent</option>
             </select>
-            <select
-              className="w-full rounded-md border bg-background px-3 py-2"
-              value={filters.assigned_to?.[0] || ''}
-              onChange={(event) => {
-                setPage(1);
-                setFilters((current) => ({ ...current, assigned_to: event.target.value ? [event.target.value] : undefined }));
-              }}
-            >
-              <option value="">All Assigned</option>
-              {assignedUsers.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.name}
-                </option>
-              ))}
-            </select>
             {canViewAllLeads ? (
               <select
                 className="w-full rounded-md border bg-background px-3 py-2"
@@ -704,25 +699,32 @@ const Leads: React.FC = () => {
 
           {view === 'table' ? (
             <>
-              <FlexibleSheetTable
-                title="Editable Leads Sheet"
-                columns={leadColumns}
-                rows={leadRows}
-                showOwner={canViewAllLeads}
-                emptyText="No leads found for the selected filters."
-                onColumnsChange={setLeadColumns}
-                onSaveRow={(canUpdateLead || canCreateLead) ? saveLeadRow : undefined}
-                onAddRow={canCreateLead ? addLeadRow : undefined}
-                onDeleteRow={canDeleteLead ? handleDeleteLead : undefined}
-                canAdd={canCreateLead}
-                canEdit={canUpdateLead || canCreateLead}
-                canDelete={canDeleteLead}
-                canManageColumns={canUpdateLead}
-                autoSave
-              />
+              {isLeadSheetLoading ? (
+                <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 rounded-lg border bg-muted/20 text-sm text-muted-foreground">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  Loading leads...
+                </div>
+              ) : (
+                <FlexibleSheetTable
+                  title="Editable Leads Sheet"
+                  columns={leadColumns}
+                  rows={leadRows}
+                  showOwner={canViewAllLeads}
+                  emptyText="No leads found for the selected filters."
+                  onColumnsChange={setLeadColumns}
+                  onSaveRow={(canUpdateLead || canCreateLead) ? saveLeadRow : undefined}
+                  onAddRow={canCreateLead ? addLeadRow : undefined}
+                  onDeleteRow={canDeleteLead ? handleDeleteLead : undefined}
+                  canAdd={canCreateLead}
+                  canEdit={canUpdateLead || canCreateLead}
+                  canDelete={canDeleteLead}
+                  canManageColumns={canUpdateLead}
+                  autoSave
+                />
+              )}
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-muted-foreground">
-                  {isLoading ? 'Loading leads...' : `Showing page ${page} of ${totalPages} · ${total} total leads`}
+                  {isLeadSheetLoading ? 'Loading leads...' : `Showing page ${page} of ${totalPages} - ${total} total leads`}
                 </p>
                 <div className="grid grid-cols-2 gap-2 sm:flex">
                   <Button variant="outline" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>

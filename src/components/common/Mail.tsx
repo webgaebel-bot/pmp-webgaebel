@@ -43,6 +43,8 @@ interface MailAttachment {
     original_name: string;
     file_name: string;
     file_path: string;
+    url?: string;
+    file_url?: string;
     mime_type: string;
     file_size: number;
 }
@@ -74,8 +76,8 @@ interface MailItem {
     attachments_count?: number;
     attachments?: MailAttachment[];
     threadId?: string;
-    thread_id?: number | null;
-    sender_id?: number;
+    thread_id?: number | string | null;
+    sender_id?: number | string;
     sender_name?: string;
     sender_email?: string;
     sender_deleted?: number;
@@ -103,8 +105,25 @@ const Mail: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState<'messages' | 'all'>('messages');
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const getFileUrl = (filePath: string) =>
-        /^https?:\/\//i.test(filePath) ? filePath : `${IMAGE_BASE_URL}${filePath}`;
+    const getFileUrl = (filePath: string) => {
+        if (!filePath) return '';
+        if (/^(https?:|data:|blob:)/i.test(filePath)) return filePath;
+        return `${IMAGE_BASE_URL}${filePath}`;
+    };
+
+    const formatRecipients = (recipients: any) => {
+        if (Array.isArray(recipients)) {
+            return recipients
+                .map((entry) => {
+                    if (typeof entry === 'string') return entry;
+                    return entry?.recipient?.name || entry?.recipient?.email || entry?.recipient_name || entry?.email || '';
+                })
+                .filter(Boolean)
+                .join(', ');
+        }
+
+        return String(recipients || '');
+    };
 
     // Compose state
     const [composeData, setComposeData] = useState({
@@ -204,17 +223,11 @@ const Mail: React.FC = () => {
             const response = await api.getSentMails();
             const mailsData = response?.data || response || [];
 
-            // Get current user ID to filter only sent mails
-            const currentUserId = localStorage.getItem('userId') || sessionStorage.getItem('userId');
-
             const normalized = Array.isArray(mailsData)
                 ? mailsData
-                    .filter((mail: any) => {
-                        // Only show mails sent by current user
-                        return !mail.sender_id || mail.sender_id == currentUserId;
-                    })
                     .map((mail: any, idx: number) => {
                         const isDeleted = mail.is_deleted === 1 || mail.is_deleted === true;
+                        const recipients = formatRecipients(mail.recipients);
 
                         // Use thread_id as primary ID for thread-based grouping
                         const mailId = mail.thread_id || mail.id || `mail-${Date.now()}-${idx}`;
@@ -223,11 +236,11 @@ const Mail: React.FC = () => {
                             id: String(mailId),
                             thread_id: mail.thread_id ?? null,
                             from: 'You',
-                            to: mail.recipients || 'Unknown',
-                            recipients: mail.recipients || '',
+                            to: recipients || 'Unknown',
+                            recipients,
                             subject: mail.subject || 'No Subject',
                             body: mail.content || mail.body || '',
-                            preview: mail.preview || (mail.content ? mail.content.substring(0, 120) + '...' : ''),
+                            preview: mail.preview || ((mail.content || mail.body) ? String(mail.content || mail.body).substring(0, 120) + '...' : ''),
                             created_at: mail.created_at || mail.last_reply_at,
                             is_read: true,
                             is_deleted: isDeleted,
@@ -385,17 +398,7 @@ const Mail: React.FC = () => {
                     }
 
                     if (detailData) {
-                        let recipientsStr = '';
-                        if (detailData.recipients) {
-                            if (Array.isArray(detailData.recipients)) {
-                                recipientsStr = detailData.recipients
-                                    .map((r: any) => r.email || r.name || '')
-                                    .filter((x: string) => x)
-                                    .join(', ');
-                            } else {
-                                recipientsStr = detailData.recipients;
-                            }
-                        }
+                        const recipientsStr = formatRecipients(detailData.recipients);
 
                         const isRead = detailData.is_read === 1 || detailData.is_read === true;
                         const isDeleted = detailData.is_deleted === 1 || detailData.is_deleted === true;
@@ -449,9 +452,19 @@ const Mail: React.FC = () => {
         }
 
         try {
+            const selectedIds = new Set([
+                mailId,
+                selectedMail?.id ? String(selectedMail.id) : '',
+                selectedMail?.thread_id ? String(selectedMail.thread_id) : '',
+            ].filter(Boolean));
             await api.deleteMail(mailId);
-            setMails((prev) => prev.filter((m) => m.id !== mailId));
-            if (selectedMail?.id === mailId) setSelectedMail(null);
+            setMails((prev) => prev.filter((mail) => !selectedIds.has(String(mail.id)) && !selectedIds.has(String(mail.thread_id || ''))));
+            if (selectedMail && (selectedIds.has(String(selectedMail.id)) || selectedIds.has(String(selectedMail.thread_id || '')))) {
+                setSelectedMail(null);
+            }
+            if (view === 'inbox') await fetchInbox();
+            else if (view === 'sent') await fetchSentMails();
+            else await fetchAllMails();
             toast({ title: 'Success', description: 'Mail deleted successfully' });
         } catch (error: any) {
             toast({ title: 'Error', description: error.message || 'Failed to delete mail', variant: 'destructive' });

@@ -152,7 +152,8 @@ export function useLeadMutations() {
     onSuccess: (response) => {
       invalidateLeadQueries(queryClient);
       const result = response?.data || {};
-      toast.success(`Import complete: ${result.inserted || 0} inserted, ${result.skipped || 0} skipped.`);
+      const errors = Array.isArray(result.errors) && result.errors.length ? ` First issue: ${result.errors[0]}` : '';
+      toast.success(`Import complete: ${result.inserted || 0} inserted, ${result.skipped || 0} skipped.${errors}`);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to import leads.'),
   });

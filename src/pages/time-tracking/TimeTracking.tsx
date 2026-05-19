@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Table,
   TableBody,
@@ -15,15 +16,23 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { BarChart3, BriefcaseBusiness, Clock, Download, FolderKanban, Pause, Play, Search, Square, Target, TimerReset, Trash2, Users } from 'lucide-react';
+import { BarChart3, BriefcaseBusiness, Clock, Download, Eye, FolderKanban, Pause, Play, Search, Square, Target, TimerReset, Trash2, Users } from 'lucide-react';
 import { api } from '@/services/api';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuth } from '@/contexts/AuthContext';
 import Swal from 'sweetalert2';
-
-type TrackingMode = 'project' | 'sales';
+import {
+  clearTimerSnapshot,
+  formatDurationHms,
+  formatHoursAsHms,
+  getRunningElapsed,
+  readTimerSnapshot,
+  type TimerSnapshot,
+  type TrackingMode,
+  writeTimerSnapshot,
+} from '@/lib/timeTrackingTimer';
 
 const SALES_SESSION_PREFIX = '[Sales Session]';
 const SALES_WORK_TYPES = ['Lead Extraction', 'Follow-up', 'Calling', 'Qualification', 'Research'];
@@ -39,6 +48,9 @@ const TimeTracking: React.FC = () => {
   const [isPaused, setIsPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState<string | null>(null);
+  const [timerStartedAtMs, setTimerStartedAtMs] = useState<number | null>(null);
+  const [elapsedBeforePause, setElapsedBeforePause] = useState(0);
+  const [selectedTimeLog, setSelectedTimeLog] = useState<any | null>(null);
   const roleName = String(user?.role?.name || '').toLowerCase();
   const isSalesUser = roleName.includes('sales') || roleName.includes('selles') || permission.can('leads.view');
   const canViewTeamTime = permission.isAdmin() || permission.canAny(['time.manage', 'time.approve']) || roleName.includes('team lead') || roleName.includes('lead') || roleName.includes('manager');
@@ -94,12 +106,58 @@ const TimeTracking: React.FC = () => {
   useEffect(() => {
     let interval: NodeJS.Timeout | undefined;
     if (isTracking && !isPaused) {
-      interval = setInterval(() => setCurrentTime((prev) => prev + 1), 1000);
+      setCurrentTime(getRunningElapsed(timerStartedAtMs, elapsedBeforePause));
+      interval = setInterval(() => {
+        setCurrentTime(getRunningElapsed(timerStartedAtMs, elapsedBeforePause));
+      }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isPaused, isTracking]);
+  }, [elapsedBeforePause, isPaused, isTracking, timerStartedAtMs]);
+
+  useEffect(() => {
+    try {
+      const snapshot = readTimerSnapshot();
+      if (!snapshot?.isTracking) return;
+
+      const restoredTime = snapshot.isPaused
+        ? Number(snapshot.currentTime || snapshot.elapsedBeforePause || 0)
+        : getRunningElapsed(snapshot.timerStartedAtMs || null, Number(snapshot.elapsedBeforePause || 0));
+
+      setTrackingMode(snapshot.trackingMode || (isSalesUser ? 'sales' : 'project'));
+      if (snapshot.formData) {
+        setFormData((current) => ({ ...current, ...snapshot.formData }));
+      }
+      setIsTracking(true);
+      setIsPaused(Boolean(snapshot.isPaused));
+      setCurrentTime(restoredTime);
+      setSessionStartedAt(snapshot.sessionStartedAt || null);
+      setTimerStartedAtMs(snapshot.timerStartedAtMs || null);
+      setElapsedBeforePause(Number(snapshot.elapsedBeforePause || 0));
+    } catch {
+      clearTimerSnapshot();
+    }
+  }, [isSalesUser]);
+
+  useEffect(() => {
+    if (!isTracking) {
+      clearTimerSnapshot();
+      return;
+    }
+
+    const snapshot: TimerSnapshot = {
+      isTracking,
+      isPaused,
+      currentTime,
+      sessionStartedAt,
+      timerStartedAtMs,
+      elapsedBeforePause,
+      trackingMode,
+      formData,
+    };
+    writeTimerSnapshot(snapshot);
+  }, [currentTime, elapsedBeforePause, formData, isPaused, isTracking, sessionStartedAt, timerStartedAtMs, trackingMode]);
 
   useEffect(() => {
     if ((roleName.includes('sales') || roleName.includes('selles')) && trackingMode === 'project' && !isTracking) {
@@ -127,12 +185,7 @@ const TimeTracking: React.FC = () => {
     onError: () => toast.error('Failed to delete time log'),
   });
 
-  const formatTime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  const formatTime = formatDurationHms;
 
   const parseSalesDescription = (description?: string | null) => {
     const text = String(description || '');
@@ -173,6 +226,29 @@ const TimeTracking: React.FC = () => {
     if (formData.description.trim()) parts.push(`Note: ${formData.description.trim()}`);
 
     return parts.join(' | ');
+  };
+
+  const getSalesDetail = (description?: string | null) => {
+    const text = String(description || '');
+    const getValue = (label: string) => {
+      const match = text.match(new RegExp(`${label}:\\s*([^|\\n]+)`, 'i'));
+      return match?.[1]?.trim() || '';
+    };
+    const formatDateTime = (value: string) => {
+      if (!value) return '-';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : format(date, 'PP p');
+    };
+
+    return {
+      isSalesSession: text.includes(SALES_SESSION_PREFIX),
+      workType: getValue('Work Type') || '-',
+      source: getValue('Source') || '-',
+      leadsCreated: getValue('Leads Created') || '0',
+      started: formatDateTime(getValue('Started')),
+      ended: formatDateTime(getValue('Ended')),
+      note: text.split('Note:')[1]?.trim() || '',
+    };
   };
 
   const countLeadsCreatedInSession = (startedAt: string, endedAt: string) => {
@@ -232,8 +308,8 @@ const TimeTracking: React.FC = () => {
   const averageTimePerLead = salesLeadsWorked > 0 ? selectedDateHours / salesLeadsWorked : 0;
   const leadsPerHour = selectedDateHours > 0 ? salesLeadsWorked / selectedDateHours : 0;
   const tableColumnCount = trackingMode === 'sales'
-    ? (canDeleteTime || canManageTime ? 9 : 8)
-    : (canDeleteTime || canManageTime ? 7 : 6);
+    ? (canViewTeamTime || canDeleteTime || canManageTime ? 9 : 8)
+    : (canViewTeamTime || canDeleteTime || canManageTime ? 7 : 6);
 
   const resetEntryForm = () => {
     setFormData((current) => ({
@@ -249,6 +325,9 @@ const TimeTracking: React.FC = () => {
     setIsTracking(false);
     setIsPaused(false);
     setSessionStartedAt(null);
+    setTimerStartedAtMs(null);
+    setElapsedBeforePause(0);
+    clearTimerSnapshot();
   };
 
   const handleModeChange = (value: string) => {
@@ -257,6 +336,9 @@ const TimeTracking: React.FC = () => {
     setIsTracking(false);
     setIsPaused(false);
     setCurrentTime(0);
+    setTimerStartedAtMs(null);
+    setElapsedBeforePause(0);
+    clearTimerSnapshot();
     setFormData((current) => ({
       ...current,
       project_id: '',
@@ -277,23 +359,31 @@ const TimeTracking: React.FC = () => {
     }
     setCurrentTime(0);
     setSessionStartedAt(new Date().toISOString());
+    setTimerStartedAtMs(Date.now());
+    setElapsedBeforePause(0);
     setIsPaused(false);
     setIsTracking(true);
   };
 
   const handlePauseTracking = () => {
     if (!canCreateTime || !isTracking) return;
+    const elapsed = getRunningElapsed(timerStartedAtMs, elapsedBeforePause);
+    setCurrentTime(elapsed);
+    setElapsedBeforePause(elapsed);
+    setTimerStartedAtMs(null);
     setIsPaused(true);
   };
 
   const handleResumeTracking = () => {
     if (!canCreateTime || !isTracking) return;
+    setTimerStartedAtMs(Date.now());
     setIsPaused(false);
   };
 
   const handleStopTracking = () => {
     if (!canCreateTime) return;
-    if (currentTime <= 0) {
+    const finalCurrentTime = isPaused ? currentTime : getRunningElapsed(timerStartedAtMs, elapsedBeforePause);
+    if (finalCurrentTime <= 0) {
       toast.error('No tracked time to save');
       setIsTracking(false);
       return;
@@ -308,7 +398,7 @@ const TimeTracking: React.FC = () => {
       project_id: trackingMode === 'project' ? formData.project_id || null : null,
       task_id: trackingMode === 'project' ? formData.task_id || null : null,
       date: formData.date,
-      hours: (currentTime / 3600).toFixed(2),
+      hours: (finalCurrentTime / 3600).toFixed(2),
       description: trackingMode === 'sales'
         ? buildSalesDescription(leadsCreated, sessionStartedAt, stoppedAt)
         : formData.description,
@@ -750,7 +840,7 @@ const TimeTracking: React.FC = () => {
                     <TableHead>Date</TableHead>
                     <TableHead>Hours</TableHead>
                     <TableHead>Status</TableHead>
-                    {(canDeleteTime || canManageTime) ? <TableHead>Actions</TableHead> : null}
+                    {(canViewTeamTime || canDeleteTime || canManageTime) ? <TableHead>Actions</TableHead> : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -787,17 +877,26 @@ const TimeTracking: React.FC = () => {
                           </>
                         )}
                         <TableCell>{log.date ? format(new Date(log.date), 'PPP') : '-'}</TableCell>
-                        <TableCell>{Number(log.hours || 0).toFixed(2)}h</TableCell>
+                        <TableCell>{formatHoursAsHms(log.hours)}</TableCell>
                         <TableCell>
                           <Badge variant={log.status === 'approved' ? 'default' : log.status === 'rejected' ? 'destructive' : 'secondary'}>
                             {log.status}
                           </Badge>
                         </TableCell>
-                        {(canDeleteTime || canManageTime) ? (
+                        {(canViewTeamTime || canDeleteTime || canManageTime) ? (
                           <TableCell>
-                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(log.id, log.project_name || log.user_name)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="flex gap-1">
+                              {canViewTeamTime ? (
+                                <Button variant="ghost" size="icon" onClick={() => setSelectedTimeLog(log)} aria-label="View time details">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              ) : null}
+                              {(canDeleteTime || canManageTime) ? (
+                                <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(log.id, log.project_name || log.user_name)} aria-label="Delete time log">
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              ) : null}
+                            </div>
                           </TableCell>
                         ) : null}
                       </TableRow>
@@ -809,6 +908,84 @@ const TimeTracking: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={Boolean(selectedTimeLog)} onOpenChange={(open) => !open && setSelectedTimeLog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Time Log Details</DialogTitle>
+          </DialogHeader>
+          {selectedTimeLog ? (
+            (() => {
+              const salesDetail = getSalesDetail(selectedTimeLog.description);
+              return (
+            <div className="grid gap-4 text-sm sm:grid-cols-2">
+              <div>
+                <p className="text-xs text-muted-foreground">User</p>
+                <p className="font-medium">{selectedTimeLog.user_name || '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Duration</p>
+                <p className="font-mono text-lg font-semibold">{formatHoursAsHms(selectedTimeLog.hours)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Date</p>
+                <p className="font-medium">{selectedTimeLog.date ? format(new Date(selectedTimeLog.date), 'PPP') : '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Status</p>
+                <Badge variant={selectedTimeLog.status === 'approved' ? 'default' : selectedTimeLog.status === 'rejected' ? 'destructive' : 'secondary'}>
+                  {selectedTimeLog.status}
+                </Badge>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Project</p>
+                <p className="font-medium">{selectedTimeLog.project_name || '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Task</p>
+                <p className="font-medium">{selectedTimeLog.task_title || '-'}</p>
+              </div>
+              {salesDetail.isSalesSession ? (
+                <>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Work Type</p>
+                    <p className="font-medium">{salesDetail.workType}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Source</p>
+                    <p className="font-medium">{salesDetail.source}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Leads Created</p>
+                    <p className="font-medium">{salesDetail.leadsCreated}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Started</p>
+                    <p className="font-medium">{salesDetail.started}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Ended</p>
+                    <p className="font-medium">{salesDetail.ended}</p>
+                  </div>
+                  {salesDetail.note ? (
+                    <div className="sm:col-span-2">
+                      <p className="text-xs text-muted-foreground">Note</p>
+                      <p className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3">{salesDetail.note}</p>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="sm:col-span-2">
+                  <p className="text-xs text-muted-foreground">Description</p>
+                  <p className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3">{selectedTimeLog.description || '-'}</p>
+                </div>
+              )}
+            </div>
+              );
+            })()
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -10,6 +10,8 @@ interface MailAttachment {
   original_name: string;
   file_name: string;
   file_path: string;
+  url?: string;
+  file_url?: string;
   mime_type: string;
   file_size: number;
 }
@@ -79,12 +81,20 @@ export const MailDetail: React.FC<MailDetailProps> = ({
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const isImage = (mimeType: string) => mimeType.startsWith('image/');
+  const getAttachmentUrl = (attachment: MailAttachment) =>
+    attachment.url || attachment.file_url || getFileUrl(attachment.file_path);
+
+  const isImage = (attachment: MailAttachment) => {
+    if (attachment.mime_type?.startsWith('image/')) return true;
+    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(attachment.original_name || attachment.file_name || attachment.file_path || '');
+  };
 
   const handleDownload = (attachment: MailAttachment) => {
-    const fileUrl = getFileUrl(attachment.file_path);
+    const fileUrl = getAttachmentUrl(attachment);
     const link = document.createElement('a');
     link.href = fileUrl;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
     link.download = attachment.original_name;
     link.click();
   };
@@ -161,7 +171,18 @@ export const MailDetail: React.FC<MailDetailProps> = ({
                       className="flex items-center justify-between p-3 bg-muted rounded-lg border hover:border-primary transition-colors"
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <FileText className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                        {isImage(attachment) ? (
+                          <button
+                            type="button"
+                            className="h-12 w-12 overflow-hidden rounded-md border bg-background"
+                            onClick={() => onPreviewImage(getAttachmentUrl(attachment))}
+                            aria-label={`Preview ${attachment.original_name}`}
+                          >
+                            <img src={getAttachmentUrl(attachment)} alt="" className="h-full w-full object-cover" />
+                          </button>
+                        ) : (
+                          <FileText className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                        )}
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">
                             {attachment.original_name}
@@ -172,11 +193,11 @@ export const MailDetail: React.FC<MailDetailProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        {isImage(attachment.mime_type) && (
+                        {isImage(attachment) && (
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => onPreviewImage(getFileUrl(attachment.file_path))}
+                            onClick={() => onPreviewImage(getAttachmentUrl(attachment))}
                           >
                             Preview
                           </Button>

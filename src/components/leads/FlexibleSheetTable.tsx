@@ -21,7 +21,7 @@ interface FlexibleSheetTableProps {
   emptyText?: string;
   savingId?: string;
   onColumnsChange: (columns: FlexibleColumn[]) => void;
-  onSaveRow?: (rowId: string, values: Record<string, string>, raw?: unknown) => void;
+  onSaveRow?: (rowId: string, values: Record<string, string>, raw?: unknown) => void | Promise<void>;
   onAddRow?: () => void;
   onDeleteRow?: (rowId: string) => void;
   canAdd?: boolean;
@@ -66,6 +66,8 @@ export function FlexibleSheetTable({
   const [newColumnName, setNewColumnName] = useState('');
   const [visibleRowLimit, setVisibleRowLimit] = useState(initialRenderRows);
   const autoSaveTimers = React.useRef<Record<string, number>>({});
+  const savingRows = React.useRef<Record<string, boolean>>({});
+  const queuedSaveValues = React.useRef<Record<string, Record<string, string>>>({});
 
   const visibleColumns = useMemo(() => columns.filter((column) => column.label.trim()), [columns]);
   const renderedRows = rows.slice(0, visibleRowLimit);
@@ -87,9 +89,24 @@ export function FlexibleSheetTable({
   const hasAnyValue = (values: Record<string, string>) =>
     Object.values(values).some((value) => String(value || '').trim());
 
-  const saveValues = (row: FlexibleSheetRow, values: Record<string, string>) => {
+  const saveValues = async (row: FlexibleSheetRow, values: Record<string, string>) => {
     if (!onSaveRow || !hasAnyValue(values)) return;
-    onSaveRow(row.id, values, row.raw);
+    if (savingRows.current[row.id]) {
+      queuedSaveValues.current[row.id] = values;
+      return;
+    }
+
+    savingRows.current[row.id] = true;
+    try {
+      await onSaveRow(row.id, values, row.raw);
+    } finally {
+      savingRows.current[row.id] = false;
+      const queuedValues = queuedSaveValues.current[row.id];
+      delete queuedSaveValues.current[row.id];
+      if (queuedValues) {
+        void saveValues(row, queuedValues);
+      }
+    }
   };
 
   const queueAutoSave = (rowId: string, values: Record<string, string>) => {
@@ -98,7 +115,7 @@ export function FlexibleSheetTable({
     autoSaveTimers.current[rowId] = window.setTimeout(() => {
       const row = rows.find((item) => item.id === rowId);
       if (!row) return;
-      saveValues(row, values);
+      void saveValues(row, values);
     }, autoSaveDelay);
   };
 
@@ -126,7 +143,7 @@ export function FlexibleSheetTable({
   const saveRow = (row: FlexibleSheetRow) => {
     if (!onSaveRow) return;
     const values = { ...row.values, ...(draftRows[row.id] || {}) };
-    saveValues(row, values);
+    void saveValues(row, values);
   };
 
   const addColumn = () => {
@@ -191,13 +208,13 @@ export function FlexibleSheetTable({
       </div>
 
       <div className="max-h-[70vh] overflow-auto rounded-lg border" onScroll={handleScroll}>
-        <table className="w-full min-w-[1100px] border-collapse text-sm">
+        <table className="w-full min-w-[1600px] border-collapse text-sm">
           <thead className="bg-muted/60">
             <tr>
               <th className="sticky left-0 z-20 w-14 border-r bg-muted/90 px-3 py-2 text-center font-medium">#</th>
               {showOwner ? <th className="sticky left-14 z-10 w-44 border-r bg-muted/90 px-3 py-2 text-left font-medium">{ownerLabel}</th> : null}
               {visibleColumns.map((column) => (
-                <th key={column.id} className="min-w-44 border-r px-2 py-2 text-left align-top font-medium">
+                <th key={column.id} className="min-w-[240px] border-r px-2 py-2 text-left align-top font-medium">
                   <div className="flex items-center gap-2">
                     {canManageColumns ? (
                       <Input
@@ -236,9 +253,13 @@ export function FlexibleSheetTable({
                     </td>
                     {showOwner ? (
                       <td className="sticky left-14 z-10 border-r bg-background px-3 py-2">
-                        <Badge variant="outline" className="max-w-40 truncate">
-                          {row.ownerName || 'Unknown'}
-                        </Badge>
+                        {row.ownerName ? (
+                          <Badge variant="outline" className="max-w-40 truncate">
+                            {row.ownerName}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
                       </td>
                     ) : null}
                     {visibleColumns.map((column) => (
@@ -250,12 +271,12 @@ export function FlexibleSheetTable({
                             if (!autoSave || !canEdit || !onSaveRow) return;
                             const values = { ...row.values, ...(draftRows[row.id] || {}) };
                             window.clearTimeout(autoSaveTimers.current[row.id]);
-                            saveValues(row, values);
+                            void saveValues(row, values);
                           }}
                           onKeyDown={(event) => {
                             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
                               event.preventDefault();
-                              saveRow(row);
+                              void saveRow(row);
                             }
                           }}
                           readOnly={!canEdit}
@@ -267,7 +288,7 @@ export function FlexibleSheetTable({
                     <td className="p-2 align-top">
                       <div className="flex gap-1">
                         {canEdit && onSaveRow ? (
-                          <Button type="button" size="icon" variant={dirty ? 'default' : 'ghost'} disabled={savingId === row.id} onClick={() => saveRow(row)}>
+                          <Button type="button" size="icon" variant={dirty ? 'default' : 'ghost'} disabled={savingId === row.id} onClick={() => void saveRow(row)}>
                             <Save className="h-4 w-4" />
                           </Button>
                         ) : null}
