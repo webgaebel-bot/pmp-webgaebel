@@ -92,7 +92,7 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
   const canViewAllCalendars = can('calendar.view.all');
   const canViewProjectCalendar = can('calendar.project.view');
     const canCreateProject = can('projects.create');
-  const hasCalendarAccess = canViewOwnCalendar || canViewAllCalendars;
+  const hasCalendarAccess = canViewOwnCalendar || canViewAllCalendars || canViewProjectCalendar;
 
   useEffect(() => {
     fetchCalendarData();
@@ -137,10 +137,14 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
       const { startDate, endDate } = getDateRange();
       
       const response = await api.getCalendar(startDate, endDate);
-      
-      // Map API response to calendar events
-      const apiData = response.data || response || [];
-      const mappedEvents: CalendarEvent[] = apiData.map((project: any) => {
+
+      const rawData = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response)
+          ? response
+          : [];
+
+      const mappedEvents: CalendarEvent[] = rawData.map((project: any) => {
         const typeMap: { [key: string]: string } = {
           'project': '#4285F4',
           'task': '#EA4335',
@@ -155,13 +159,13 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
 
         return {
           id: String(project.id),
-          title: project.name || project.title,
-          start: project.start_date || project.start,
-          end: project.end_date || project.end,
-          type: project.type || 'project',
+          title: project.name || project.title || project.project_name || 'Untitled event',
+          start: project.start_date || project.start || project.due_date || project.date,
+          end: project.end_date || project.end || project.due_date || project.date,
+          type: project.type || (project.due_date ? 'task' : 'project'),
           status: project.status,
           description: project.description,
-          project_id: project.id,
+          project_id: project.project_id || project.id,
           color: typeMap[(project.type || project.status)?.toLowerCase()] || '#8E44AD'
         };
       });
@@ -182,6 +186,7 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
 
       setEvents(filteredEvents);
     } catch (err) {
+      setEvents([]);
       setError(err instanceof Error ? err.message : 'Failed to load calendar');
       console.error('Calendar fetch error:', err);
     } finally {
@@ -358,6 +363,31 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
     });
   };
 
+  const getWeekDates = (): Date[] => {
+    const start = new Date(currentDate);
+    start.setDate(start.getDate() - start.getDay());
+    start.setHours(0, 0, 0, 0);
+
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(start);
+      date.setDate(start.getDate() + index);
+      return date;
+    });
+  };
+
+  const getEventsForExactDate = (date: Date): CalendarEvent[] => {
+    const dateStr = date.toISOString().split('T')[0];
+    return events.filter(event => {
+      const eventStart = event.start || event.date;
+      if (!eventStart) return false;
+      const startDateStr = new Date(eventStart).toISOString().split('T')[0];
+      const endDateStr = event.end
+        ? new Date(event.end).toISOString().split('T')[0]
+        : startDateStr;
+      return dateStr >= startDateStr && dateStr <= endDateStr;
+    });
+  };
+
   const handleDateClick = (day: number) => {
     const clickedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
     setSelectedDate(clickedDate);
@@ -439,6 +469,8 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
 
   const daysInMonth = getDaysInMonth(currentDate);
   const firstDayOfMonth = getFirstDayOfMonth(currentDate);
+  const weekDates = getWeekDates();
+  const dayEvents = getEventsForExactDate(currentDate);
 
   const calendarDays: (number | null)[] = [];
   for (let i = 0; i < firstDayOfMonth; i++) {
@@ -466,7 +498,11 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
 
   return (
     <>
-      {!hasCalendarAccess ? null : (
+      {!hasCalendarAccess ? (
+        <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center text-gray-600">
+          Calendar is available, but no calendar permission is assigned to this account yet.
+        </div>
+      ) : (
         <div className="flex flex-col h-full bg-white">
           {/* Top Header */}
           <div className="border-b border-gray-200 px-6 py-3">
@@ -558,8 +594,8 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
 
               {/* Error State */}
               {error && (
-                <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700 border border-red-200">
-                  {error}
+                <div className="rounded-lg bg-amber-50 p-4 text-sm text-amber-800 border border-amber-200">
+                  {error}. Empty calendar view shown so the page keeps working.
                 </div>
               )}
 
@@ -699,6 +735,127 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {!isLoading && viewType === 'week' && (
+                <div className="flex-1 border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-7 bg-gray-50 border-b border-gray-200">
+                    {weekDates.map((date) => (
+                      <div
+                        key={date.toISOString()}
+                        className="border-r border-gray-200 last:border-r-0 px-3 py-3 text-center"
+                      >
+                        <div className="text-xs uppercase tracking-wide text-gray-500">
+                          {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                        </div>
+                        <div className="mt-1 text-lg font-semibold text-gray-900">
+                          {date.getDate()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-7 min-h-[420px]">
+                    {weekDates.map((date) => {
+                      const dateEvents = getEventsForExactDate(date);
+                      return (
+                        <div
+                          key={date.toISOString()}
+                          className="border-r border-gray-200 last:border-r-0 p-3 bg-white"
+                        >
+                          <div className="space-y-2">
+                            {dateEvents.length === 0 ? (
+                              <div className="rounded-md border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400">
+                                No events
+                              </div>
+                            ) : (
+                              dateEvents.map((event) => (
+                                <button
+                                  key={`${date.toISOString()}-${event.id}`}
+                                  type="button"
+                                  onClick={() => handleEventClick(event)}
+                                  className="w-full rounded-md px-3 py-2 text-left text-sm text-white"
+                                  style={{ backgroundColor: getEventColor(event) }}
+                                >
+                                  <div className="font-medium truncate">{event.title}</div>
+                                  <div className="text-[11px] opacity-80 capitalize">{event.type || 'event'}</div>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {!isLoading && viewType === 'day' && (
+                <div className="flex-1 rounded-lg border border-gray-200 bg-white p-6">
+                  <div className="mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {currentDate.toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </h3>
+                    <p className="text-sm text-gray-500">Day view stays visible even when there are no records.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {dayEvents.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-200 px-4 py-10 text-center text-sm text-gray-500">
+                        No events scheduled for this day.
+                      </div>
+                    ) : (
+                      dayEvents.map((event) => (
+                        <button
+                          key={event.id}
+                          type="button"
+                          onClick={() => handleEventClick(event)}
+                          className="w-full rounded-lg px-4 py-3 text-left text-white shadow-sm"
+                          style={{ backgroundColor: getEventColor(event) }}
+                        >
+                          <div className="font-semibold">{event.title}</div>
+                          <div className="mt-1 text-sm opacity-90">{event.description || event.status || 'Scheduled item'}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!isLoading && viewType === 'agenda' && (
+                <div className="flex-1 rounded-lg border border-gray-200 bg-white p-6">
+                  <div className="space-y-3">
+                    {events.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-200 px-4 py-10 text-center text-sm text-gray-500">
+                        No calendar items available for this range.
+                      </div>
+                    ) : (
+                      events.map((event) => (
+                        <button
+                          key={`agenda-${event.id}`}
+                          type="button"
+                          onClick={() => handleEventClick(event)}
+                          className="flex w-full items-start justify-between rounded-lg border border-gray-200 px-4 py-3 text-left hover:bg-gray-50"
+                        >
+                          <div>
+                            <div className="font-medium text-gray-900">{event.title}</div>
+                            <div className="text-sm text-gray-500">
+                              {(event.start || event.date) ? new Date(event.start || event.date || '').toLocaleDateString() : 'No date'}
+                            </div>
+                          </div>
+                          <Badge variant="secondary" className="capitalize">
+                            {event.type || 'event'}
+                          </Badge>
+                        </button>
+                      ))
+                    )}
                   </div>
                 </div>
               )}

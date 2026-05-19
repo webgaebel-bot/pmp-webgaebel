@@ -272,7 +272,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {isCollapsed && !isMobile ? (
             <img 
               src="/hakam-logo.svg"
-              alt="Hakam TechSol"
+              alt="Project Portal"
               className="h-8 w-8 flex-shrink-0"
             />
           ) : (
@@ -280,12 +280,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex items-center gap-3">
                 <img 
                   src="/images-removebg-preview.png"
-                  alt="Hakam TechSol"
+                  alt="Project Portal"
                   className="h-12 w-12 flex-shrink-0"
                 />
                 <div>
-                  <h1 className="text-base font-semibold text-sidebar-foreground">Hakam TechSol</h1>
-                  <p className="text-xs text-sidebar-foreground/60">Management Portal</p>
+                  <h1 className="text-base font-semibold text-sidebar-foreground">Project Portal</h1>
+                  <p className="text-xs text-sidebar-foreground/60">Shared Workspace</p>
                 </div>
               </div>
               {isMobile && (

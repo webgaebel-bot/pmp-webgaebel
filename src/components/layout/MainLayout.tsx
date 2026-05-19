@@ -8,7 +8,7 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const MainLayout: React.FC = () => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const {
     isCollapsed,
     isMobileOpen,
@@ -18,12 +18,13 @@ export const MainLayout: React.FC = () => {
     closeMobile,
   } = useSidebar();
 
-  if (isLoading) {
+  // Wait for auth to fully load (including user data with permissions)
+  if (isLoading || (isAuthenticated && !user)) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-8 w-8 animate-spin text-accent" />
-          <p className="text-muted-foreground">Loading...</p>
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading your workspace...</p>
         </div>
       </div>
     );

@@ -450,6 +450,9 @@ const ProjectDetail: React.FC = () => {
     setPreviewImage({ url: imageUrl, name: file.name });
   };
 
+  const completedTasks = tasks.filter((task) => ['done', 'completed', 'complete'].includes(String(task.status || '').toLowerCase())).length;
+  const liveProgress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : Number(project.progress || 0);
+
   return (
     <div className="space-y-6">
       <button
@@ -546,8 +549,8 @@ const ProjectDetail: React.FC = () => {
               <div className="space-y-6">
                 <div>
                   <h3 className="text-sm font-semibold text-muted-foreground mb-2">Progress</h3>
-                  <ProgressBar value={project.progress || 0} />
-                  <p className="text-xs text-muted-foreground mt-1">{project.progress || 0}% complete</p>
+                  <ProgressBar value={liveProgress} />
+                  <p className="text-xs text-muted-foreground mt-1">{liveProgress}% complete from {completedTasks}/{tasks.length} tasks</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">

@@ -28,6 +28,14 @@ import Unauthorized from "@/pages/Unauthorized";
 import NotFound from "@/pages/NotFound";
 import ContactAdmin from "@/pages/ContactAdmin";
 import ForgotPassword from "@/pages/ForgotPassword";
+import FinanceDashboard from "@/pages/finance/FinanceDashboard";
+import Payments from "@/pages/finance/Payments";
+import Expenses from "@/pages/finance/Expenses";
+import Clients from "@/pages/finance/Clients";
+import Founders from "@/pages/finance/Founders";
+import FinanceSettings from "@/pages/finance/FinanceSettings";
+import TimeTracking from "@/pages/time-tracking/TimeTracking";
+import Leads from "@/pages/leads/Leads";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -127,6 +135,46 @@ const App = () => (
               <Route path="/reports" element={
                 <ProtectedRoute permission="reports.view">
                   <Reports />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance" element={
+                <ProtectedRoute permission="finance.view">
+                  <FinanceDashboard />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/payments" element={
+                <ProtectedRoute permission="finance.view">
+                  <Payments />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/expenses" element={
+                <ProtectedRoute permission="finance.view">
+                  <Expenses />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/clients" element={
+                <ProtectedRoute permission="finance.view">
+                  <Clients />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/founders" element={
+                <ProtectedRoute permission="finance.view">
+                  <Founders />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/settings" element={
+                <ProtectedRoute permission="finance.view">
+                  <FinanceSettings />
+                </ProtectedRoute>
+              } />
+              <Route path="/time-tracking" element={
+                <ProtectedRoute permission="time.view">
+                  <TimeTracking />
+                </ProtectedRoute>
+              } />
+              <Route path="/leads" element={
+                <ProtectedRoute permission="leads.view">
+                  <Leads />
                 </ProtectedRoute>
               } />
               <Route path="/activity" element={

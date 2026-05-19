@@ -363,7 +363,7 @@ const TaskDetail: React.FC = () => {
 
   if (!task) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-background to-muted/20 p-6">
+      <div className="min-h-screen bg-background p-4 sm:p-6">
         <button
           onClick={() => navigate('/tasks')}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
@@ -382,7 +382,7 @@ const TaskDetail: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-muted/20 p-6">
+    <div className="min-h-screen bg-background p-4 sm:p-6">
       <button
         onClick={() => navigate('/tasks')}
         className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
@@ -391,13 +391,16 @@ const TaskDetail: React.FC = () => {
         Back to Tasks
       </button>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
+      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Main Content */}
-        <div className="lg:col-span-2 space-y-8">
+        <div className="min-w-0 space-y-6">
           {/* Task Header */}
-          <div className="bg-card rounded-xl border border-border p-8 shadow-lg hover:shadow-xl transition-shadow">
-            <div className="flex items-start justify-between mb-6">
-              <h1 className="text-3xl font-bold text-foreground leading-tight">{task.title}</h1>
+          <div className="rounded-lg border border-border bg-card p-5 shadow-sm sm:p-6">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="mb-2 text-sm text-muted-foreground">{(task as any).project_name || task.project?.name || 'No project'}</p>
+                <h1 className="break-words text-2xl font-semibold leading-tight text-foreground sm:text-3xl">{task.title}</h1>
+              </div>
               {(canEdit || canDelete) && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -427,7 +430,7 @@ const TaskDetail: React.FC = () => {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 mb-8">
+            <div className="mb-6 flex flex-wrap items-center gap-3">
               {canEdit ? (
                 <>
                   <Select value={task.status} onValueChange={handleStatusChange}>
@@ -463,16 +466,16 @@ const TaskDetail: React.FC = () => {
             </div>
 
             <div>
-              <h2 className="text-lg font-semibold text-muted-foreground mb-3">Description</h2>
-              <p className="text-foreground whitespace-pre-wrap leading-relaxed">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Description</h2>
+              <p className="whitespace-pre-wrap break-words leading-relaxed text-foreground">
                 {task.description || 'No description provided'}
               </p>
             </div>
           </div>
 
           {/* Comments Section */}
-          <div className="bg-card rounded-xl border border-border shadow-lg">
-            <div className="flex items-center gap-3 p-6 border-b border-border bg-muted/30">
+          <div className="rounded-lg border border-border bg-card shadow-sm">
+            <div className="flex items-center gap-3 border-b border-border bg-muted/30 p-4 sm:p-5">
               <MessageSquare className="h-6 w-6 text-primary" />
               <h3 className="font-bold text-lg">Comments ({comments.length})</h3>
             </div>
@@ -487,7 +490,7 @@ const TaskDetail: React.FC = () => {
                 ) : (
                   getTopLevelComments().map((comment) => (
                     <div key={comment.id} className="hover:bg-muted/20 transition-colors">
-                      <div className="p-6">
+                      <div className="p-4 sm:p-5">
                         <div className="flex items-start gap-4">
                           <Avatar className="h-10 w-10 ring-2 ring-muted">
                             <AvatarImage src={comment.user?.avatar ? `${IMAGE_BASE_URL}${comment.user.avatar}` : ''} />
@@ -498,7 +501,7 @@ const TaskDetail: React.FC = () => {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-3">
-                                                                <span className="font-medium text-sm">{comment.user?.name || comment.user_name || 'Unknown'}</span>
+                                <span className="font-medium text-sm">{comment.user?.name || comment.user_name || 'Unknown'}</span>
                                 <span className="text-xs text-muted-foreground">
                                   {format(new Date(comment.created_at), 'MMM dd, yyyy HH:mm')}
                                 </span>
@@ -649,15 +652,15 @@ const TaskDetail: React.FC = () => {
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-8">
+        <div className="min-w-0 space-y-6">
           {/* Task Details */}
-          <div className="bg-card rounded-xl border border-border p-6 shadow-lg">
-            <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
+          <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+            <h3 className="mb-5 flex items-center gap-2 text-base font-semibold">
               <CheckSquare className="h-5 w-5 text-primary" />
               Details
             </h3>
             
-            <div className="space-y-6">
+            <div className="space-y-5">
               <div>
                 <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
                   <FileText className="h-4 w-4" />
@@ -718,7 +721,7 @@ const TaskDetail: React.FC = () => {
 
           {/* Time Tracking */}
           {(task.estimated_hours || task.actual_hours) && (
-            <div className="bg-card rounded-xl border border-border p-6 shadow-lg">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
               <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
                 <Clock className="h-5 w-5 text-primary" />
                 Time Tracking
@@ -741,8 +744,8 @@ const TaskDetail: React.FC = () => {
           )}
 
           {/* Files Section */}
-          <div className="bg-card rounded-xl border border-border shadow-lg">
-            <div className="flex items-center justify-between p-6 border-b border-border">
+          <div className="rounded-lg border border-border bg-card shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-border p-4 sm:p-5">
               <div className="flex items-center gap-3">
                 <FileText className="h-6 w-6 text-primary" />
                 <h3 className="font-bold text-lg">Attachments ({files.length})</h3>
@@ -775,8 +778,8 @@ const TaskDetail: React.FC = () => {
             ) : (
               <div className="divide-y divide-border/50">
                 {files.map((file) => (
-                  <div key={file.id} className="flex items-center justify-between p-6 hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-4">
+                  <div key={file.id} className="flex flex-col gap-3 p-4 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-4">
                       <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
                         {isImageFile(file.name) ? (
                           <ImageIcon className="h-6 w-6 text-muted-foreground" />
@@ -785,7 +788,7 @@ const TaskDetail: React.FC = () => {
                         )}
                       </div>
                       <div>
-                        <p className="font-medium text-sm">{file.name}</p>
+                        <p className="break-all text-sm font-medium">{file.name}</p>
                         <p className="text-xs text-muted-foreground">
                           {formatFileSize(file.size)} • {format(new Date(file.created_at), 'MMM dd, yyyy')}
                         </p>

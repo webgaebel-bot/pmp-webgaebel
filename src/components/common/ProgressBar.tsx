@@ -22,7 +22,9 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   size = 'md',
   className,
 }) => {
-  const percentage = Math.min(Math.max((value / max) * 100, 0), 100);
+  const safeMax = Number.isFinite(max) && max > 0 ? max : 100;
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const percentage = Math.min(Math.max((safeValue / safeMax) * 100, 0), 100);
 
   const getColorClass = () => {
     if (percentage >= 100) return 'bg-success';
@@ -32,8 +34,8 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   };
 
   return (
-    <div className={cn('flex items-center gap-3', className)}>
-      <div className={cn('flex-1 bg-muted rounded-full overflow-hidden', sizeStyles[size])}>
+    <div className={cn('flex min-w-0 items-center gap-3', className)}>
+      <div className={cn('min-w-0 flex-1 rounded-full bg-muted overflow-hidden', sizeStyles[size])}>
         <div
           className={cn('h-full rounded-full transition-all duration-500', getColorClass())}
           style={{ width: `${percentage}%` }}

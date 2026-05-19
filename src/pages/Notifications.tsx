@@ -47,8 +47,8 @@ const Notifications: React.FC = () => {
           id: String(notif.id),
           title: notif.title || notif.type,
           message: notif.message || notif.description || '',
-          
-          read: notif.is_read === 1 ? true : (notif.read || false),
+          type: notif.type || 'info',
+          read: notif.is_read === 1 || notif.is_read === true || notif.read === true,
           created_at: notif.created_at || new Date().toISOString(),
           name: notif.name || '',
           email: notif.email || '',

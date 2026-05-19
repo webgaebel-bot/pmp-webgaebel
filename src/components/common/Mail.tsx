@@ -27,6 +27,7 @@ import {
 } from '@/services/socket';
 
 import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { DialogTitle } from '@/components/ui/dialog';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -102,6 +103,8 @@ const Mail: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState<'messages' | 'all'>('messages');
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const getFileUrl = (filePath: string) =>
+        /^https?:\/\//i.test(filePath) ? filePath : `${IMAGE_BASE_URL}${filePath}`;
 
     // Compose state
     const [composeData, setComposeData] = useState({
@@ -135,25 +138,6 @@ const Mail: React.FC = () => {
             toast({ title: 'Error', description: error.message || 'Failed to send reply', variant: 'destructive' });
         }
     };
-
-    // Permission check
-    if (!can('mails.view')) {
-        return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <div className="text-center space-y-4">
-                    <div className="mx-auto w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-                        <MailIcon className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                    <div>
-                        <h3 className="text-lg font-semibold">Access Denied</h3>
-                        <p className="text-sm text-muted-foreground mt-1">
-                            You don't have permission to access the mail system
-                        </p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     // Fetch Inbox
     const fetchInbox = useCallback(async () => {
@@ -561,14 +545,23 @@ const Mail: React.FC = () => {
     }
 };
 
-    const handleReplyAttachmentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(event.target.files || []);
-        setReplyAttachments((prev) => [...prev, ...files]);
-    };
-
-    const removeReplyAttachment = (index: number) => {
-        setReplyAttachments((prev) => prev.filter((_, i) => i !== index));
-    };
+    if (!can('mails.view')) {
+        return (
+            <div className="flex min-h-[400px] items-center justify-center">
+                <div className="space-y-4 text-center">
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                        <MailIcon className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                    <div>
+                        <h3 className="text-lg font-semibold">Access Denied</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                            You don't have permission to access the mail system
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="flex h-[calc(100vh-4rem)] bg-background">
@@ -725,7 +718,7 @@ const Mail: React.FC = () => {
                                         onPreviewImage={setPreviewImage}
                                         canDelete={can('mails.delete')}
                                         canReply={can('mails.send')}
-                                        getFileUrl={(filePath) => `${IMAGE_BASE_URL}${filePath}`}
+                                        getFileUrl={getFileUrl}
                                     />
                                 )}
                             </SheetContent>
@@ -762,7 +755,7 @@ const Mail: React.FC = () => {
                                             onPreviewImage={setPreviewImage}
                                             canDelete={can('mails.delete')}
                                             canReply={can('mails.send')}
-                                            getFileUrl={(filePath) => `${IMAGE_BASE_URL}${filePath}`}
+                                            getFileUrl={getFileUrl}
                                         />
                                     )}
                                 </SheetContent>
@@ -793,6 +786,7 @@ const Mail: React.FC = () => {
             {/* Image Preview */}
             <Dialog open={!!previewImage} onOpenChange={() => setPreviewImage(null)}>
                 <DialogContent className="max-w-4xl p-0 overflow-hidden">
+                    <DialogTitle className="sr-only">Image preview</DialogTitle>
                     {previewImage && (
                         <img src={previewImage} alt="Preview" className="w-full h-auto max-h-[80vh] object-contain" />
                     )}

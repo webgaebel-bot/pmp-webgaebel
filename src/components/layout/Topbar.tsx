@@ -12,6 +12,10 @@ import {
   PanelLeftClose,
   PanelLeft,
   CheckCheck,
+  FolderKanban,
+  CheckSquare,
+  Users as UsersIcon,
+  Target,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -36,6 +40,14 @@ import { initSocket, onNotificationUpdate } from '@/services/socket';
 import { cn } from '@/lib/utils';
 import type { Notification } from '@/types';
 
+interface SearchResultItem {
+  id: string;
+  label: string;
+  type: 'route' | 'project' | 'task' | 'user' | 'lead';
+  path: string;
+  meta?: string;
+}
+
 interface TopbarProps {
   isMobile: boolean;
   isCollapsed: boolean;
@@ -55,6 +67,21 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [profileImage, setProfileImage] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+
+  const staticRoutes: SearchResultItem[] = [
+    { id: 'dashboard', label: 'Dashboard', type: 'route', path: '/' },
+    { id: 'projects', label: 'Projects', type: 'route', path: '/projects' },
+    { id: 'tasks', label: 'Tasks', type: 'route', path: '/tasks' },
+    { id: 'calendar', label: 'Calendar', type: 'route', path: '/calendar' },
+    { id: 'finance', label: 'Finance', type: 'route', path: '/finance' },
+    { id: 'leads', label: 'Leads', type: 'route', path: '/leads' },
+    { id: 'users', label: 'Users', type: 'route', path: '/users' },
+    { id: 'notifications', label: 'Notifications', type: 'route', path: '/notifications' },
+    { id: 'settings', label: 'Settings', type: 'route', path: '/settings/profile' },
+  ];
 
   useEffect(() => {
     // Load profile image from localStorage
@@ -104,6 +131,115 @@ export const Topbar: React.FC<TopbarProps> = ({
   useEffect(() => {
     fetchNotifications();
   }, [fetchNotifications]);
+
+  useEffect(() => {
+    const term = searchQuery.trim().toLowerCase();
+    if (term.length < 2) {
+      const quickRoutes = staticRoutes.filter((item) => item.label.toLowerCase().includes(term)).slice(0, 5);
+      setSearchResults(term ? quickRoutes : []);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsSearching(true);
+        const [projectsRes, tasksRes, usersRes, leadsRes] = await Promise.allSettled([
+          api.getProjects(),
+          api.getTasks(),
+          api.getUsers(),
+          api.get('/leads'),
+        ]);
+
+        const results: SearchResultItem[] = [];
+        results.push(...staticRoutes.filter((item) => item.label.toLowerCase().includes(term)));
+
+        if (projectsRes.status === 'fulfilled') {
+          ((projectsRes.value as any)?.data || []).forEach((project: any) => {
+            if (String(project.name || '').toLowerCase().includes(term)) {
+              results.push({
+                id: `project-${project.id}`,
+                label: project.name,
+                type: 'project',
+                path: `/projects/${project.id}`,
+                meta: 'Project',
+              });
+            }
+          });
+        }
+
+        if (tasksRes.status === 'fulfilled') {
+          ((tasksRes.value as any)?.data || []).forEach((task: any) => {
+            if (String(task.title || '').toLowerCase().includes(term)) {
+              results.push({
+                id: `task-${task.id}`,
+                label: task.title,
+                type: 'task',
+                path: `/tasks/${task.id}`,
+                meta: task.project_name || 'Task',
+              });
+            }
+          });
+        }
+
+        if (usersRes.status === 'fulfilled') {
+          ((usersRes.value as any)?.data || []).forEach((member: any) => {
+            if (String(member.name || '').toLowerCase().includes(term) || String(member.email || '').toLowerCase().includes(term)) {
+              results.push({
+                id: `user-${member.id}`,
+                label: member.name,
+                type: 'user',
+                path: `/users/${member.id}`,
+                meta: member.email,
+              });
+            }
+          });
+        }
+
+        if (leadsRes.status === 'fulfilled') {
+          ((leadsRes.value as any)?.data || []).forEach((lead: any) => {
+            if (
+              String(lead.name || '').toLowerCase().includes(term) ||
+              String(lead.email || '').toLowerCase().includes(term) ||
+              String(lead.company || '').toLowerCase().includes(term)
+            ) {
+              results.push({
+                id: `lead-${lead.id}`,
+                label: lead.name,
+                type: 'lead',
+                path: '/leads',
+                meta: lead.company || lead.email,
+              });
+            }
+          });
+        }
+
+        const deduped = results.filter((item, index, array) => array.findIndex((entry) => entry.id === item.id) === index).slice(0, 10);
+        setSearchResults(deduped);
+      } catch (error) {
+        console.error('Global search error:', error);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const getSearchIcon = (type: SearchResultItem['type']) => {
+    switch (type) {
+      case 'project':
+        return <FolderKanban className="h-4 w-4 text-muted-foreground" />;
+      case 'task':
+        return <CheckSquare className="h-4 w-4 text-muted-foreground" />;
+      case 'user':
+        return <UsersIcon className="h-4 w-4 text-muted-foreground" />;
+      case 'lead':
+        return <Target className="h-4 w-4 text-muted-foreground" />;
+      default:
+        return <Search className="h-4 w-4 text-muted-foreground" />;
+    }
+  };
 
   useEffect(() => {
     initSocket();
@@ -215,11 +351,42 @@ export const Topbar: React.FC<TopbarProps> = ({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Search projects, tasks..."
+            placeholder="Search portal, pages, projects, tasks, users..."
             className="w-64 lg:w-80 pl-10 bg-secondary/50 border-0 focus-visible:ring-accent"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => setShowSearchResults(true)}
+            onBlur={() => setTimeout(() => setShowSearchResults(false), 150)}
           />
+          {showSearchResults && (searchQuery.trim().length > 0 || isSearching) && (
+            <div className="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-lg border bg-card shadow-lg">
+              {isSearching ? (
+                <div className="px-4 py-3 text-sm text-muted-foreground">Searching...</div>
+              ) : searchResults.length === 0 ? (
+                <div className="px-4 py-3 text-sm text-muted-foreground">No results found.</div>
+              ) : (
+                searchResults.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="flex w-full items-start gap-3 border-b px-4 py-3 text-left last:border-b-0 hover:bg-muted/40"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      navigate(item.path);
+                      setShowSearchResults(false);
+                      setSearchQuery('');
+                    }}
+                  >
+                    <div className="mt-0.5">{getSearchIcon(item.type)}</div>
+                    <div>
+                      <div className="text-sm font-medium">{item.label}</div>
+                      <div className="text-xs text-muted-foreground">{item.meta || item.type}</div>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
         </div>
       </div>
 

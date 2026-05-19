@@ -1,10 +1,11 @@
 import { io, Socket } from 'socket.io-client';
 
 const API_BASE_URL =
-  import.meta.env.VITE_BACKEND_API_BASE_URL || 'http://localhost:5000/api';
+  import.meta.env.VITE_BACKEND_API_BASE_URL || 'http://127.0.0.1:8000/api';
 const SOCKET_URL =
   import.meta.env.VITE_BACKEND_SOCKET_URL ||
   API_BASE_URL.replace(/\/api\/?$/, '');
+const SOCKET_ENABLED = import.meta.env.VITE_ENABLE_SOCKET === 'true';
 
 let socket: Socket | null = null;
 
@@ -17,6 +18,7 @@ const getToken = (): string | null => {
 };
 
 export const initSocket = () => {
+  if (!SOCKET_ENABLED) return null;
   if (socket?.connected) return socket;
 
   const token = getToken();

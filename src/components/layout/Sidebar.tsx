@@ -9,13 +9,15 @@ import {
   Activity,
   Settings,
   ChevronDown,
-  FileText,
   BarChart3,
   ChevronLeft,
   ChevronRight,
   X,
   Mail,
   Calendar,
+  DollarSign,
+  Clock,
+  Target,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -55,7 +57,7 @@ const navigation: NavItem[] = [
     icon: FolderKanban,
     path: '/projects',
     permission: 'projects.view',
-  }, 
+  },
   {
     label: 'Tasks',
     icon: CheckSquare,
@@ -73,6 +75,24 @@ const navigation: NavItem[] = [
     icon: Calendar,
     path: '/calendar',
     permission: 'calendar.view',
+  },
+  {
+    label: 'Finance',
+    icon: DollarSign,
+    path: '/finance',
+    permission: 'finance.view',
+  },
+  {
+    label: 'Time Tracking',
+    icon: Clock,
+    path: '/time-tracking',
+    permission: 'time.view',
+  },
+  {
+    label: 'Leads',
+    icon: Target,
+    path: '/leads',
+    permission: 'leads.view',
   },
   {
     label: 'Users',
@@ -287,22 +307,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
           isCollapsed && !isMobile ? 'justify-center px-2' : 'justify-between px-4'
         )}>
           {isCollapsed && !isMobile ? (
-            <img 
-              src="/images-removebg-preview.jfif"
-              alt="Hakam TechSol"
-              className="h-8 w-8 flex-shrink-0"
-            />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-xl font-bold text-primary-foreground">
+              P
+            </div>
           ) : (
             <>
               <div className="flex items-center gap-3">
-                <img 
-                  src="/images-removebg-preview.jfif"
-                  alt="Hakam TechSol"
-                  className="h-12 w-12 flex-shrink-0"
-                />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-xl font-bold text-primary-foreground flex-shrink-0">
+                  P
+                </div>
                 <div>
-                  <h1 className="text-base font-semibold text-sidebar-foreground">Hakam TechSol</h1>
-                  <p className="text-xs text-sidebar-foreground/60">Management Portal</p>
+                  <h1 className="text-base font-semibold text-sidebar-foreground">Project Portal</h1>
+                  <p className="text-xs text-sidebar-foreground/60">Shared Workspace</p>
                 </div>
               </div>
               {isMobile && (

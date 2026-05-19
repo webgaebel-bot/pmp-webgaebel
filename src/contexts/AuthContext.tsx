@@ -22,18 +22,45 @@ const getStoredUser = (): User | null => {
   }
 };
 
+const normalizeUser = (user: any): User | null => {
+  if (!user) return null;
+
+  const rawRole = user.role;
+  const normalizedRole =
+    rawRole && typeof rawRole === 'object'
+      ? {
+          id: rawRole.id ?? user.role_id ?? '',
+          name: rawRole.name ?? user.role_name ?? '',
+        }
+      : rawRole
+        ? {
+            id: user.role_id ?? '',
+            name: String(rawRole),
+          }
+        : null;
+
+  return {
+    ...user,
+    role: normalizedRole,
+    permissions: Array.isArray(user.permissions) ? user.permissions : [],
+    profile_image: user.profile_image || user.avatar,
+  } as User;
+};
+
 // Helper function to store user in localStorage
 const storeUser = (user: User | null) => {
-  if (user) {
+  const normalizedUser = normalizeUser(user);
+
+  if (normalizedUser) {
     localStorage.setItem('user', JSON.stringify({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role ? { id: user.role.id, name: user.role.name } : null,
-      permissions: user.permissions || [],
-      avatar: user.avatar,
-      profile_image: user.profile_image || user.avatar,
-      status: user.status,
+      id: normalizedUser.id,
+      name: normalizedUser.name,
+      email: normalizedUser.email,
+      role: normalizedUser.role ? { id: normalizedUser.role.id, name: normalizedUser.role.name } : null,
+      permissions: normalizedUser.permissions || [],
+      avatar: normalizedUser.avatar,
+      profile_image: normalizedUser.profile_image || normalizedUser.avatar,
+      status: normalizedUser.status,
     }));
   } else {
     localStorage.removeItem('user');
@@ -95,7 +122,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       try {
         // Try to fetch current user from API
         const response: any = await api.getCurrentUser();
-        const user = response.data || response;
+        const user = normalizeUser(response.data || response);
 
         if (!isUserActive(user)) {
           console.log('User inactive, clearing session');
@@ -128,8 +155,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.error('Auth initialization error:', error);
         
         // Check if it's a network error or server error
-        const isNetworkError = !error.response;
-        const isServerError = error.response?.status >= 500;
+        const status = error?.status ?? error?.response?.status ?? 0;
+        const isNetworkError = status === 0;
+        const isServerError = status >= 500;
         
         // If network error or server error, trust local storage temporarily
         if ((isNetworkError || isServerError) && storedUser && storedUser.role) {
@@ -177,7 +205,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     try {
       const response: any = await api.getCurrentUser();
-      const user = response.data || response;
+      const user = normalizeUser(response.data || response);
       if (!isUserActive(user)) {
         await logout();
         return;
@@ -200,29 +228,46 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = async (email: string, password: string) => {
     const response: any = await api.login(email, password);
-    const { token, user } = response.data || response;
-
+    const { token, user: loginUser } = response.data || response;
+    const user = normalizeUser(loginUser);
+    
     if (!isUserActive(user)) {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user');
       throw new Error('Account is inactive. Please contact admin.');
     }
     
-    // Store token
+    // Store token first
     localStorage.setItem('auth_token', token);
     
-    // Store user in localStorage with proper structure
-    storeUser(user);
-    
-    // Store profile image separately for easy access
-    storeProfileImage(user.profile_image || user.avatar);
-    
-    setState({
-      user,
-      token,
-      isAuthenticated: true,
-      isLoading: false,
-    });
+    try {
+      // Fetch full user details with permissions from API
+      const userResponse: any = await api.getCurrentUser();
+      const fullUser = normalizeUser(userResponse.data || userResponse);
+      
+      // Store complete user data with permissions
+      storeUser(fullUser);
+      storeProfileImage(fullUser.profile_image || fullUser.avatar);
+      
+      setState({
+        user: fullUser,
+        token,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+    } catch (error) {
+      // Fallback: use user from login response
+      console.error('Failed to fetch full user after login:', error);
+      storeUser(user);
+      storeProfileImage(user.profile_image || user.avatar);
+      
+      setState({
+        user,
+        token,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+    }
   };
 
   const logout = async () => {
@@ -287,7 +332,11 @@ export const useAuth = () => {
 
 // Export helper function for use outside React components
 export const hasPermissionHelper = (permission: string): boolean => {
-  const user = getStoredUser();
+  const user = normalizeUser(getStoredUser());
   if (!user) return false;
+  const roleName = user.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
+  if (roleName === 'super admin' || roleName === 'superadmin') {
+    return true;
+  }
   return user.permissions?.includes(permission) || false;
 };

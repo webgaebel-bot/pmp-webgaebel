@@ -212,12 +212,12 @@ const Roles: React.FC = () => {
     // Try to fetch role's assigned permissions
     try {
       const response: any = await api.getRolePermissions(String(role.id));
-      // Handle the API response format: { success, role_id, permissions: [...] }
+      // Handle the API response format: { success, permissions: [...] }
       const assignedPermissions = response?.permissions || response?.data || response || [];
       const permissionIds = Array.isArray(assignedPermissions) 
         ? assignedPermissions.map((p: Permission | string | number) => {
             if (typeof p === 'string' || typeof p === 'number') return p;
-            return p.id;
+            return p.id || p;
           })
         : [];
       setSelectedPermissions(permissionIds);

@@ -53,10 +53,15 @@ const Settings: React.FC = () => {
     email_mentions: true,
     browser_notifications: false,
   });
+  const [isSavingNotifications, setIsSavingNotifications] = useState(false);
 
   useEffect(() => {
     fetchProfile();
   }, [user]);
+
+  useEffect(() => {
+    fetchNotificationSettings();
+  }, []);
 
   const fetchProfile = async () => {
     setIsLoading(true);
@@ -73,8 +78,9 @@ const Settings: React.FC = () => {
       const imageUrl = data?.profile_image || data?.avatar;
       if (imageUrl) {
         setAvatarPreview(imageUrl.startsWith('http') ? imageUrl : `${IMAGE_BASE_URL}${imageUrl}`);
-      } else if (user?.avatar) {
-        setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
+      } else if (user?.profile_image || user?.avatar) {
+        const fallbackImage = user?.profile_image || user?.avatar;
+        setAvatarPreview(fallbackImage?.startsWith('http') ? fallbackImage : `${IMAGE_BASE_URL}${fallbackImage}`);
       }
     } catch (error) {
       console.error('Failed to fetch profile:', error);
@@ -85,8 +91,9 @@ const Settings: React.FC = () => {
           phone: '',
           bio: '',
         });
-        if (user.avatar) {
-          setAvatarPreview(`${IMAGE_BASE_URL}${user.avatar}`);
+        if (user.profile_image || user.avatar) {
+          const fallbackImage = user.profile_image || user.avatar;
+          setAvatarPreview(fallbackImage?.startsWith('http') ? fallbackImage : `${IMAGE_BASE_URL}${fallbackImage}`);
         }
       }
     } finally {
@@ -181,6 +188,43 @@ const Settings: React.FC = () => {
     }
   };
 
+  const fetchNotificationSettings = async () => {
+    try {
+      const response: any = await api.getNotificationSettings();
+      const data = response?.data || response;
+      setNotifications({
+        email_tasks: !!data?.email_tasks,
+        email_projects: !!data?.email_projects,
+        email_mentions: !!data?.email_mentions,
+        browser_notifications: !!data?.browser_notifications,
+      });
+    } catch (error) {
+      console.error('Failed to fetch notification settings:', error);
+    }
+  };
+
+  const handleNotificationChange = async (key: keyof typeof notifications, checked: boolean) => {
+    const next = { ...notifications, [key]: checked };
+    setNotifications(next);
+    setIsSavingNotifications(true);
+    try {
+      await api.updateNotificationSettings(next);
+      toast({
+        title: 'Notifications Updated',
+        description: 'Your notification preferences were saved.',
+      });
+    } catch (error: any) {
+      setNotifications(notifications);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to save notification settings.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSavingNotifications(false);
+    }
+  };
+
   if (isLoading) {
     return <LoadingPage text="Loading settings..." />;
   }
@@ -240,6 +284,9 @@ const Settings: React.FC = () => {
               <div>
                 <h4 className="font-medium">{user?.name}</h4>
                 <p className="text-sm text-muted-foreground">{user?.role?.name || 'Team Member'}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {user?.status === 'active' ? 'Active account' : 'Profile settings'}
+                </p>
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -386,8 +433,9 @@ const Settings: React.FC = () => {
                 </div>
                 <Switch
                   checked={notifications.email_tasks}
-                  onCheckedChange={(checked) => setNotifications({ ...notifications, email_tasks: checked })}
+                  onCheckedChange={(checked) => handleNotificationChange('email_tasks', !!checked)}
                   className="data-[state=checked]:bg-accent"
+                  disabled={isSavingNotifications}
                 />
               </div>
               
@@ -400,8 +448,9 @@ const Settings: React.FC = () => {
                 </div>
                 <Switch
                   checked={notifications.email_projects}
-                  onCheckedChange={(checked) => setNotifications({ ...notifications, email_projects: checked })}
+                  onCheckedChange={(checked) => handleNotificationChange('email_projects', !!checked)}
                   className="data-[state=checked]:bg-accent"
+                  disabled={isSavingNotifications}
                 />
               </div>
               
@@ -414,8 +463,9 @@ const Settings: React.FC = () => {
                 </div>
                 <Switch
                   checked={notifications.email_mentions}
-                  onCheckedChange={(checked) => setNotifications({ ...notifications, email_mentions: checked })}
+                  onCheckedChange={(checked) => handleNotificationChange('email_mentions', !!checked)}
                   className="data-[state=checked]:bg-accent"
+                  disabled={isSavingNotifications}
                 />
               </div>
             </div>
@@ -433,8 +483,9 @@ const Settings: React.FC = () => {
               </div>
               <Switch
                 checked={notifications.browser_notifications}
-                onCheckedChange={(checked) => setNotifications({ ...notifications, browser_notifications: checked })}
+                onCheckedChange={(checked) => handleNotificationChange('browser_notifications', !!checked)}
                 className="data-[state=checked]:bg-accent"
+                disabled={isSavingNotifications}
               />
             </div>
           </div>

@@ -15,14 +15,14 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   permissions,
   requireAll = false,
 }) => {
-  const { isAuthenticated, isLoading, hasPermission, hasAnyPermission } = useAuth();
+  const { isAuthenticated, isLoading, hasPermission, hasAnyPermission, user } = useAuth();
   const location = useLocation();
 
-  // Show loading state while checking auth
-  if (isLoading) {
+  // Show loading state while checking auth (WAIT for user to fully load)
+  if (isLoading || (isAuthenticated && !user)) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
@@ -30,6 +30,21 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Wait until user permissions are loaded (Super Admin has all permissions)
+  if (isAuthenticated && user) {
+    const roleName = user.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
+    const isSuperAdmin = roleName === 'super admin' || roleName === 'superadmin';
+    
+    // If not super admin, ensure permissions are loaded
+    if (!isSuperAdmin && (!user.permissions || user.permissions.length === 0)) {
+      return (
+        <div className="flex h-screen items-center justify-center bg-background">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      );
+    }
   }
 
   // Check single permission

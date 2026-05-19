@@ -106,6 +106,7 @@ const mockRoles: Role[] = [
 const Users: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
+  const { user: currentUser } = useAuth();
   const permission = usePermission();
   const { toast } = useToast();
   
@@ -164,6 +165,10 @@ const Users: React.FC = () => {
   }, [id, users]);
 
   const filteredUsers = users.filter((user) => {
+    const currentRoleName = currentUser?.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
+    if ((currentRoleName === 'super admin' || currentRoleName === 'superadmin') && String(user.id) === String(currentUser?.id)) {
+      return false;
+    }
     const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.email.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || user.status === statusFilter;
