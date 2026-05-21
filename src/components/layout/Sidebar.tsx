@@ -18,6 +18,7 @@ import {
   DollarSign,
   Clock,
   Target,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -114,6 +115,11 @@ const navigation: NavItem[] = [
     permission: 'reports.view',
   },
   {
+    label: 'System Guide',
+    icon: ShieldCheck,
+    path: '/system-guide',
+  },
+  {
     label: 'Activity Logs',
     icon: Activity,
     path: '/activity',
@@ -154,6 +160,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // Check permission - if no permission required or user has permission
     const canView = !item.permission || hasPermission(item.permission);
     if (!canView) return null;
+
+    if (item.path === '/system-guide') {
+      const roleName = user?.role?.name?.toLowerCase() || '';
+      if (!(roleName.includes('admin'))) return null;
+    }
 
     const hasChildren = item.children && item.children.length > 0;
     const isExpanded = expandedItems.includes(item.path);

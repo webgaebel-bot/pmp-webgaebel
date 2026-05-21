@@ -41,6 +41,7 @@ import Leads from "@/pages/leads/Leads";
 import ManageTaxonomies from "@/pages/leads/ManageTaxonomies";
 
 import Guidance from "@/pages/Guidance";
+import SystemGuide from "@/pages/SystemGuide";
 import ProjectRoles from "@/pages/ProjectRoles";
 
 const queryClient = new QueryClient({
@@ -216,6 +217,11 @@ const App = () => (
               <Route path="/guidance" element={
                 <ProtectedRoute>
                   <Guidance />
+                </ProtectedRoute>
+              } />
+              <Route path="/system-guide" element={
+                <ProtectedRoute>
+                  <SystemGuide />
                 </ProtectedRoute>
               } />
               <Route path="/activity" element={

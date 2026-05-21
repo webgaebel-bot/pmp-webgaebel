@@ -87,6 +87,9 @@ export const Topbar: React.FC<TopbarProps> = ({
     { id: 'finance', label: 'Finance', type: 'route', path: '/finance', permission: 'finance.view' },
     { id: 'leads', label: 'Leads', type: 'route', path: '/leads', permission: 'leads.view' },
     { id: 'guidance', label: 'Guidance', type: 'route', path: '/guidance' },
+    ...(permission.isAdmin() || permission.isSuperAdmin()
+      ? [{ id: 'system-guide', label: 'System Guide', type: 'route', path: '/system-guide' }]
+      : []),
     { id: 'users', label: 'Users', type: 'route', path: '/users', permission: 'users.view' },
     { id: 'notifications', label: 'Notifications', type: 'route', path: '/notifications', permission: 'notifications.view' },
     { id: 'settings', label: 'Settings', type: 'route', path: '/settings/profile' },
@@ -425,10 +428,40 @@ export const Topbar: React.FC<TopbarProps> = ({
 
       {/* Right Section */}
       <div className="flex items-center gap-2 md:gap-3">
-        <Button variant="ghost" className="hidden gap-2 md:flex" onClick={() => navigate('/guidance')}>
-          <BookOpen className="h-4 w-4" />
-          Guidance
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="hidden gap-2 md:flex">
+              <BookOpen className="h-4 w-4" />
+              Guidance
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-72">
+            <div className="px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Help Center
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Open the stepper guides for the portal and admin system.
+              </p>
+            </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => navigate('/guidance')} className="cursor-pointer">
+              <div className="flex flex-col items-start">
+                <span className="font-medium">Lead Guidance</span>
+                <span className="text-xs text-muted-foreground">Editable sheet workflow for leads and follow-ups</span>
+              </div>
+            </DropdownMenuItem>
+            {(permission.isAdmin() || permission.isSuperAdmin()) ? (
+              <DropdownMenuItem onClick={() => navigate('/system-guide')} className="cursor-pointer">
+                <div className="flex flex-col items-start">
+                  <span className="font-medium">System Guide</span>
+                  <span className="text-xs text-muted-foreground">Detailed stepper for the full portal</span>
+                </div>
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
         {activeTimerSeconds > 0 ? (
           <Button variant="outline" className="gap-2 font-mono" onClick={() => navigate('/time-tracking')}>
             <Clock className="h-4 w-4 text-emerald-600" />
