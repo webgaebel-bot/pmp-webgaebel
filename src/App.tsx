@@ -29,6 +29,7 @@ import NotFound from "@/pages/NotFound";
 import ContactAdmin from "@/pages/ContactAdmin";
 import ForgotPassword from "@/pages/ForgotPassword";
 import FinanceDashboard from "@/pages/finance/FinanceDashboard";
+import FinanceTaxCommissions from "@/pages/finance/FinanceTaxCommissions";
 import Payments from "@/pages/finance/Payments";
 import Expenses from "@/pages/finance/Expenses";
 import Salary from "@/pages/finance/Salary";
@@ -155,6 +156,11 @@ const App = () => (
               <Route path="/finance" element={
                 <ProtectedRoute permission="finance.view">
                   <FinanceDashboard />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/records" element={
+                <ProtectedRoute permission="finance.view">
+                  <FinanceTaxCommissions />
                 </ProtectedRoute>
               } />
               <Route path="/finance/payments" element={

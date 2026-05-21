@@ -1,27 +1,13 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings } from 'lucide-react';
+import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings, LayoutGrid } from 'lucide-react';
 import { api } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
 import { ModuleEmptyState, ModuleErrorState, ModuleLoadingState } from '@/components/common/ModuleState';
 import { calculateFinanceSummary, formatMoney } from '@/lib/financeEngine';
-import { TaxModal } from './TaxModal';
-import { CommissionModal } from './CommissionModal';
-import { toast } from 'sonner';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Trash2 } from 'lucide-react';
-import Swal from 'sweetalert2';
 import {
   AreaChart,
   Area,
@@ -39,10 +25,7 @@ import {
 } from 'recharts';
 
 const FinanceDashboard: React.FC = () => {
-  const queryClient = useQueryClient();
   const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month');
-  const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
-  const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
   const navigate = useNavigate();
   const permission = usePermission();
 
@@ -65,48 +48,6 @@ const FinanceDashboard: React.FC = () => {
     queryKey: ['finance-settings'],
     queryFn: async () => api.get('/finance/settings'),
   });
-
-  const { data: taxesResponse } = useQuery({
-    queryKey: ['finance-taxes'],
-    queryFn: async () => api.get('/finance/taxes'),
-  });
-  const taxes = taxesResponse?.data || [];
-
-  const { data: commissionsResponse } = useQuery({
-    queryKey: ['finance-commissions'],
-    queryFn: async () => api.get('/finance/commissions'),
-  });
-  const commissions = commissionsResponse?.data || [];
-
-  const deleteTaxMutation = useMutation({
-    mutationFn: async (id: string) => api.delete(`/finance/taxes/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['finance-taxes'] });
-      queryClient.invalidateQueries({ queryKey: ['finance-stats'] });
-      toast.success('Tax deleted');
-    },
-  });
-
-  const deleteCommissionMutation = useMutation({
-    mutationFn: async (id: string) => api.delete(`/finance/commissions/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['finance-commissions'] });
-      queryClient.invalidateQueries({ queryKey: ['finance-stats'] });
-      toast.success('Commission deleted');
-    },
-  });
-
-  const handleDeleteTax = (id: string) => {
-    Swal.fire({ title: 'Delete Tax?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes', confirmButtonColor: '#ef4444' }).then((r) => {
-      if (r.isConfirmed) deleteTaxMutation.mutate(id);
-    });
-  };
-
-  const handleDeleteCommission = (id: string) => {
-    Swal.fire({ title: 'Delete Commission?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes', confirmButtonColor: '#ef4444' }).then((r) => {
-      if (r.isConfirmed) deleteCommissionMutation.mutate(id);
-    });
-  };
 
   const currentSettings = currentSettingsResponse?.data || {};
 
@@ -193,16 +134,10 @@ const FinanceDashboard: React.FC = () => {
       onClick: () => navigate('/finance/founders?create=1'),
     },
     {
-      title: 'Add Project Tax',
-      description: 'Add tax tracking for a specific project.',
-      icon: Receipt,
-      onClick: () => setIsTaxModalOpen(true),
-    },
-    {
-      title: 'Add Commission',
-      description: 'Log outsider resource or agent commission.',
-      icon: Users,
-      onClick: () => setIsCommissionModalOpen(true),
+      title: 'Taxes & Commissions',
+      description: 'Open the dedicated records page for taxes and commissions.',
+      icon: LayoutGrid,
+      onClick: () => navigate('/finance/records'),
     },
   ].filter((action) => {
     if (action.title === 'Add Payment') return permission.canAny(['finance.payments.manage', 'finance.settings.manage', 'finance.view.all']);
@@ -210,8 +145,7 @@ const FinanceDashboard: React.FC = () => {
     if (action.title === 'Add Client') return permission.canAny(['finance.clients.manage', 'finance.settings.manage', 'finance.view.all']);
     if (action.title === 'Salary Management') return permission.canAny(['finance.salaries.manage', 'finance.settings.manage', 'finance.view.all']);
     if (action.title === 'Add Founder') return permission.canAny(['finance.founders.manage', 'finance.settings.manage', 'finance.view.all']);
-    if (action.title === 'Add Project Tax') return permission.canAny(['finance.taxes.manage', 'finance.settings.manage', 'finance.view.all']);
-    if (action.title === 'Add Commission') return permission.canAny(['finance.commissions.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Taxes & Commissions') return permission.canAny(['finance.taxes.view', 'finance.commissions.view', 'finance.settings.manage', 'finance.view.all']);
     return true;
   });
 
@@ -239,7 +173,7 @@ const FinanceDashboard: React.FC = () => {
           </Button>
           <h1 className="text-2xl font-bold text-foreground">Finance Dashboard</h1>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {(['month', 'quarter', 'year'] as const).map((range) => (
             <button
               key={range}
@@ -249,10 +183,14 @@ const FinanceDashboard: React.FC = () => {
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
-            >
-              {range.charAt(0).toUpperCase() + range.slice(1)}
-            </button>
-          ))}
+              >
+                {range.charAt(0).toUpperCase() + range.slice(1)}
+              </button>
+            ))}
+            <Button variant="outline" onClick={() => navigate('/finance/records')}>
+              <LayoutGrid className="mr-2 h-4 w-4" />
+              Taxes & Commissions
+            </Button>
         </div>
       </div>
 
@@ -443,86 +381,20 @@ const FinanceDashboard: React.FC = () => {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Project Taxes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {taxes.length === 0 ? (
-              <ModuleEmptyState title="No taxes" description="Add project taxes using quick actions." />
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Project</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Rate/Amount</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {taxes.map((t: any) => (
-                      <TableRow key={t.id}>
-                        <TableCell className="font-medium">{t.projects?.name || 'Unknown'}</TableCell>
-                        <TableCell>{t.title}</TableCell>
-                        <TableCell>{t.rate ? `${t.rate}%` : formatMoney(t.amount, t.currency)}</TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteTax(t.id)}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Outsider Commissions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {commissions.length === 0 ? (
-              <ModuleEmptyState title="No commissions" description="Add commissions using quick actions." />
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Project</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Rate/Amount</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {commissions.map((c: any) => (
-                      <TableRow key={c.id}>
-                        <TableCell className="font-medium">{c.projects?.name || 'Unknown'}</TableCell>
-                        <TableCell>{c.title}</TableCell>
-                        <TableCell>{c.rate ? `${c.rate}%` : formatMoney(c.amount, c.currency)}</TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteCommission(c.id)}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <TaxModal open={isTaxModalOpen} onOpenChange={setIsTaxModalOpen} />
-      <CommissionModal open={isCommissionModalOpen} onOpenChange={setIsCommissionModalOpen} />
+      <Card className="border-dashed border-border/70">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle>Detailed Records</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Open the dedicated records page for project taxes and outsider commissions.
+            </p>
+          </div>
+          <Button variant="outline" onClick={() => navigate('/finance/records')}>
+            <LayoutGrid className="mr-2 h-4 w-4" />
+            Open Records
+          </Button>
+        </CardHeader>
+      </Card>
     </div>
   );
 };
