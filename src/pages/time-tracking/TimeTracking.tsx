@@ -22,6 +22,8 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuth } from '@/contexts/AuthContext';
+import { DynamicSelect, type DynamicOption } from '@/components/common/DynamicSelect';
+import { ModuleEmptyState, ModuleLoadingState } from '@/components/common/ModuleState';
 import Swal from 'sweetalert2';
 import {
   clearTimerSnapshot,
@@ -36,7 +38,12 @@ import {
 
 const SALES_SESSION_PREFIX = '[Sales Session]';
 const SALES_WORK_TYPES = ['Lead Extraction', 'Follow-up', 'Calling', 'Qualification', 'Research'];
-const SALES_SOURCES = ['LinkedIn', 'Instagram', 'Facebook', 'Website', 'Google Maps', 'Cold Email', 'WhatsApp', 'Other'];
+const DEFAULT_SOURCES: DynamicOption[] = [
+  { value: 'Facebook', label: 'Facebook' },
+  { value: 'Google', label: 'Google' },
+  { value: 'LinkedIn', label: 'LinkedIn' },
+  { value: 'Other', label: 'Other' },
+];
 const selectClassName = 'mt-2 h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20';
 
 const TimeTracking: React.FC = () => {
@@ -50,10 +57,20 @@ const TimeTracking: React.FC = () => {
   const [sessionStartedAt, setSessionStartedAt] = useState<string | null>(null);
   const [timerStartedAtMs, setTimerStartedAtMs] = useState<number | null>(null);
   const [elapsedBeforePause, setElapsedBeforePause] = useState(0);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedTimeLog, setSelectedTimeLog] = useState<any | null>(null);
   const roleName = String(user?.role?.name || '').toLowerCase();
-  const isSalesUser = roleName.includes('sales') || roleName.includes('selles') || permission.can('leads.view');
-  const canViewTeamTime = permission.isAdmin() || permission.canAny(['time.manage', 'time.approve']) || roleName.includes('team lead') || roleName.includes('lead') || roleName.includes('manager');
+  const isSalesUser =
+    permission.canAny(['sales.view', 'sales.dashboard.view']) ||
+    roleName.includes('sales') ||
+    roleName.includes('selles') ||
+    permission.can('leads.view');
+  const canViewTeamTime =
+    permission.isAdmin() ||
+    permission.canAny(['time.manage', 'time.approve']) ||
+    roleName.includes('team lead') ||
+    roleName.includes('lead') ||
+    roleName.includes('manager');
   const [trackingMode, setTrackingMode] = useState<TrackingMode>(isSalesUser ? 'sales' : 'project');
   const [selectedUserId, setSelectedUserId] = useState('all');
   const [formData, setFormData] = useState({
@@ -62,6 +79,7 @@ const TimeTracking: React.FC = () => {
     lead_id: '',
     work_type: 'Lead Extraction',
     source: 'LinkedIn',
+    source_other: '',
     manual_leads_count: '',
     date: new Date().toISOString().split('T')[0],
     description: '',
@@ -74,6 +92,12 @@ const TimeTracking: React.FC = () => {
     queryFn: async () => api.get('/time-logs'),
   });
   const timeLogs = timeLogsResponse?.data || [];
+  const visibleTimeLogs = useMemo(() => {
+    if (permission.isAdmin() || canViewTeamTime) {
+      return timeLogs;
+    }
+    return timeLogs.filter((log: any) => String(log.user_id || '') === String(user?.id || ''));
+  }, [canViewTeamTime, permission, timeLogs, user?.id]);
 
   const { data: projectsResponse } = useQuery({
     queryKey: ['projects-minimal'],
@@ -135,6 +159,7 @@ const TimeTracking: React.FC = () => {
       setSessionStartedAt(snapshot.sessionStartedAt || null);
       setTimerStartedAtMs(snapshot.timerStartedAtMs || null);
       setElapsedBeforePause(Number(snapshot.elapsedBeforePause || 0));
+      setActiveSessionId(snapshot.activeSessionId || null);
     } catch {
       clearTimerSnapshot();
     }
@@ -153,17 +178,18 @@ const TimeTracking: React.FC = () => {
       sessionStartedAt,
       timerStartedAtMs,
       elapsedBeforePause,
+      activeSessionId,
       trackingMode,
       formData,
     };
     writeTimerSnapshot(snapshot);
-  }, [currentTime, elapsedBeforePause, formData, isPaused, isTracking, sessionStartedAt, timerStartedAtMs, trackingMode]);
+  }, [currentTime, elapsedBeforePause, formData, isPaused, isTracking, sessionStartedAt, timerStartedAtMs, trackingMode, activeSessionId]);
 
   useEffect(() => {
-    if ((roleName.includes('sales') || roleName.includes('selles')) && trackingMode === 'project' && !isTracking) {
+    if (isSalesUser && trackingMode === 'project' && !isTracking) {
       setTrackingMode('sales');
     }
-  }, [isTracking, roleName, trackingMode]);
+  }, [isSalesUser, isTracking, trackingMode]);
 
   const createMutation = useMutation({
     mutationFn: async (payload: any) => api.createTimeLog(payload),
@@ -217,7 +243,7 @@ const TimeTracking: React.FC = () => {
     const parts = [
       SALES_SESSION_PREFIX,
       `Work Type: ${formData.work_type}`,
-      `Source: ${formData.source}`,
+      `Source: ${formData.source === 'Other' ? formData.source_other || formData.source : formData.source}`,
       `Leads Created: ${leadsCount}`,
     ];
 
@@ -263,14 +289,14 @@ const TimeTracking: React.FC = () => {
   };
 
   const modeLogs = useMemo(() => {
-    return (timeLogs || []).filter((log: any) => {
+    return (visibleTimeLogs || []).filter((log: any) => {
       const salesMeta = parseSalesDescription(log.description);
       const isSalesLog = salesMeta.isSalesSession || Boolean(log.lead_id || log.lead_name || log.lead_company);
       const matchesMode = trackingMode === 'sales' ? isSalesLog : !isSalesLog;
       const matchesUser = selectedUserId === 'all' || String(log.user_id || '') === selectedUserId;
       return matchesMode && matchesUser;
     });
-  }, [timeLogs, trackingMode, selectedUserId]);
+  }, [selectedUserId, trackingMode, visibleTimeLogs]);
 
   const filteredLogs = useMemo(() => {
     const term = search.toLowerCase();
@@ -287,11 +313,11 @@ const TimeTracking: React.FC = () => {
 
   const visibleUsers = useMemo(() => {
     const usersById = new Map<string, string>();
-    (timeLogs || []).forEach((log: any) => {
+    (visibleTimeLogs || []).forEach((log: any) => {
       if (log.user_id && log.user_name) usersById.set(String(log.user_id), log.user_name);
     });
     return Array.from(usersById.entries()).map(([id, name]) => ({ id, name }));
-  }, [timeLogs]);
+  }, [visibleTimeLogs]);
 
   const totalHours = filteredLogs.reduce((acc: number, log: any) => acc + Number(log.hours || 0), 0);
   const todaysHours = timeStats?.todays_hours || 0;
@@ -316,6 +342,7 @@ const TimeTracking: React.FC = () => {
       ...current,
       task_id: '',
       lead_id: '',
+      source_other: '',
       manual_leads_count: '',
       description: '',
       manual_hours: '',
@@ -327,6 +354,7 @@ const TimeTracking: React.FC = () => {
     setSessionStartedAt(null);
     setTimerStartedAtMs(null);
     setElapsedBeforePause(0);
+    setActiveSessionId(null);
     clearTimerSnapshot();
   };
 
@@ -338,12 +366,14 @@ const TimeTracking: React.FC = () => {
     setCurrentTime(0);
     setTimerStartedAtMs(null);
     setElapsedBeforePause(0);
+    setActiveSessionId(null);
     clearTimerSnapshot();
     setFormData((current) => ({
       ...current,
       project_id: '',
       task_id: '',
       lead_id: '',
+      source_other: '',
       manual_leads_count: '',
       description: '',
       manual_hours: '',
@@ -351,18 +381,30 @@ const TimeTracking: React.FC = () => {
     }));
   };
 
-  const handleStartTracking = () => {
+  const handleStartTracking = async () => {
     if (!canCreateTime) return;
     if (trackingMode === 'project' && !formData.project_id) {
       toast.error('Please select a project before starting the timer');
       return;
     }
-    setCurrentTime(0);
-    setSessionStartedAt(new Date().toISOString());
-    setTimerStartedAtMs(Date.now());
-    setElapsedBeforePause(0);
-    setIsPaused(false);
-    setIsTracking(true);
+
+    try {
+      const response = await api.post('/time-logs/session/start', {
+        project_id: trackingMode === 'project' ? formData.project_id || null : null,
+        task_id: trackingMode === 'project' ? formData.task_id || null : null,
+        source_platform: trackingMode === 'sales' ? (formData.source === 'Other' ? formData.source_other || 'Other' : formData.source) : undefined,
+      });
+      setActiveSessionId(response.data?.id || null);
+
+      setCurrentTime(0);
+      setSessionStartedAt(new Date().toISOString());
+      setTimerStartedAtMs(Date.now());
+      setElapsedBeforePause(0);
+      setIsPaused(false);
+      setIsTracking(true);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to start timer session on the server');
+    }
   };
 
   const handlePauseTracking = () => {
@@ -380,7 +422,7 @@ const TimeTracking: React.FC = () => {
     setIsPaused(false);
   };
 
-  const handleStopTracking = () => {
+  const handleStopTracking = async () => {
     if (!canCreateTime) return;
     const finalCurrentTime = isPaused ? currentTime : getRunningElapsed(timerStartedAtMs, elapsedBeforePause);
     if (finalCurrentTime <= 0) {
@@ -394,11 +436,29 @@ const TimeTracking: React.FC = () => {
       ? countLeadsCreatedInSession(sessionStartedAt, stoppedAt)
       : 0;
 
+    if (activeSessionId) {
+      try {
+        await api.post('/time-logs/session/stop', {
+          session_id: activeSessionId,
+          task_id: trackingMode === 'project' ? formData.task_id || null : null,
+          project_id: trackingMode === 'project' ? formData.project_id || null : null,
+          notes: trackingMode === 'sales'
+            ? buildSalesDescription(leadsCreated, sessionStartedAt, stoppedAt)
+            : formData.description,
+        });
+      } catch (err: any) {
+        // Warning if session fails to stop, but continue saving time log
+      }
+    }
+
     createMutation.mutate({
       project_id: trackingMode === 'project' ? formData.project_id || null : null,
       task_id: trackingMode === 'project' ? formData.task_id || null : null,
       date: formData.date,
       hours: (finalCurrentTime / 3600).toFixed(2),
+      source_platform: trackingMode === 'sales' ? (formData.source === 'Other' ? formData.source_other || 'Other' : formData.source) : undefined,
+      work_type: trackingMode === 'sales' ? formData.work_type : undefined,
+      manual_leads_count: trackingMode === 'sales' ? leadsCreated : 0,
       description: trackingMode === 'sales'
         ? buildSalesDescription(leadsCreated, sessionStartedAt, stoppedAt)
         : formData.description,
@@ -424,6 +484,9 @@ const TimeTracking: React.FC = () => {
       task_id: trackingMode === 'project' ? formData.task_id || null : null,
       date: formData.date,
       hours: manualHours.toFixed(2),
+      source_platform: trackingMode === 'sales' ? (formData.source === 'Other' ? formData.source_other || 'Other' : formData.source) : undefined,
+      work_type: trackingMode === 'sales' ? formData.work_type : undefined,
+      manual_leads_count: trackingMode === 'sales' ? manualLeadsCount : 0,
       description: trackingMode === 'sales'
         ? buildSalesDescription(manualLeadsCount)
         : formData.description,
@@ -696,18 +759,26 @@ const TimeTracking: React.FC = () => {
                     </select>
                   </div>
                   <div>
-                    <Label htmlFor="source">Source / Platform</Label>
-                    <select
-                      id="source"
+                    <DynamicSelect
+                      label="Source / Platform"
                       value={formData.source}
-                      onChange={(e) => setFormData({ ...formData, source: e.target.value })}
-                      className={selectClassName}
-                    >
-                      {SALES_SOURCES.map((item) => (
-                        <option key={item} value={item}>{item}</option>
-                      ))}
-                    </select>
+                      onValueChange={(value) => setFormData({ ...formData, source: value })}
+                      options={DEFAULT_SOURCES}
+                      helperText="Use a predefined source or choose Other to enter a custom channel."
+                    />
                   </div>
+                  {formData.source === 'Other' ? (
+                    <div>
+                      <Label htmlFor="source_other">Custom Source / Platform</Label>
+                      <Input
+                        id="source_other"
+                        className="mt-2"
+                        value={formData.source_other}
+                        onChange={(e) => setFormData({ ...formData, source_other: e.target.value })}
+                        placeholder="Enter source/platform"
+                      />
+                    </div>
+                  ) : null}
                   <div>
                     <Label htmlFor="log-date">Date</Label>
                     <Input id="log-date" type="date" className="mt-2" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} />
@@ -819,6 +890,17 @@ const TimeTracking: React.FC = () => {
             </div>
           </CardHeader>
           <CardContent>
+            {isLoading ? (
+              <ModuleLoadingState
+                title="Loading time logs"
+                description="Syncing timer sessions and manual entries."
+              />
+            ) : filteredLogs.length === 0 ? (
+              <ModuleEmptyState
+                title="No time logs found"
+                description="Try adjusting the filters or start a new timer session."
+              />
+            ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -844,16 +926,7 @@ const TimeTracking: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {isLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={tableColumnCount} className="py-10 text-center">Loading time logs...</TableCell>
-                    </TableRow>
-                  ) : filteredLogs.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={tableColumnCount} className="py-10 text-center text-muted-foreground">No time logs found.</TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredLogs.map((log: any) => (
+                  {filteredLogs.map((log: any) => (
                       <TableRow key={log.id}>
                         <TableCell className="font-medium">{log.user_name}</TableCell>
                         {trackingMode === 'sales' ? (
@@ -879,9 +952,16 @@ const TimeTracking: React.FC = () => {
                         <TableCell>{log.date ? format(new Date(log.date), 'PPP') : '-'}</TableCell>
                         <TableCell>{formatHoursAsHms(log.hours)}</TableCell>
                         <TableCell>
-                          <Badge variant={log.status === 'approved' ? 'default' : log.status === 'rejected' ? 'destructive' : 'secondary'}>
-                            {log.status}
-                          </Badge>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge variant={log.status === 'approved' ? 'default' : log.status === 'rejected' ? 'destructive' : 'secondary'}>
+                              {log.status}
+                            </Badge>
+                            {log.is_manual ? (
+                              <Badge variant="outline" className="border-amber-500/40 text-amber-700">
+                                Manual
+                              </Badge>
+                            ) : null}
+                          </div>
                         </TableCell>
                         {(canViewTeamTime || canDeleteTime || canManageTime) ? (
                           <TableCell>
@@ -900,11 +980,11 @@ const TimeTracking: React.FC = () => {
                           </TableCell>
                         ) : null}
                       </TableRow>
-                    ))
-                  )}
+                  ))}
                 </TableBody>
               </Table>
             </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -933,9 +1013,16 @@ const TimeTracking: React.FC = () => {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Status</p>
-                <Badge variant={selectedTimeLog.status === 'approved' ? 'default' : selectedTimeLog.status === 'rejected' ? 'destructive' : 'secondary'}>
-                  {selectedTimeLog.status}
-                </Badge>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant={selectedTimeLog.status === 'approved' ? 'default' : selectedTimeLog.status === 'rejected' ? 'destructive' : 'secondary'}>
+                    {selectedTimeLog.status}
+                  </Badge>
+                  {selectedTimeLog.is_manual ? (
+                    <Badge variant="outline" className="border-amber-500/40 text-amber-700">
+                      Manual Entry
+                    </Badge>
+                  ) : null}
+                </div>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Project</p>

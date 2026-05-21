@@ -91,7 +91,7 @@ const Calendar: React.FC<CalendarProps> = ({ onDateSelect, onCreateEvent }) => {
   const canViewOwnCalendar = can('calendar.view');
   const canViewAllCalendars = can('calendar.view.all');
   const canViewProjectCalendar = can('calendar.project.view');
-    const canCreateProject = can('projects.create');
+  const canCreateProject = can('projects.create');
   const hasCalendarAccess = canViewOwnCalendar || canViewAllCalendars || canViewProjectCalendar;
 
   useEffect(() => {

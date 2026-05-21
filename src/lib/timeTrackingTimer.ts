@@ -23,6 +23,7 @@ export type TimerSnapshot = {
   sessionStartedAt: string | null;
   timerStartedAtMs: number | null;
   elapsedBeforePause: number;
+  activeSessionId: string | null;
   trackingMode: TrackingMode;
   formData: TimeTrackingFormData;
 };

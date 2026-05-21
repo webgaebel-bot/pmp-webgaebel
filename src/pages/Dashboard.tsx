@@ -19,6 +19,9 @@ import {
   PieChart,
   Pie,
   Cell,
+  BarChart,
+  Bar,
+  Legend,
 } from 'recharts';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
@@ -33,6 +36,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermission';
 import api, { IMAGE_BASE_URL } from '@/services/api';
 import type { DashboardStats, ProjectProgress, TeamPerformance, TaskSummary } from '@/types';
+import { formatMoney } from '@/lib/financeEngine';
+import { resolveImageUrl } from '@/lib/media';
+import LeadsAnalyticsCard from '@/components/dashboard/LeadsAnalyticsCard';
 
 const COLORS = ['hsl(142, 71%, 45%)', 'hsl(199, 89%, 48%)', 'hsl(38, 92%, 50%)', 'hsl(0, 84%, 60%)'];
 
@@ -46,6 +52,21 @@ const Dashboard: React.FC = () => {
   const [taskSummary, setTaskSummary] = useState<TaskSummary[]>([]);
   const [taskActivityData, setTaskActivityData] = useState<any[]>([]);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [leadStats, setLeadStats] = useState<any | null>(null);
+  const [recentLeads, setRecentLeads] = useState<any[]>([]);
+  const [financeStats, setFinanceStats] = useState<any | null>(null);
+  const statsUnavailable = permission.canViewDashboardStats() && !stats;
+  const isSalesDashboard = permission.canViewSalesDashboard();
+  const dashboardStats = stats ?? {
+    total_projects: 0,
+    active_projects: 0,
+    total_tasks: 0,
+    completed_tasks: 0,
+    pending_tasks: 0,
+    overdue_tasks: 0,
+    total_users: 0,
+    active_users: 0,
+  };
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -95,10 +116,34 @@ const Dashboard: React.FC = () => {
           promises.push(Promise.resolve([]));
         }
 
-        const [dashboardRes, progressRes, performanceRes, distributionRes, activityRes, logsRes] = await Promise.all(promises);
+        if (permission.can('dashboard.leads.view') || permission.canViewLeads()) {
+          promises.push(api.getLeadStats());
+          promises.push(api.getLeads({ page: 1, pageSize: 4 }));
+        } else {
+          promises.push(Promise.resolve({ data: null }));
+          promises.push(Promise.resolve({ data: [] }));
+        }
+
+        if (permission.can('dashboard.finance.view') || permission.can('finance.view')) {
+          promises.push(api.get('/finance/stats?range=month'));
+        } else {
+          promises.push(Promise.resolve({ data: null }));
+        }
+
+        const [
+          dashboardRes,
+          progressRes,
+          performanceRes,
+          distributionRes,
+          activityRes,
+          logsRes,
+          leadStatsRes,
+          recentLeadsRes,
+          financeStatsRes,
+        ] = await Promise.allSettled(promises);
 
         // Map dashboard stats
-        const dashboardData = (dashboardRes as any).data;
+        const dashboardData = dashboardRes.status === 'fulfilled' ? (dashboardRes.value as any).data : null;
         if (dashboardData) {
           const mappedStats: DashboardStats = {
             total_projects: dashboardData.projects?.total || 0,
@@ -116,7 +161,7 @@ const Dashboard: React.FC = () => {
         }
 
         // Map project progress
-        const progressData = (progressRes as any).data || [];
+        const progressData = progressRes.status === 'fulfilled' ? (progressRes.value as any).data || [] : [];
         const mappedProgress = progressData.map((p: any) => ({
           project_id: String(p.id),
           project_name: p.name,
@@ -128,7 +173,7 @@ const Dashboard: React.FC = () => {
         setProjectProgress(mappedProgress);
 
         // Map team performance
-        const performanceData = (performanceRes as any).data || [];
+        const performanceData = performanceRes.status === 'fulfilled' ? (performanceRes.value as any).data || [] : [];
         const mappedPerformance = performanceData.map((t: any) => ({
           user_id: String(t.id),
           user_name: t.name,
@@ -139,7 +184,7 @@ const Dashboard: React.FC = () => {
         setTeamPerformance(mappedPerformance);
 
         // Map task distribution
-        const distributionData = (distributionRes as any).data || [];
+        const distributionData = distributionRes.status === 'fulfilled' ? (distributionRes.value as any).data || [] : [];
         const mappedDistribution = distributionData.map((d: any) => ({
           status: d.status || 'unknown',
           count: parseInt(d.count || '0'),
@@ -155,7 +200,7 @@ const Dashboard: React.FC = () => {
         setTaskSummary(finalDistribution);
 
         // Map task activity
-        const activityData = (activityRes as any).data || [];
+        const activityData = activityRes.status === 'fulfilled' ? (activityRes.value as any).data || [] : [];
         const mappedActivity = activityData.map((a: any) => ({
           name: a.month || 'Unknown',
           created: parseInt(a.created || '0'),
@@ -164,7 +209,9 @@ const Dashboard: React.FC = () => {
         setTaskActivityData(mappedActivity);
 
         // Map activity logs
-        const logsData = Array.isArray(logsRes) ? logsRes : (logsRes as any).data || [];
+        const logsData = logsRes.status === 'fulfilled'
+          ? (Array.isArray(logsRes.value) ? logsRes.value : (logsRes.value as any).data || [])
+          : [];
         const mappedLogs = logsData.map((log: any) => ({
           id: log.id,
           action: log.action || 'Unknown',
@@ -176,6 +223,14 @@ const Dashboard: React.FC = () => {
           },
         }));
         setActivityLogs(mappedLogs);
+
+        setLeadStats(leadStatsRes.status === 'fulfilled' ? (leadStatsRes.value as any)?.data || null : null);
+        setRecentLeads(
+          (recentLeadsRes.status === 'fulfilled'
+            ? ((recentLeadsRes.value as any)?.data?.data || (recentLeadsRes.value as any)?.data || [])
+            : []) as any[]
+        );
+        setFinanceStats(financeStatsRes.status === 'fulfilled' ? (financeStatsRes.value as any)?.data?.data || null : null);
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
       } finally {
@@ -205,16 +260,50 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  // Check if stats data is available
-  if (permission.canViewDashboardStats() && !stats) {
-    return (
-      <EmptyState
-        title="No Data Available"
-        description="Unable to load dashboard statistics at this time."
-        action={{ label: 'Refresh', onClick: () => window.location.reload() }}
-      />
-    );
-  }
+  const quickLinks = [
+    {
+      title: 'Projects',
+      path: '/projects',
+      description: 'Open the project workspace and status board.',
+      icon: FolderKanban,
+      visible: permission.canViewProjects(),
+    },
+    {
+      title: 'Tasks',
+      path: '/tasks',
+      description: 'Review current tasks and deadlines.',
+      icon: CheckSquare,
+      visible: permission.canViewTasks(),
+    },
+    {
+      title: 'Calendar',
+      path: '/calendar',
+      description: 'View the project calendar and schedule.',
+      icon: TrendingUp,
+      visible: permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']),
+    },
+    {
+      title: 'Finance',
+      path: '/finance',
+      description: 'Open the finance dashboard for revenue data.',
+      icon: Users,
+      visible: permission.can('finance.view'),
+    },
+    {
+      title: 'Leads',
+      path: '/leads',
+      description: 'Manage leads, follow-ups, and sales pipeline updates.',
+      icon: Users,
+      visible: permission.canViewLeads(),
+    },
+    {
+      title: 'Time Tracking',
+      path: '/time-tracking',
+      description: 'Start timer sessions and track lead activity.',
+      icon: TrendingUp,
+      visible: permission.can('time.view'),
+    },
+  ].filter((link) => link.visible);
 
   return (
     <div className="space-y-6">
@@ -223,48 +312,332 @@ const Dashboard: React.FC = () => {
         description="Here's what's happening with your projects today."
       />
 
-      {/* Stats Cards */}
-      {stats ? (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {(permission.canViewDashboardStats() || permission.canViewTotalProjects()) && (
-          <StatsCard
-            title="Total Projects"
-            value={stats.total_projects}
-            icon={FolderKanban}
-            variant="accent"
-            description={`${stats.active_projects} active`}
-          />
+      {statsUnavailable ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          Dashboard statistics could not be loaded right now, but the rest of the workspace is still available.
+        </div>
+      ) : null}
+
+      {isSalesDashboard ? (
+        <div className="rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-background to-cyan-50 p-6 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-background dark:to-cyan-950/20">
+          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
+                Sales workspace
+              </p>
+              <h2 className="mt-2 text-2xl font-bold text-foreground">Sales dashboard snapshot</h2>
+              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                Lead owners can track their leads, follow-ups, and conversion flow here without project noise.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-border/60 bg-card/80 px-4 py-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Total leads</p>
+                <p className="mt-1 text-2xl font-bold">{leadStats?.total || 0}</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-card/80 px-4 py-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">New this month</p>
+                <p className="mt-1 text-2xl font-bold">{leadStats?.new_this_month || leadStats?.new_this_week || 0}</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-card/80 px-4 py-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Conversion</p>
+                <p className="mt-1 text-2xl font-bold">{leadStats?.conversion_rate || 0}%</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {quickLinks.length > 0 ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {quickLinks.map((link) => {
+            const Icon = link.icon;
+            return (
+              <Link
+                key={link.title}
+                to={link.path}
+                className="rounded-3xl border border-border bg-card p-5 transition hover:border-primary hover:shadow-sm"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">{link.title}</p>
+                    <p className="mt-2 text-sm text-foreground">{link.description}</p>
+                  </div>
+                  <div className="rounded-2xl bg-primary/10 p-3 text-primary">
+                    <Icon className="h-5 w-5" />
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {(permission.can('dashboard.projects.view') || permission.canViewDashboardStats()) && (
+          <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Project Snapshot</p>
+                <h3 className="text-xl font-semibold">Projects overview</h3>
+              </div>
+              <div className="rounded-2xl bg-primary/10 p-3 text-primary">
+                <FolderKanban className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Total projects</p>
+                <p className="mt-2 text-2xl font-bold">{dashboardStats.total_projects}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Active projects</p>
+                <p className="mt-2 text-2xl font-bold">{dashboardStats.active_projects}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Total tasks</p>
+                <p className="mt-2 text-2xl font-bold">{dashboardStats.total_tasks}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Overdue tasks</p>
+                <p className="mt-2 text-2xl font-bold">{dashboardStats.overdue_tasks}</p>
+              </div>
+            </div>
+            {projectProgress.length > 0 ? (
+              <div className="mt-5 space-y-3">
+                {projectProgress.slice(0, 3).map((project) => (
+                  <div key={project.project_id} className="rounded-2xl border border-border/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{project.project_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {project.tasks_completed}/{project.tasks_total} tasks
+                        </p>
+                      </div>
+                      <span className="text-sm font-semibold text-primary">{project.progress}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-2xl border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
+                Project snapshot will appear here once project data loads.
+              </div>
+            )}
+          </div>
         )}
-        {(permission.canViewDashboardStats() || permission.canViewTotalTasks()) && (
-          <StatsCard
-            title="Total Tasks"
-            value={stats.total_tasks}
-            icon={CheckSquare}
-            variant="info"
-            trend={{ value: 12, isPositive: true }}
-            description="this month"
-          />
+
+        {(permission.can('dashboard.leads.view') || permission.canViewLeads()) && (
+          <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Lead Snapshot</p>
+                <h3 className="text-xl font-semibold">Assigned leads</h3>
+              </div>
+              <div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-600">
+                <Users className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Total leads</p>
+                <p className="mt-2 text-2xl font-bold">{leadStats?.total || 0}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">New this month</p>
+                <p className="mt-2 text-2xl font-bold">{leadStats?.new_this_month || leadStats?.new_this_week || 0}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Conversion rate</p>
+                <p className="mt-2 text-2xl font-bold">{leadStats?.conversion_rate || 0}%</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Average score</p>
+                <p className="mt-2 text-2xl font-bold">{Math.round(leadStats?.avg_score || 0)}</p>
+              </div>
+            </div>
+            {recentLeads.length > 0 ? (
+              <div className="mt-5 space-y-3">
+                {recentLeads.map((lead: any) => (
+                  <div key={lead.id} className="rounded-2xl border border-border/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{lead.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {lead.company || lead.created_by_name || lead.assigned_to_name || 'Lead record'}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-600">
+                        {String(lead.pipeline_stage || lead.status || 'new').replace('_', ' ')}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-2xl border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
+                Recent assigned leads will appear here once lead data loads.
+              </div>
+            )}
+          </div>
         )}
-        {(permission.canViewDashboardStats() || permission.canViewOverdueTasks()) && (
-          <StatsCard
-            title="Overdue Tasks"
-            value={stats.overdue_tasks}
-            icon={AlertCircle}
-            variant="warning"
-            description="needs attention"
-          />
-        )}
-        {(permission.canViewDashboardStats() || (permission.canViewTeamMembers() && permission.canViewOnlineUsers())) && (
-          <StatsCard
-            title="Team Members"
-            value={stats.total_users}
-            icon={Users}
-            variant="success"
-            description={`${stats.active_users} online`}
-          />
+
+        {(permission.can('dashboard.finance.view') || permission.can('finance.view')) && (
+          <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Finance Snapshot</p>
+                <h3 className="text-xl font-semibold">Revenue and liability</h3>
+              </div>
+              <div className="rounded-2xl bg-blue-500/10 p-3 text-blue-600">
+                <TrendingUp className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Revenue</p>
+                <p className="mt-2 text-xl font-bold">{formatMoney(financeStats?.revenue || 0, 'USD')}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Expenses</p>
+                <p className="mt-2 text-xl font-bold">{formatMoney(financeStats?.expenses || 0, 'USD')}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Net profit</p>
+                <p className="mt-2 text-xl font-bold">{formatMoney(financeStats?.netProfit || 0, 'USD')}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Outstanding</p>
+                <p className="mt-2 text-xl font-bold">{formatMoney(financeStats?.outstanding || 0, 'USD')}</p>
+              </div>
+            </div>
+            {Array.isArray(financeStats?.distribution) && financeStats.distribution.length > 0 ? (
+              <div className="mt-5 space-y-3">
+                {financeStats.distribution.slice(0, 3).map((item: any) => (
+                  <div key={item.label} className="rounded-2xl border border-border/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">{item.label}</p>
+                        <p className="text-xs text-muted-foreground">{item.percentage}% allocation</p>
+                      </div>
+                      <p className="text-sm font-semibold">{formatMoney(item.amount || 0, 'USD')}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-2xl border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
+                Finance breakdown will appear here once finance data loads.
+              </div>
+            )}
+          </div>
         )}
       </div>
-      ) : null}
+
+      {/* Premium Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {(permission.canViewDashboardStats() || permission.canViewTotalProjects()) && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <FolderKanban className="h-24 w-24 text-primary" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Projects</span>
+                <div className="rounded-full bg-primary/10 p-2.5 text-primary">
+                  <FolderKanban className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_projects}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-emerald-600 bg-emerald-500/10 px-2 py-1 rounded-full">
+                    <TrendingUp className="mr-1 h-3 w-3" /> {dashboardStats.active_projects} active
+                  </span>
+                  <span className="text-xs text-muted-foreground">currently</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(permission.canViewDashboardStats() || permission.canViewTotalTasks()) && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <CheckSquare className="h-24 w-24 text-blue-500" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Tasks</span>
+                <div className="rounded-full bg-blue-500/10 p-2.5 text-blue-500">
+                  <CheckSquare className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_tasks}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-blue-600 bg-blue-500/10 px-2 py-1 rounded-full">
+                    +12%
+                  </span>
+                  <span className="text-xs text-muted-foreground">this month</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(permission.canViewDashboardStats() || permission.canViewOverdueTasks()) && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <AlertCircle className="h-24 w-24 text-rose-500" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Overdue Tasks</span>
+                <div className="rounded-full bg-rose-500/10 p-2.5 text-rose-500">
+                  <AlertCircle className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.overdue_tasks}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-rose-600 bg-rose-500/10 px-2 py-1 rounded-full">
+                    Needs Attention
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(permission.canViewDashboardStats() || (permission.canViewTeamMembers() && permission.canViewOnlineUsers())) && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <Users className="h-24 w-24 text-amber-500" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Team Members</span>
+                <div className="rounded-full bg-amber-500/10 p-2.5 text-amber-500">
+                  <Users className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_users}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-amber-600 bg-amber-500/10 px-2 py-1 rounded-full">
+                    {stats.active_users} online
+                  </span>
+                  <span className="text-xs text-muted-foreground">across workspaces</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Leads Analytics Card */}
+      {permission.canViewLeads() && <LeadsAnalyticsCard />}
 
       {/* Calendar Section */}
       {permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']) ? (
@@ -274,104 +647,165 @@ const Dashboard: React.FC = () => {
       ) : null}
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Task Activity Chart */}
-        {taskActivityData.length > 0 && (
-          <div className="lg:col-span-2 bg-card rounded-lg border border-border p-6 shadow-card">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg font-semibold">Task Activity</h3>
-                <p className="text-sm text-muted-foreground">Tasks completed vs created</p>
-              </div>
-              {permission.canViewReports() && (
-                <Link to="/reports">
-                  <Button variant="outline" size="sm">
-                    View Details
-                  </Button>
-                </Link>
-              )}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <div className="xl:col-span-2 rounded-3xl border border-border bg-card p-6 shadow-sm">
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold">Task Activity</h3>
+              <p className="text-sm text-muted-foreground">Tasks completed vs created over time</p>
             </div>
-            <div className="h-64">
+            {permission.canViewReports() && (
+              <Link to="/reports">
+                <Button variant="outline" size="sm">
+                  View Details
+                </Button>
+              </Link>
+            )}
+          </div>
+          {taskActivityData.length > 0 ? (
+            <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={taskActivityData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <defs>
+                    <linearGradient id="taskCreatedFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(199, 89%, 48%)" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="hsl(199, 89%, 48%)" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="taskCompletedFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(162, 63%, 41%)" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="hsl(162, 63%, 41%)" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
                   <Tooltip
                     contentStyle={{
                       background: 'hsl(var(--card))',
                       border: '1px solid hsl(var(--border))',
-                      borderRadius: '8px',
+                      borderRadius: '12px',
                     }}
                   />
+                  <Legend />
                   <Area
                     type="monotone"
                     dataKey="completed"
-                    stackId="1"
                     stroke="hsl(162, 63%, 41%)"
-                    fill="hsl(162, 63%, 41%, 0.2)"
+                    fill="url(#taskCompletedFill)"
                     name="Completed"
+                    strokeWidth={2}
                   />
                   <Area
                     type="monotone"
                     dataKey="created"
-                    stackId="2"
                     stroke="hsl(199, 89%, 48%)"
-                    fill="hsl(199, 89%, 48%, 0.2)"
+                    fill="url(#taskCreatedFill)"
                     name="Created"
+                    strokeWidth={2}
                   />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="flex h-72 items-center justify-center rounded-2xl border border-dashed border-border/70 bg-muted/20 text-sm text-muted-foreground">
+              Task activity graph will appear once work logs are available.
+            </div>
+          )}
+        </div>
 
-        {/* Task Distribution Pie */}
-        {taskSummary.length > 0 && (
-          <div className="bg-card rounded-lg border border-border p-6 shadow-card">
-            <h3 className="text-lg font-semibold mb-4">Task Distribution</h3>
-            <div className="h-52">
+        <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+          <h3 className="text-lg font-semibold">Task Distribution</h3>
+          <p className="mb-4 text-sm text-muted-foreground">Pipeline load across statuses</p>
+          {taskSummary.length > 0 ? (
+            <>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={taskSummary}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={54}
+                      outerRadius={86}
+                      paddingAngle={4}
+                      dataKey="count"
+                    >
+                      {taskSummary.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        background: 'hsl(var(--card))',
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '12px',
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-4 space-y-2">
+                {taskSummary.map((item, index) => (
+                  <div key={`task-${item.status}-${index}`} className="flex items-center gap-2 rounded-2xl bg-muted/30 px-3 py-2">
+                    <span
+                      className="h-3 w-3 rounded-full"
+                      style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                    />
+                    <span className="text-sm capitalize text-muted-foreground">
+                      {item.status.replace('_', ' ')}
+                    </span>
+                    <span className="ml-auto text-sm font-semibold">{item.count}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="flex h-72 items-center justify-center rounded-2xl border border-dashed border-border/70 bg-muted/20 text-sm text-muted-foreground">
+              Task distribution will show up after tasks are created.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-3xl border border-border bg-card p-6 shadow-sm xl:col-span-3">
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold">Team Throughput</h3>
+              <p className="text-sm text-muted-foreground">Completed vs assigned tasks by team member</p>
+            </div>
+            {permission.canViewReports() && (
+              <Link to="/reports">
+                <Button variant="outline" size="sm">
+                  View Report
+                </Button>
+              </Link>
+            )}
+          </div>
+          {teamPerformance.length > 0 ? (
+            <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={taskSummary}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="count"
-                  >
-                    {taskSummary.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
+                <BarChart data={teamPerformance.slice(0, 6)} barSize={18}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="user_name" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} interval={0} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
                   <Tooltip
                     contentStyle={{
                       background: 'hsl(var(--card))',
                       border: '1px solid hsl(var(--border))',
-                      borderRadius: '8px',
+                      borderRadius: '12px',
                     }}
                   />
-                </PieChart>
+                  <Legend />
+                  <Bar dataKey="tasks_completed" name="Completed" fill="hsl(162, 63%, 41%)" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="tasks_assigned" name="Assigned" fill="hsl(199, 89%, 48%)" radius={[8, 8, 0, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-4">
-              {taskSummary.map((item, index) => (
-                <div key={`task-${item.status}-${index}`} className="flex items-center gap-2">
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                  />
-                  <span className="text-sm capitalize text-muted-foreground">
-                    {item.status.replace('_', ' ')}
-                  </span>
-                  <span className="text-sm font-medium ml-auto">{item.count}</span>
-                </div>
-              ))}
+          ) : (
+            <div className="flex h-72 items-center justify-center rounded-2xl border border-dashed border-border/70 bg-muted/20 text-sm text-muted-foreground">
+              Team performance graph will appear once tasks are assigned.
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Bottom Row */}
@@ -426,7 +860,7 @@ const Dashboard: React.FC = () => {
                     {index + 1}
                   </span>
                   <Avatar className="h-9 w-9">
-                    <AvatarImage src={member.user_avatar ? `${IMAGE_BASE_URL}${member.user_avatar}` : undefined} />
+                    <AvatarImage src={resolveImageUrl(member.user_avatar)} />
                     <AvatarFallback className="bg-accent/20 text-accent text-sm">
                       {member.user_name ? member.user_name.split(' ').map(n => n[0]).join('') : 'U'}
                     </AvatarFallback>

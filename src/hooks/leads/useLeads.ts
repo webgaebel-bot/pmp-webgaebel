@@ -34,6 +34,9 @@ export function useLeads(filters: LeadFilters, page: number, pageSize = 25) {
         pageSize: response?.pageSize || pageSize,
       };
     },
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     placeholderData: (previous) => previous,
   });
 }

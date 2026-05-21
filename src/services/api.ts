@@ -76,7 +76,7 @@ class ApiService {
   }
 
   private getToken(): string | null {
-    return localStorage.getItem('auth_token');
+    return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
   }
 
   private async handleResponse<T>(response: Response): Promise<T> {
@@ -86,6 +86,7 @@ class ApiService {
       
       if (!isAuthEndpoint) {
         localStorage.removeItem('auth_token');
+        sessionStorage.removeItem('auth_token');
         localStorage.removeItem('user');
         window.location.href = '/login';
       }
@@ -245,6 +246,13 @@ class ApiService {
   async put<T = any>(endpoint: string, data?: any): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'PUT',
+      body: data === undefined ? undefined : JSON.stringify(data),
+    });
+  }
+
+  async patch<T = any>(endpoint: string, data?: any): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'PATCH',
       body: data === undefined ? undefined : JSON.stringify(data),
     });
   }

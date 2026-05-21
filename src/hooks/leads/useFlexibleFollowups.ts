@@ -10,6 +10,9 @@ export function useFlexibleFollowups(ownerId?: string, search?: string) {
       const response = await api.getFlexibleFollowups({ owner_id: ownerId, search });
       return { data: response?.data || [] };
     },
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     placeholderData: (previous) => previous,
   });
 }

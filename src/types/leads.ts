@@ -142,6 +142,8 @@ export interface Lead {
   assigned_to?: string;
   assigned_to_name?: string;
   assigned_to_avatar?: string;
+  project_id?: string;
+  project_name?: string;
   created_by?: string;
   created_by_name?: string;
   created_by_email?: string;
@@ -226,6 +228,7 @@ export interface CreateLeadPayload {
   followup_notes?: string;
   close_value?: number;
   assigned_to?: string;
+  project_id?: string;
   notes?: string;
   lead_score?: number;
   custom_fields?: Record<string, string>;
@@ -258,6 +261,7 @@ export interface FlexibleColumn {
   label: string;
   systemField?: keyof Lead | keyof FlexibleFollowupRecord;
   type?: 'text' | 'date' | 'boolean' | 'status' | 'email' | 'url' | 'phone';
+  options?: Array<{ value: string; label: string }>;
   required?: boolean;
   width?: number;
 }

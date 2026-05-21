@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Slider } from '@/components/ui/slider';
+import { DynamicSelect, type DynamicOption } from '@/components/common/DynamicSelect';
 import { LEAD_PRIORITIES, LEAD_SOURCES, PIPELINE_STAGES, type CreateLeadPayload, type Lead } from '@/types/leads';
 
 const OUTREACH_STATUSES = ['not_contacted', 'contacted', 'followup_sent', 'replied', 'qualified', 'closed', 'lost'] as const;
@@ -17,12 +18,31 @@ interface LeadFormModalProps {
   onSubmit: (payload: CreateLeadPayload) => void;
   loading?: boolean;
   users: Array<{ id: string; name: string }>;
+  projects: Array<{ id: string; name: string }>;
+  niches: DynamicOption[];
+  services: DynamicOption[];
+  nicheLoading?: boolean;
+  onCreateNiche?: (niche: string) => void;
+  onCreateService?: (service: string) => void;
   lead?: Lead | null;
 }
 
 const emptyContact = { name: '', email: '', phone: '', role: '', is_primary: false };
 
-export function LeadFormModal({ open, onOpenChange, onSubmit, loading, users, lead }: LeadFormModalProps) {
+export function LeadFormModal({
+  open,
+  onOpenChange,
+  onSubmit,
+  loading,
+  users,
+  projects,
+  lead,
+  niches,
+  services,
+  nicheLoading,
+  onCreateNiche,
+  onCreateService,
+}: LeadFormModalProps) {
   const [form, setForm] = useState<CreateLeadPayload>({
     name: '',
     email: '',
@@ -49,11 +69,18 @@ export function LeadFormModal({ open, onOpenChange, onSubmit, loading, users, le
     followup_notes: '',
     close_value: undefined,
     assigned_to: '',
+    project_id: '',
     tags: [],
     notes: '',
     contacts: [{ ...emptyContact, is_primary: true }],
   });
   const [tagInput, setTagInput] = useState('');
+  const [customNiche, setCustomNiche] = useState('');
+  const [customService, setCustomService] = useState('');
+  const nicheValues = new Set(niches.map((item) => item.value));
+  const serviceValues = new Set(services.map((item) => item.value));
+  const nicheValue = form.designation && nicheValues.has(form.designation) ? form.designation : form.designation ? '__custom__' : '';
+  const serviceValue = form.services_offered && serviceValues.has(form.services_offered) ? form.services_offered : form.services_offered ? '__custom__' : '';
 
   useEffect(() => {
     if (lead) {
@@ -83,6 +110,7 @@ export function LeadFormModal({ open, onOpenChange, onSubmit, loading, users, le
         followup_notes: lead.followup_notes || '',
         close_value: lead.close_value,
         assigned_to: lead.assigned_to || '',
+        project_id: lead.project_id || '',
         tags: (lead.lead_tags || []).map((tag) => tag.tag_name),
         notes: lead.notes || lead.lead_notes?.[0]?.content || '',
         contacts: lead.lead_contacts?.length ? lead.lead_contacts.map((contact) => ({ ...contact })) : [{ ...emptyContact, is_primary: true }],
@@ -114,12 +142,15 @@ export function LeadFormModal({ open, onOpenChange, onSubmit, loading, users, le
         followup_notes: '',
         close_value: undefined,
         assigned_to: '',
+        project_id: '',
         tags: [],
         notes: '',
         contacts: [{ ...emptyContact, is_primary: true }],
       });
     }
     setTagInput('');
+    setCustomNiche('');
+    setCustomService('');
   }, [lead, open]);
 
   const submit = (event: React.FormEvent) => {
@@ -144,6 +175,7 @@ export function LeadFormModal({ open, onOpenChange, onSubmit, loading, users, le
       followup_notes: form.followup_notes || undefined,
       close_value: form.close_value || undefined,
       assigned_to: form.assigned_to || undefined,
+      project_id: form.project_id || undefined,
       budget: form.budget || undefined,
       notes: form.notes || undefined,
       tags: form.tags?.length ? form.tags : undefined,
@@ -187,8 +219,56 @@ export function LeadFormModal({ open, onOpenChange, onSubmit, loading, users, le
                 <Input value={form.company || ''} onChange={(e) => setForm((current) => ({ ...current, company: e.target.value }))} />
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>Designation</Label>
-                <Input value={form.designation || ''} onChange={(e) => setForm((current) => ({ ...current, designation: e.target.value }))} />
+                <DynamicSelect
+                  label="Niche"
+                  value={nicheValue}
+                  onValueChange={(value) => {
+                    if (value === '__custom__') {
+                      setForm((current) => ({ ...current, designation: current.designation || '' }));
+                      return;
+                    }
+                    setForm((current) => ({ ...current, designation: value }));
+                  }}
+                  options={niches}
+                  loading={Boolean(nicheLoading)}
+                  allowCustom={Boolean(onCreateNiche)}
+                  customValue={customNiche}
+                  onCustomValueChange={setCustomNiche}
+                  onAddCustom={(value) => {
+                    const next = value.trim();
+                    if (!next) return;
+                    onCreateNiche?.(next);
+                    setForm((current) => ({ ...current, designation: next }));
+                    setCustomNiche('');
+                  }}
+                  helperText="Select a standard niche or create a new one if your role allows it."
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <DynamicSelect
+                  label="Services Offered"
+                  value={serviceValue}
+                  onValueChange={(value) => {
+                    if (value === '__custom__') {
+                      setForm((current) => ({ ...current, services_offered: current.services_offered || '' }));
+                      return;
+                    }
+                    setForm((current) => ({ ...current, services_offered: value }));
+                  }}
+                  options={services}
+                  loading={Boolean(nicheLoading)}
+                  allowCustom={Boolean(onCreateService)}
+                  customValue={customService}
+                  onCustomValueChange={setCustomService}
+                  onAddCustom={(value) => {
+                    const next = value.trim();
+                    if (!next) return;
+                    onCreateService?.(next);
+                    setForm((current) => ({ ...current, services_offered: next }));
+                    setCustomService('');
+                  }}
+                  helperText="Select standard services or create a new one if your role allows it."
+                />
               </div>
               <div className="space-y-2">
                 <Label>Website</Label>
@@ -267,16 +347,23 @@ export function LeadFormModal({ open, onOpenChange, onSubmit, loading, users, le
                 <Input type="date" value={form.expected_close_date || ''} onChange={(e) => setForm((current) => ({ ...current, expected_close_date: e.target.value }))} />
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>Services Offered</Label>
-                <Textarea rows={3} value={form.services_offered || ''} onChange={(e) => setForm((current) => ({ ...current, services_offered: e.target.value }))} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
                 <Label>Assigned To</Label>
                 <select className="w-full rounded-md border bg-background px-3 py-2" value={form.assigned_to || ''} onChange={(e) => setForm((current) => ({ ...current, assigned_to: e.target.value }))}>
                   <option value="">Unassigned</option>
                   {users.map((user) => (
                     <option key={user.id} value={user.id}>
                       {user.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Project</Label>
+                <select className="w-full rounded-md border bg-background px-3 py-2" value={form.project_id || ''} onChange={(e) => setForm((current) => ({ ...current, project_id: e.target.value }))}>
+                  <option value="">No project</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
                     </option>
                   ))}
                 </select>

@@ -20,6 +20,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermission } from '@/hooks/usePermission';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -37,11 +38,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { IMAGE_BASE_URL, api } from '@/services/api';
+import { api } from '@/services/api';
 import { initSocket, onNotificationUpdate } from '@/services/socket';
 import { cn } from '@/lib/utils';
 import type { Notification } from '@/types';
 import { formatDurationHms, getSnapshotElapsed, readTimerSnapshot, TIMER_STORAGE_EVENT } from '@/lib/timeTrackingTimer';
+import { resolveImageUrl } from '@/lib/media';
 
 interface SearchResultItem {
   id: string;
@@ -49,6 +51,7 @@ interface SearchResultItem {
   type: 'route' | 'project' | 'task' | 'user' | 'lead';
   path: string;
   meta?: string;
+  permission?: string;
 }
 
 interface TopbarProps {
@@ -65,6 +68,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onToggleCollapse,
 }) => {
   const { user, logout } = useAuth();
+  const permission = usePermission();
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -76,15 +80,15 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [activeTimerSeconds, setActiveTimerSeconds] = useState(0);
 
   const staticRoutes: SearchResultItem[] = [
-    { id: 'dashboard', label: 'Dashboard', type: 'route', path: '/' },
-    { id: 'projects', label: 'Projects', type: 'route', path: '/projects' },
-    { id: 'tasks', label: 'Tasks', type: 'route', path: '/tasks' },
-    { id: 'calendar', label: 'Calendar', type: 'route', path: '/calendar' },
-    { id: 'finance', label: 'Finance', type: 'route', path: '/finance' },
-    { id: 'leads', label: 'Leads', type: 'route', path: '/leads' },
+    { id: 'dashboard', label: 'Dashboard', type: 'route', path: '/', permission: 'dashboard.view' },
+    { id: 'projects', label: 'Projects', type: 'route', path: '/projects', permission: 'projects.view' },
+    { id: 'tasks', label: 'Tasks', type: 'route', path: '/tasks', permission: 'tasks.view' },
+    { id: 'calendar', label: 'Calendar', type: 'route', path: '/calendar', permission: 'calendar.view' },
+    { id: 'finance', label: 'Finance', type: 'route', path: '/finance', permission: 'finance.view' },
+    { id: 'leads', label: 'Leads', type: 'route', path: '/leads', permission: 'leads.view' },
     { id: 'guidance', label: 'Guidance', type: 'route', path: '/guidance' },
-    { id: 'users', label: 'Users', type: 'route', path: '/users' },
-    { id: 'notifications', label: 'Notifications', type: 'route', path: '/notifications' },
+    { id: 'users', label: 'Users', type: 'route', path: '/users', permission: 'users.view' },
+    { id: 'notifications', label: 'Notifications', type: 'route', path: '/notifications', permission: 'notifications.view' },
     { id: 'settings', label: 'Settings', type: 'route', path: '/settings/profile' },
   ];
 
@@ -140,7 +144,10 @@ export const Topbar: React.FC<TopbarProps> = ({
   useEffect(() => {
     const term = searchQuery.trim().toLowerCase();
     if (term.length < 2) {
-      const quickRoutes = staticRoutes.filter((item) => item.label.toLowerCase().includes(term)).slice(0, 5);
+      const quickRoutes = staticRoutes
+        .filter((item) => item.label.toLowerCase().includes(term))
+        .filter((item) => !item.permission || permission.can(item.permission))
+        .slice(0, 5);
       setSearchResults(term ? quickRoutes : []);
       return;
     }
@@ -156,7 +163,9 @@ export const Topbar: React.FC<TopbarProps> = ({
         ]);
 
         const results: SearchResultItem[] = [];
-        results.push(...staticRoutes.filter((item) => item.label.toLowerCase().includes(term)));
+         results.push(
+           ...staticRoutes.filter((item) => item.label.toLowerCase().includes(term) && (!item.permission || permission.can(item.permission)))
+         );
 
         if (projectsRes.status === 'fulfilled') {
           ((projectsRes.value as any)?.data || []).forEach((project: any) => {
@@ -218,7 +227,10 @@ export const Topbar: React.FC<TopbarProps> = ({
           });
         }
 
-        const deduped = results.filter((item, index, array) => array.findIndex((entry) => entry.id === item.id) === index).slice(0, 10);
+        const deduped = results
+          .filter((item) => !item.permission || permission.can(item.permission))
+          .filter((item, index, array) => array.findIndex((entry) => entry.id === item.id) === index)
+          .slice(0, 10);
         setSearchResults(deduped);
       } catch (error) {
         console.error('Global search error:', error);
@@ -229,7 +241,7 @@ export const Topbar: React.FC<TopbarProps> = ({
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [permission, searchQuery]);
 
   const getSearchIcon = (type: SearchResultItem['type']) => {
     switch (type) {
@@ -488,9 +500,9 @@ export const Topbar: React.FC<TopbarProps> = ({
               variant="ghost"
               className="flex items-center gap-2 md:gap-3 px-2 hover:bg-secondary"
             >
-            <Avatar className="h-8 w-8">
+                <Avatar className="h-8 w-8">
                 <AvatarImage
-                  src={profileImage ? `${IMAGE_BASE_URL}${profileImage}` : (user?.avatar ? `${IMAGE_BASE_URL}${user.avatar}` : undefined)}
+                  src={resolveImageUrl(profileImage || user?.profile_image || user?.avatar)}
                   alt={user?.name}
                 />
                 <AvatarFallback className="bg-accent text-accent-foreground text-sm">

@@ -352,24 +352,21 @@ const useRememberMe = () => {
     return saved === 'true';
   });
 
-  const saveCredentials = useCallback((email: string, password: string) => {
-    if (rememberMe) {
+  const saveCredentials = useCallback((email: string, shouldRemember: boolean) => {
+    localStorage.setItem('rememberMe', shouldRemember ? 'true' : 'false');
+    if (shouldRemember) {
       localStorage.setItem('savedEmail', email);
-      localStorage.setItem('savedPassword', btoa(password));
-      localStorage.setItem('rememberMe', 'true');
+      localStorage.removeItem('savedPassword');
     } else {
       localStorage.removeItem('savedEmail');
       localStorage.removeItem('savedPassword');
-      localStorage.setItem('rememberMe', 'false');
     }
-  }, [rememberMe]);
+  }, []);
 
   const getSavedCredentials = useCallback(() => {
     const email = localStorage.getItem('savedEmail');
-    const password = localStorage.getItem('savedPassword');
     return {
       email: email || '',
-      password: password ? atob(password) : '',
       rememberMe: localStorage.getItem('rememberMe') === 'true',
     };
   }, []);
@@ -434,7 +431,6 @@ const LoginForm: React.FC<{
     const saved = getSavedCredentials();
     if (saved.rememberMe) {
       setEmail(saved.email);
-      setPassword(saved.password);
       setRememberMe(true);
     }
   }, [getSavedCredentials, setRememberMe]);
@@ -750,8 +746,8 @@ const Login: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
-      saveCredentials(email, password);
+      await login(email, password, rememberMe);
+      saveCredentials(email, rememberMe);
       
       toast({
         title: 'Success',

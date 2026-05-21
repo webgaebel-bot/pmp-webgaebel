@@ -77,7 +77,12 @@ export const usePermission = () => {
     canViewProjectProgress: (): boolean => hasPermission('dashboard.project_progress'),
     canViewTeamPerformance: (): boolean => hasPermission('dashboard.team_performance'),
     canViewTaskCharts: (): boolean => hasPermission('dashboard.task_charts'),
-    canViewDashboardActivityLogs: (): boolean => hasPermission('dashboard.activity_logs'),
+    canViewProjectDashboard: (): boolean => hasPermission('dashboard.projects.view'),
+    canViewLeadDashboard: (): boolean => hasPermission('dashboard.leads.view'),
+    canViewFinanceDashboard: (): boolean => hasPermission('dashboard.finance.view'),
+    canViewSalesDashboard: (): boolean => hasPermission('sales.dashboard.view') || hasPermission('sales.view'),
+    // Leads
+    canViewLeads: (): boolean => hasPermission('leads.view'),
     
     // Granular dashboard stat permissions
     canViewTotalProjects: (): boolean => hasPermission('dashboard.view.total_projects'),
@@ -180,5 +185,15 @@ export const usePermission = () => {
     canManageMails: (): boolean => hasPermission('mails.manage'),
     canViewMailThreads: (): boolean => hasPermission('mail_threads.view'),
     canCreateMailThreads: (): boolean => hasPermission('mail_threads.create'),
+
+    /**
+     * Finance submodules
+     */
+    canViewSalaries: (): boolean => hasPermission('finance.salaries.view'),
+    canManageSalaries: (): boolean => hasPermission('finance.salaries.manage'),
+    canViewTaxes: (): boolean => hasPermission('finance.taxes.view'),
+    canManageTaxes: (): boolean => hasPermission('finance.taxes.manage'),
+    canViewCommissions: (): boolean => hasPermission('finance.commissions.view'),
+    canManageCommissions: (): boolean => hasPermission('finance.commissions.manage'),
   };
 };

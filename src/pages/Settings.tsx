@@ -27,7 +27,7 @@ import api, { IMAGE_BASE_URL } from '@/services/api';
 import type { User as UserType } from '@/types';
 
 const Settings: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshAuth } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -145,6 +145,11 @@ const Settings: React.FC = () => {
       
       // Refetch profile to get updated data including profile_image
       await fetchProfile();
+
+      // Refresh AuthContext to reflect changes immediately in navbar and sidebar
+      if (typeof refreshAuth === 'function') {
+        await refreshAuth();
+      }
       
       toast({
         title: 'Profile Updated',

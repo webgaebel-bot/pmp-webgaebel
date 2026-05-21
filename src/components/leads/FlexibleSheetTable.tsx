@@ -264,25 +264,46 @@ export function FlexibleSheetTable({
                     ) : null}
                     {visibleColumns.map((column) => (
                       <td key={column.id} className="border-r p-1 align-top">
-                        <textarea
-                          value={getValue(row, column.id)}
-                          onChange={(event) => setValue(row.id, column.id, event.target.value)}
-                          onBlur={() => {
-                            if (!autoSave || !canEdit || !onSaveRow) return;
-                            const values = { ...row.values, ...(draftRows[row.id] || {}) };
-                            window.clearTimeout(autoSaveTimers.current[row.id]);
-                            void saveValues(row, values);
-                          }}
-                          onKeyDown={(event) => {
-                            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-                              event.preventDefault();
-                              void saveRow(row);
-                            }
-                          }}
-                          readOnly={!canEdit}
-                          className="min-h-16 w-full resize-y rounded-md border border-transparent bg-transparent px-2 py-2 outline-none focus:border-ring focus:bg-background"
-                          placeholder="-"
-                        />
+                        {column.options ? (
+                          <select
+                            value={getValue(row, column.id)}
+                            onChange={(event) => setValue(row.id, column.id, event.target.value)}
+                            className="min-h-16 w-full rounded-md border border-transparent bg-background px-2 py-2 outline-none focus:border-ring"
+                            disabled={!canEdit}
+                          >
+                            <option value="">Select...</option>
+                            {column.options.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                            {getValue(row, column.id) && !column.options.some((option) => option.value === getValue(row, column.id)) ? (
+                              <option value={getValue(row, column.id)}>
+                                {getValue(row, column.id)}
+                              </option>
+                            ) : null}
+                          </select>
+                        ) : (
+                          <textarea
+                            value={getValue(row, column.id)}
+                            onChange={(event) => setValue(row.id, column.id, event.target.value)}
+                            onBlur={() => {
+                              if (!autoSave || !canEdit || !onSaveRow) return;
+                              const values = { ...row.values, ...(draftRows[row.id] || {}) };
+                              window.clearTimeout(autoSaveTimers.current[row.id]);
+                              void saveValues(row, values);
+                            }}
+                            onKeyDown={(event) => {
+                              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                                event.preventDefault();
+                                void saveRow(row);
+                              }
+                            }}
+                            readOnly={!canEdit}
+                            className="min-h-16 w-full resize-y rounded-md border border-transparent bg-transparent px-2 py-2 outline-none focus:border-ring focus:bg-background"
+                            placeholder="-"
+                          />
+                        )}
                       </td>
                     ))}
                     <td className="p-2 align-top">

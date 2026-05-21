@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { User, AuthState } from '@/types';
 import api from '@/services/api';
 import {
@@ -9,7 +9,7 @@ import {
 } from '@/lib/permissions';
 
 interface AuthContextType extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasAnyPermission: (permissions: string[]) => boolean;
@@ -26,6 +26,10 @@ const getStoredUser = (): User | null => {
   } catch {
     return null;
   }
+};
+
+const getStoredAuthToken = (): string | null => {
+  return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
 };
 
 const normalizeUser = (user: any): User | null => {
@@ -87,6 +91,27 @@ const getProfileImage = (): string | null => {
   return localStorage.getItem('profile_image');
 };
 
+const storeAuthToken = (token: string | null, rememberMe: boolean) => {
+  if (!token) {
+    localStorage.removeItem('auth_token');
+    sessionStorage.removeItem('auth_token');
+    return;
+  }
+
+  if (rememberMe) {
+    localStorage.setItem('auth_token', token);
+    sessionStorage.removeItem('auth_token');
+  } else {
+    sessionStorage.setItem('auth_token', token);
+    localStorage.removeItem('auth_token');
+  }
+};
+
+const clearStoredAuthToken = () => {
+  localStorage.removeItem('auth_token');
+  sessionStorage.removeItem('auth_token');
+};
+
 const isUserActive = (user: User | null): boolean => {
   if (!user || user.status === undefined || user.status === null) return true;
   const status = user.status as any;
@@ -99,8 +124,8 @@ const isUserActive = (user: User | null): boolean => {
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AuthState>({
     user: getStoredUser(),
-    token: localStorage.getItem('auth_token'),
-    isAuthenticated: !!localStorage.getItem('auth_token') && !!getStoredUser(),
+    token: getStoredAuthToken(),
+    isAuthenticated: false,
     isLoading: true,
   });
 
@@ -109,12 +134,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   useEffect(() => {
     const initAuth = async () => {
-      const token = localStorage.getItem('auth_token');
+      const token = getStoredAuthToken();
       const storedUser = getStoredUser();
       
       if (!token || !storedUser) {
         localStorage.removeItem('user');
-        localStorage.removeItem('auth_token');
+        clearStoredAuthToken();
         setState({
           user: null,
           token: null,
@@ -126,13 +151,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       try {
-        // Try to fetch current user from API
+        // Server-trusted session validation. Cached user data is only used for
+        // display after the session is confirmed by the backend.
         const response: any = await api.getCurrentUser();
         const user = normalizeUser(response.data || response);
 
         if (!isUserActive(user)) {
           console.log('User inactive, clearing session');
-          localStorage.removeItem('auth_token');
+          clearStoredAuthToken();
           localStorage.removeItem('user');
           setState({
             user: null,
@@ -159,35 +185,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setAuthCheckCompleted(true);
       } catch (error: any) {
         console.error('Auth initialization error:', error);
-        
-        // Check if it's a network error or server error
-        const status = error?.status ?? error?.response?.status ?? 0;
-        const isNetworkError = status === 0;
-        const isServerError = status >= 500;
-        
-        // If network error or server error, trust local storage temporarily
-        if ((isNetworkError || isServerError) && storedUser && storedUser.role) {
-          console.log('Using cached user data due to network/server error');
-          setState({
-            user: storedUser,
-            token,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          setAuthCheckCompleted(true);
-        } else {
-          // Auth token is invalid (401/403) - clear everything
-          console.log('Invalid auth token, clearing session');
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user');
-          setState({
-            user: null,
-            token: null,
-            isAuthenticated: false,
-            isLoading: false,
-          });
-          setAuthCheckCompleted(true);
-        }
+        clearStoredAuthToken();
+        localStorage.removeItem('user');
+        localStorage.removeItem('profile_image');
+        setState({
+          user: null,
+          token: null,
+          isAuthenticated: false,
+          isLoading: false,
+        });
+        setAuthCheckCompleted(true);
       }
     };
 
@@ -197,16 +204,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [authCheckCompleted]);
 
-  useEffect(() => {
-    if (!state.isAuthenticated) return;
-    const interval = setInterval(() => {
-      refreshAuth();
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [state.isAuthenticated]);
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/activity-logs', { action: 'Logged out', entity_type: 'Session', entity_id: 'auth' }).catch(() => {});
+      await api.logout();
+    } catch (error) {
+      // Continue with local logout even if API fails
+      console.error('Logout API error:', error);
+    }
+    clearStoredAuthToken();
+    localStorage.removeItem('user');
+    localStorage.removeItem('profile_image');
+    setState({
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      isLoading: false,
+    });
+  }, []);
 
-  const refreshAuth = async () => {
-    const token = localStorage.getItem('auth_token');
+  const refreshAuth = useCallback(async () => {
+    const token = getStoredAuthToken();
     if (!token) return;
 
     try {
@@ -228,23 +246,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }));
     } catch (error) {
       console.error('Failed to refresh auth:', error);
-      // Don't logout on refresh failure, keep using cached data
+      await logout();
     }
-  };
+  }, [logout]);
 
-  const login = async (email: string, password: string) => {
+  useEffect(() => {
+    if (!state.isAuthenticated) return;
+    const interval = setInterval(() => {
+      refreshAuth();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [state.isAuthenticated, refreshAuth]);
+
+  const login = async (email: string, password: string, rememberMe = false) => {
     const response: any = await api.login(email, password);
     const { token, user: loginUser } = response.data || response;
     const user = normalizeUser(loginUser);
     
     if (!isUserActive(user)) {
-      localStorage.removeItem('auth_token');
+      clearStoredAuthToken();
       localStorage.removeItem('user');
       throw new Error('Account is inactive. Please contact admin.');
     }
     
-    // Store token first
-    localStorage.setItem('auth_token', token);
+    // Store token according to the remember-me preference.
+    storeAuthToken(token, rememberMe);
     
     try {
       // Fetch full user details with permissions from API
@@ -254,6 +280,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Store complete user data with permissions
       storeUser(fullUser);
       storeProfileImage(fullUser.profile_image || fullUser.avatar);
+      
+      // Log activity
+      api.post('/activity-logs', { action: 'Logged in', entity_type: 'Session', entity_id: 'auth' }).catch(() => {});
       
       setState({
         user: fullUser,
@@ -267,6 +296,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       storeUser(user);
       storeProfileImage(user.profile_image || user.avatar);
       
+      // Log activity
+      api.post('/activity-logs', { action: 'Logged in', entity_type: 'Session', entity_id: 'auth' }).catch(() => {});
+
       setState({
         user,
         token,
@@ -274,23 +306,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoading: false,
       });
     }
-  };
-
-  const logout = async () => {
-    try {
-      await api.logout();
-    } catch (error) {
-      // Continue with local logout even if API fails
-      console.error('Logout API error:', error);
-    }
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
-    setState({
-      user: null,
-      token: null,
-      isAuthenticated: false,
-      isLoading: false,
-    });
   };
 
   const hasPermission = (permission: string): boolean => {

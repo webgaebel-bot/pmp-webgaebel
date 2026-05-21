@@ -5,6 +5,7 @@ import type { AddLeadActivityPayload, CreateLeadPayload, ScheduleLeadFollowupPay
 
 function invalidateLeadQueries(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ['leads'] });
+  queryClient.invalidateQueries({ queryKey: ['leads-all'] });
   queryClient.invalidateQueries({ queryKey: ['lead-stats'] });
 }
 

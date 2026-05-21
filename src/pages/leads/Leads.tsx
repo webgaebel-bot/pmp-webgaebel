@@ -1,12 +1,15 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Filter, LayoutGrid, Plus, TableProperties, BarChart3, Upload, Download, ChevronLeft, ChevronRight, ListChecks, Loader2 } from 'lucide-react';
+import { Filter, LayoutGrid, Plus, TableProperties, BarChart3, Upload, Download, ChevronLeft, ChevronRight, ListChecks, Trash2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import type { DynamicOption } from '@/components/common/DynamicSelect';
+import { ModuleEmptyState, ModuleErrorState, ModuleLoadingState } from '@/components/common/ModuleState';
 import { api } from '@/services/api';
 import type { CreateLeadPayload, FlexibleColumn, Lead, LeadFilters as LeadFiltersType } from '@/types/leads';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,6 +25,7 @@ import { useLeadStats } from '@/hooks/leads/useLeadStats';
 import { useLeadDetail } from '@/hooks/leads/useLeadDetail';
 import { useLeadMutations } from '@/hooks/leads/useLeadMutations';
 import { useFlexibleFollowupMutations, useFlexibleFollowups } from '@/hooks/leads/useFlexibleFollowups';
+import { useNavigate } from 'react-router-dom';
 
 type LeadsView = 'table' | 'followups' | 'kanban' | 'analytics';
 
@@ -34,6 +38,29 @@ const emptyFilters: LeadFiltersType = {
 
 const LEADS_COLUMNS_KEY = 'pmp.flexibleLeads.columns';
 const FOLLOWUP_COLUMNS_KEY = 'pmp.flexibleFollowups.columns';
+const CUSTOM_NICHES_KEY = 'pmp.leads.customNiches';
+const CUSTOM_SERVICES_KEY = 'pmp.leads.customServices';
+
+const defaultStatusOptions = [
+  { value: 'new', label: 'New' },
+  { value: 'contacted', label: 'Contacted' },
+  { value: 'qualified', label: 'Qualified' },
+  { value: 'converted', label: 'Converted' },
+  { value: 'lost', label: 'Lost' },
+];
+
+const defaultSourceOptions = [
+  { value: 'manual', label: 'Manual' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'x', label: 'X / Twitter' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'website', label: 'Website' },
+  { value: 'referral', label: 'Referral' },
+  { value: 'cold_call', label: 'Cold Call' },
+  { value: 'email_campaign', label: 'Email Campaign' },
+];
 
 const defaultLeadColumns: FlexibleColumn[] = [
   { id: 'company_name', label: 'Company Name', systemField: 'company', type: 'text' },
@@ -81,6 +108,7 @@ function loadColumns(key: string, fallback: FlexibleColumn[]) {
     return fallback;
   }
 }
+
 
 function normalizeSourceValue(value?: string) {
   const normalized = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
@@ -142,8 +170,19 @@ const Leads: React.FC = () => {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [bulkAction, setBulkAction] = useState('');
   const [bulkAssignTo, setBulkAssignTo] = useState('');
+  const navigate = useNavigate();
   const [sheetRowCount, setSheetRowCount] = useState(defaultSheetRowCount);
   const [followupSheetRowCount, setFollowupSheetRowCount] = useState(defaultSheetRowCount);
+  const { data: taxonomiesResponse } = useQuery({
+    queryKey: ['lead-taxonomies'],
+    queryFn: async () => api.get('/leads/taxonomies?active=true'),
+  });
+  const taxonomies = taxonomiesResponse?.data || [];
+  const dbNiches = useMemo(() => taxonomies.filter((t: any) => t.taxonomy_type === 'niche'), [taxonomies]);
+  const dbServices = useMemo(() => taxonomies.filter((t: any) => t.taxonomy_type === 'service'), [taxonomies]);
+  const customNiches = useMemo(() => dbNiches.map((t: any) => t.name), [dbNiches]);
+  const customServices = useMemo(() => dbServices.map((t: any) => t.name), [dbServices]);
+  
   const canCreateLead = hasPermission('leads.create');
   const canUpdateLead = hasPermission('leads.update');
   const canDeleteLead = hasPermission('leads.delete');
@@ -152,10 +191,16 @@ const Leads: React.FC = () => {
   const canCreateFollowups = hasPermission('leads.followups.create');
   const canUpdateFollowups = hasPermission('leads.followups.update');
   const canDeleteFollowups = hasPermission('leads.followups.delete');
+  const canManageTaxonomies = hasPermission('leads.taxonomies.manage');
+  const canCreateNiches = canManageTaxonomies;
 
   const { data: usersResponse } = useQuery({
     queryKey: ['lead-users'],
     queryFn: async () => api.getUsers(),
+  });
+  const { data: projectsResponse } = useQuery({
+    queryKey: ['lead-projects'],
+    queryFn: async () => api.getProjects(),
   });
 
   const assignedUsers = useMemo(
@@ -166,13 +211,36 @@ const Leads: React.FC = () => {
       })),
     [usersResponse?.data]
   );
+  const assignedProjects = useMemo(
+    () =>
+      (projectsResponse?.data || []).map((project: any) => ({
+        id: String(project.id),
+        name: project.name || 'Project',
+      })),
+    [projectsResponse?.data]
+  );
 
-  const { data: leadsResponse, isLoading, isFetching } = useLeads(filters, page, pageSize);
+  const {
+    data: leadsResponse,
+    isLoading,
+    isFetching,
+    isError: isLeadsError,
+    error: leadsError,
+    refetch: refetchLeads,
+  } = useLeads(filters, page, pageSize);
   const { data: allLeadsResponse } = useQuery({
     queryKey: ['leads-all', filters],
     queryFn: async () => api.getLeads({ ...filters, page: 1, pageSize: 1000 }),
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
-  const { data: stats } = useLeadStats();
+  const {
+    data: stats,
+    isError: isStatsError,
+    error: statsError,
+    refetch: refetchStats,
+  } = useLeadStats();
   const { data: leadDetail, isLoading: leadDetailLoading } = useLeadDetail(activeLeadId);
   const mutations = useLeadMutations();
   const followupQuery = useFlexibleFollowups(selectedOwnerId || undefined, followupSearch);
@@ -188,9 +256,77 @@ const Leads: React.FC = () => {
     [allLeads]
   );
   const allSelected = leads.length > 0 && leads.every((lead) => selectedLeadIds.includes(lead.id));
-  const roleName = user?.role?.name?.toLowerCase().replace(/_/g, ' ') || '';
-  const canViewAllLeads = roleName === 'super admin' || roleName === 'superadmin' || hasPermission('leads.view.all');
+  const canViewAllLeads = hasPermission('leads.view.all');
   const ownerOptions = assignedUsers.length ? assignedUsers : user ? [{ id: String(user.id), name: user.name || user.email || 'Me' }] : [];
+  const nicheOptions = useMemo<DynamicOption[]>(() => {
+    const values = new Map<string, DynamicOption>();
+    dbNiches.forEach((item: any) => {
+      const key = item.name.toLowerCase();
+      values.set(key, { value: item.name, label: item.name });
+    });
+    allLeads.forEach((lead: Lead) => {
+      if (lead.designation) {
+        const val = lead.designation.trim();
+        const key = val.toLowerCase();
+        if (!values.has(key)) {
+          values.set(key, { value: val, label: val });
+        }
+      }
+    });
+    return Array.from(values.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [allLeads, dbNiches]);
+
+  const serviceOptions = useMemo<DynamicOption[]>(() => {
+    const values = new Map<string, DynamicOption>();
+    dbServices.forEach((item: any) => {
+      const key = item.name.toLowerCase();
+      values.set(key, { value: item.name, label: item.name });
+    });
+    allLeads.forEach((lead: Lead) => {
+      if (lead.services_offered) {
+        const val = lead.services_offered.trim();
+        const key = val.toLowerCase();
+        if (!values.has(key)) {
+          values.set(key, { value: val, label: val });
+        }
+      }
+    });
+    return Array.from(values.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [allLeads, dbServices]);
+
+  const leadColumnsWithOptions = useMemo(() =>
+    leadColumns.map((column) => {
+      const lowerId = column.id.toLowerCase();
+      const lowerLabel = column.label.toLowerCase();
+      if (lowerId === 'niche' || lowerId === 'designation' || lowerId.includes('niche') || lowerLabel.includes('niche') || lowerLabel.includes('industry')) {
+        return { ...column, options: nicheOptions };
+      }
+      if (lowerId === 'service' || lowerId === 'services_offered' || lowerId.includes('service') || lowerLabel.includes('service')) {
+        return { ...column, options: serviceOptions };
+      }
+      if (column.id === 'status' || lowerLabel === 'status') {
+        return { ...column, options: defaultStatusOptions };
+      }
+      return column;
+    }),
+  [leadColumns, nicheOptions, serviceOptions]);
+
+  const followupColumnsWithOptions = useMemo(() =>
+    followupColumns.map((column) => {
+      const lowerId = column.id.toLowerCase();
+      const lowerLabel = column.label.toLowerCase();
+      if (lowerId.includes('niche') || lowerId.includes('industry') || lowerLabel.includes('niche') || lowerLabel.includes('industry')) {
+        return { ...column, options: nicheOptions };
+      }
+      if (lowerId.includes('service') || lowerLabel.includes('service')) {
+        return { ...column, options: serviceOptions };
+      }
+      if (lowerId === 'status' || lowerLabel === 'status') {
+        return { ...column, options: defaultStatusOptions };
+      }
+      return column;
+    }),
+  [followupColumns, nicheOptions, serviceOptions]);
 
   React.useEffect(() => {
     localStorage.setItem(LEADS_COLUMNS_KEY, JSON.stringify(leadColumns));
@@ -214,6 +350,80 @@ const Leads: React.FC = () => {
   const openLead = (leadId: string) => {
     setActiveLeadId(leadId);
     setLeadDrawerOpen(true);
+  };
+
+  const handleCreateNiche = async (niche: string) => {
+    const value = niche.trim();
+    if (!value || !canManageTaxonomies) return;
+    try {
+      await api.post('/leads/taxonomies', { name: value, taxonomy_type: 'niche' });
+      Swal.fire({
+        title: 'Success',
+        text: 'Niche created successfully.',
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false,
+      });
+      queryClient.invalidateQueries({ queryKey: ['lead-taxonomies'] });
+    } catch (error: any) {
+      Swal.fire('Error', error?.message || 'Failed to create niche.', 'error');
+    }
+  };
+
+  const handleCreateService = async (service: string) => {
+    const value = service.trim();
+    if (!value || !canManageTaxonomies) return;
+    try {
+      await api.post('/leads/taxonomies', { name: value, taxonomy_type: 'service' });
+      Swal.fire({
+        title: 'Success',
+        text: 'Service created successfully.',
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false,
+      });
+      queryClient.invalidateQueries({ queryKey: ['lead-taxonomies'] });
+    } catch (error: any) {
+      Swal.fire('Error', error?.message || 'Failed to create service.', 'error');
+    }
+  };
+
+  const handleRemoveNiche = async (value: string) => {
+    if (!canManageTaxonomies) return;
+    const found = dbNiches.find((t: any) => t.name.toLowerCase() === value.toLowerCase());
+    if (!found) return;
+    try {
+      await api.delete(`/leads/taxonomies/${found.id}`);
+      Swal.fire({
+        title: 'Deleted',
+        text: 'Niche deleted successfully.',
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false,
+      });
+      queryClient.invalidateQueries({ queryKey: ['lead-taxonomies'] });
+    } catch (error: any) {
+      Swal.fire('Error', error?.message || 'Failed to delete niche.', 'error');
+    }
+  };
+
+  const handleRemoveService = async (value: string) => {
+    if (!canManageTaxonomies) return;
+    const found = dbServices.find((t: any) => t.name.toLowerCase() === value.toLowerCase());
+    if (!found) return;
+    try {
+      await api.delete(`/leads/taxonomies/${found.id}`);
+      Swal.fire({
+        title: 'Deleted',
+        text: 'Service deleted successfully.',
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false,
+      });
+      queryClient.invalidateQueries({ queryKey: ['lead-taxonomies'] });
+    } catch (error: any) {
+      Swal.fire('Error', error?.message || 'Failed to delete service.', 'error');
+    }
   };
 
   const handleCreateOrUpdate = (payload: CreateLeadPayload) => {
@@ -556,6 +766,16 @@ const Leads: React.FC = () => {
               <Download className="mr-2 h-4 w-4" />
               Export
             </Button>
+            {canManageTaxonomies ? (
+              <Button
+                variant="secondary"
+                className="bg-slate-900 text-white hover:bg-slate-800 border border-slate-700"
+                onClick={() => navigate('/leads/taxonomies')}
+              >
+                <ListChecks className="mr-2 h-4 w-4" />
+                Manage Niches & Services
+              </Button>
+            ) : null}
             {canCreateLead ? (
               <Button onClick={() => { setEditingLead(null); setLeadFormOpen(true); }}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -565,6 +785,15 @@ const Leads: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {isStatsError ? (
+        <ModuleErrorState
+          title="Lead analytics could not load"
+          description={statsError instanceof Error ? statsError.message : 'Please try again.'}
+          onAction={() => refetchStats()}
+          className="mb-4"
+        />
+      ) : null}
 
       <LeadStatsCards stats={stats} />
 
@@ -700,17 +929,23 @@ const Leads: React.FC = () => {
           {view === 'table' ? (
             <>
               {isLeadSheetLoading ? (
-                <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 rounded-lg border bg-muted/20 text-sm text-muted-foreground">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  Loading leads...
-                </div>
+                <ModuleLoadingState
+                  title="Loading leads"
+                  description="Fetching your filtered CRM pipeline from Supabase."
+                />
+              ) : isLeadsError ? (
+                <ModuleErrorState
+                  title="Leads could not load"
+                  description={leadsError instanceof Error ? leadsError.message : 'Your lead workspace could not be loaded.'}
+                  onAction={() => refetchLeads()}
+                />
               ) : (
                 <FlexibleSheetTable
                   title="Editable Leads Sheet"
-                  columns={leadColumns}
+                  columns={leadColumnsWithOptions}
                   rows={leadRows}
                   showOwner={canViewAllLeads}
-                  emptyText="No leads found for the selected filters."
+                  emptyText={leads.length === 0 ? 'No leads yet. Enter data into the sheet to create the first lead.' : 'No leads found for the selected filters.'}
                   onColumnsChange={setLeadColumns}
                   onSaveRow={(canUpdateLead || canCreateLead) ? saveLeadRow : undefined}
                   onAddRow={canCreateLead ? addLeadRow : undefined}
@@ -748,9 +983,22 @@ const Leads: React.FC = () => {
                 placeholder="Search follow-ups"
                 className="max-w-md"
               />
+              {followupQuery.isError ? (
+                <ModuleErrorState
+                  title="Follow-ups could not load"
+                  description={followupQuery.error instanceof Error ? followupQuery.error.message : 'Unable to read follow-up records.'}
+                  onAction={() => followupQuery.refetch()}
+                />
+              ) : followupRows.length === 0 ? (
+                <ModuleEmptyState
+                  title="No follow-up rows"
+                  description="Follow-up rows will appear here after they are created."
+                  action={canCreateFollowups ? { label: 'Add Follow-up Rows', onClick: addFollowupRows } : undefined}
+                />
+              ) : (
               <FlexibleSheetTable
                 title="Editable Follow-up Sheet"
-                columns={followupColumns}
+                columns={followupColumnsWithOptions}
                 rows={followupRows}
                 showOwner={canViewAllLeads}
                 emptyText={followupQuery.isLoading ? 'Loading follow-ups...' : 'No follow-up rows found.'}
@@ -764,6 +1012,7 @@ const Leads: React.FC = () => {
                 canManageColumns={canUpdateFollowups}
                 autoSave
               />
+              )}
             </div>
           ) : null}
 
@@ -797,6 +1046,12 @@ const Leads: React.FC = () => {
         onSubmit={handleCreateOrUpdate}
         loading={mutations.createLead.isPending || mutations.updateLead.isPending}
         users={assignedUsers}
+        projects={assignedProjects}
+        niches={nicheOptions}
+        services={serviceOptions}
+        nicheLoading={isLoading && !leadsResponse}
+        onCreateNiche={canCreateNiches ? handleCreateNiche : undefined}
+        onCreateService={canCreateNiches ? handleCreateService : undefined}
         lead={editingLead}
       />
 

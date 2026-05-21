@@ -22,6 +22,14 @@ const FinanceSettings: React.FC = () => {
     currency: 'USD',
   });
 
+  const [newCurrency, setNewCurrency] = useState({ code: '', symbol: '', name: '' });
+
+  const { data: currenciesResponse } = useQuery({
+    queryKey: ['system-currencies'],
+    queryFn: async () => api.get('/currencies'),
+  });
+  const currencies = currenciesResponse?.data || [];
+
   const { data: currentSettingsResponse, isLoading } = useQuery({
     queryKey: ['finance-settings'],
     queryFn: async () => {
@@ -59,6 +67,30 @@ const FinanceSettings: React.FC = () => {
     },
     onError: () => toast.error('Failed to update settings'),
   });
+
+  const createCurrencyMutation = useMutation({
+    mutationFn: async (data: any) => api.post('/currencies', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system-currencies'] });
+      toast.success('Currency added successfully');
+      setNewCurrency({ code: '', symbol: '', name: '' });
+    },
+    onError: () => toast.error('Failed to add currency'),
+  });
+
+  const deleteCurrencyMutation = useMutation({
+    mutationFn: async (id: string) => api.delete(`/currencies/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system-currencies'] });
+      toast.success('Currency deleted successfully');
+    },
+    onError: () => toast.error('Failed to delete currency'),
+  });
+
+  const handleAddCurrency = () => {
+    if (!newCurrency.code || !newCurrency.symbol) return toast.error('Code and symbol are required');
+    createCurrencyMutation.mutate(newCurrency);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,10 +171,9 @@ const FinanceSettings: React.FC = () => {
                 onChange={(e) => setSettings({...settings, currency: e.target.value})}
                 className="w-full px-3 py-2 border rounded-md bg-background"
               >
-                <option value="USD">USD - US Dollar</option>
-                <option value="EUR">EUR - Euro</option>
-                <option value="GBP">GBP - British Pound</option>
-                <option value="INR">INR - Indian Rupee</option>
+                {currencies.map((c: any) => (
+                  <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
+                ))}
               </select>
             </div>
             <Separator />
@@ -172,6 +203,44 @@ const FinanceSettings: React.FC = () => {
               <p><strong>Future Fund</strong> = Net Profit × {settings.future_fund_percentage || 0}%</p>
               <p><strong>Commission</strong> = Net Profit × {settings.commission_percentage || 0}%</p>
               <p><strong>Distributable</strong> = Net Profit - (Future Fund + Commission)</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Manage Currencies</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-4 gap-2 items-end">
+              <div>
+                <Label>Code</Label>
+                <Input placeholder="e.g. USD" value={newCurrency.code} onChange={(e) => setNewCurrency({...newCurrency, code: e.target.value})} />
+              </div>
+              <div>
+                <Label>Symbol</Label>
+                <Input placeholder="e.g. $" value={newCurrency.symbol} onChange={(e) => setNewCurrency({...newCurrency, symbol: e.target.value})} />
+              </div>
+              <div>
+                <Label>Name</Label>
+                <Input placeholder="e.g. US Dollar" value={newCurrency.name} onChange={(e) => setNewCurrency({...newCurrency, name: e.target.value})} />
+              </div>
+              <Button type="button" onClick={handleAddCurrency} disabled={createCurrencyMutation.isPending}>Add Currency</Button>
+            </div>
+            <Separator className="my-4" />
+            <div className="space-y-2">
+              {currencies.map((c: any) => (
+                <div key={c.id || c.code} className="flex items-center justify-between p-2 border rounded bg-card">
+                  <div>
+                    <span className="font-medium">{c.code}</span> ({c.symbol}) - {c.name}
+                  </div>
+                  {c.id && (
+                    <Button type="button" variant="destructive" size="sm" onClick={() => deleteCurrencyMutation.mutate(c.id)}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>

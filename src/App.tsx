@@ -31,12 +31,16 @@ import ForgotPassword from "@/pages/ForgotPassword";
 import FinanceDashboard from "@/pages/finance/FinanceDashboard";
 import Payments from "@/pages/finance/Payments";
 import Expenses from "@/pages/finance/Expenses";
+import Salary from "@/pages/finance/Salary";
 import Clients from "@/pages/finance/Clients";
 import Founders from "@/pages/finance/Founders";
 import FinanceSettings from "@/pages/finance/FinanceSettings";
 import TimeTracking from "@/pages/time-tracking/TimeTracking";
 import Leads from "@/pages/leads/Leads";
+import ManageTaxonomies from "@/pages/leads/ManageTaxonomies";
+
 import Guidance from "@/pages/Guidance";
+import ProjectRoles from "@/pages/ProjectRoles";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -64,7 +68,12 @@ const App = () => (
             {/* Protected Routes */}
             <Route element={<MainLayout />}>
               <Route path="/dashboard" element={
-                <ProtectedRoute permission="dashboard.view">
+                <ProtectedRoute permissions={["dashboard.view", "sales.dashboard.view"]}>
+                  <Dashboard />
+                </ProtectedRoute>
+              } />
+              <Route path="/sales-dashboard" element={
+                <ProtectedRoute permissions={["sales.dashboard.view", "sales.view"]}>
                   <Dashboard />
                 </ProtectedRoute>
               } />
@@ -76,6 +85,11 @@ const App = () => (
               <Route path="/projects/:id" element={
                 <ProtectedRoute permission="projects.view">
                   <ProjectDetail />
+                </ProtectedRoute>
+              } />
+              <Route path="/projects/:id/roles" element={
+                <ProtectedRoute permission="projects.view">
+                  <ProjectRoles />
                 </ProtectedRoute>
               } />
               <Route path="/projects/:id/edit" element={
@@ -153,6 +167,16 @@ const App = () => (
                   <Expenses />
                 </ProtectedRoute>
               } />
+              <Route path="/finance/salary" element={
+                <ProtectedRoute permission="finance.view">
+                  <Salary />
+                </ProtectedRoute>
+              } />
+              <Route path="/salary" element={
+                <ProtectedRoute permission="finance.view">
+                  <Salary />
+                </ProtectedRoute>
+              } />
               <Route path="/finance/clients" element={
                 <ProtectedRoute permission="finance.view">
                   <Clients />
@@ -176,6 +200,11 @@ const App = () => (
               <Route path="/leads" element={
                 <ProtectedRoute permission="leads.view">
                   <Leads />
+                </ProtectedRoute>
+              } />
+              <Route path="/leads/taxonomies" element={
+                <ProtectedRoute permission="leads.taxonomies.manage">
+                  <ManageTaxonomies />
                 </ProtectedRoute>
               } />
               <Route path="/guidance" element={

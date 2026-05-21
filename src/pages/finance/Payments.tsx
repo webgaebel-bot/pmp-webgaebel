@@ -25,6 +25,8 @@ import { ArrowLeft, Plus, Search, Edit, Trash2 } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
+import { ModuleEmptyState, ModuleLoadingState } from '@/components/common/ModuleState';
+import { formatMoney } from '@/lib/financeEngine';
 
 const Payments: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -34,10 +36,13 @@ const Payments: React.FC = () => {
   const [formData, setFormData] = useState({
     client_name: '',
     amount: '',
+    currency: 'USD',
     payment_date: '',
     payment_method: 'bank_transfer',
+    payment_method_other: '',
     status: 'completed',
     description: '',
+    project_id: '',
   });
   const queryClient = useQueryClient();
 
@@ -65,6 +70,12 @@ const Payments: React.FC = () => {
   });
   const payments = paymentsResponse?.data || [];
 
+  const { data: projectsResponse } = useQuery({
+    queryKey: ['finance-projects'],
+    queryFn: async () => api.getProjects(),
+  });
+  const projects = projectsResponse?.data || [];
+
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
       return api.post('/finance/payments', data);
@@ -76,10 +87,13 @@ const Payments: React.FC = () => {
       setFormData({
         client_name: '',
         amount: '',
+        currency: 'USD',
         payment_date: '',
         payment_method: 'bank_transfer',
+        payment_method_other: '',
         status: 'completed',
         description: '',
+        project_id: '',
       });
     },
     onError: () => {
@@ -125,6 +139,7 @@ const Payments: React.FC = () => {
   const filteredPayments = payments?.filter((p: any) =>
     p.client_name?.toLowerCase().includes(search.toLowerCase())
   ) || [];
+  const paymentCurrency = filteredPayments[0]?.currency || 'USD';
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -143,7 +158,7 @@ const Payments: React.FC = () => {
               Add Payment
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[500px]">
+          <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>Add New Payment</DialogTitle>
             </DialogHeader>
@@ -169,6 +184,20 @@ const Payments: React.FC = () => {
                 />
               </div>
               <div>
+                <Label htmlFor="currency">Currency</Label>
+                <select
+                  id="currency"
+                  value={formData.currency}
+                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md bg-background"
+                  required
+                >
+                  {['USD', 'PKR', 'EUR', 'GBP', 'AED'].map((currency) => (
+                    <option key={currency} value={currency}>{currency}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <Label htmlFor="payment_date">Payment Date</Label>
                 <Input
                   id="payment_date"
@@ -185,12 +214,38 @@ const Payments: React.FC = () => {
                   value={formData.payment_method}
                   onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md bg-background"
-                >
+                  >
                   <option value="bank_transfer">Bank Transfer</option>
                   <option value="credit_card">Credit Card</option>
                   <option value="paypal">PayPal</option>
                   <option value="cash">Cash</option>
                   <option value="check">Check</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              {formData.payment_method === 'other' ? (
+                <div>
+                  <Label htmlFor="payment_method_other">Custom Payment Method</Label>
+                  <Input
+                    id="payment_method_other"
+                    value={formData.payment_method_other}
+                    onChange={(e) => setFormData({ ...formData, payment_method_other: e.target.value })}
+                    placeholder="e.g. Bank app, offline transfer"
+                  />
+                </div>
+              ) : null}
+              <div>
+                <Label htmlFor="project_id">Project</Label>
+                <select
+                  id="project_id"
+                  value={formData.project_id}
+                  onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md bg-background"
+                >
+                  <option value="">Select project</option>
+                  {projects.map((project: any) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -224,6 +279,14 @@ const Payments: React.FC = () => {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <ModuleLoadingState title="Loading payments" description="Syncing finance payments from Supabase." />
+          ) : filteredPayments.length === 0 ? (
+            <ModuleEmptyState
+              title="No payments found"
+              description="Add your first payment record or adjust the search term."
+            />
+          ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -231,30 +294,19 @@ const Payments: React.FC = () => {
                   <TableHead>Client</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Date</TableHead>
+                  <TableHead>Project</TableHead>
                   <TableHead>Method</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8">
-                      Loading...
-                    </TableCell>
-                  </TableRow>
-                ) : filteredPayments.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      No payments found. Add your first payment to get started.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredPayments.map((payment: any) => (
+                {filteredPayments.map((payment: any) => (
                     <TableRow key={payment.id}>
                       <TableCell className="font-medium">{payment.client_name}</TableCell>
-                      <TableCell>${payment.amount?.toLocaleString()}</TableCell>
+                      <TableCell>{formatMoney(payment.amount, payment.currency || paymentCurrency)}</TableCell>
                       <TableCell>{new Date(payment.payment_date).toLocaleDateString()}</TableCell>
+                      <TableCell>{payment.project?.name || payment.project_name || '-'}</TableCell>
                       <TableCell className="capitalize">{payment.payment_method?.replace('_', ' ')}</TableCell>
                       <TableCell>
                         <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
@@ -272,11 +324,11 @@ const Payments: React.FC = () => {
                          </div>
                        </TableCell>
                     </TableRow>
-                  ))
-                )}
+                ))}
               </TableBody>
             </Table>
           </div>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -9,5 +9,8 @@ export function useLeadStats() {
       const response = await api.getLeadStats();
       return response.data;
     },
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 }

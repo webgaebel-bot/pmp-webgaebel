@@ -12,8 +12,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { PageHeader } from '@/components/common/PageHeader';
-import { EmptyState } from '@/components/common/EmptyState';
-import { LoadingPage } from '@/components/common/LoadingSpinner';
+import { ModuleEmptyState, ModuleErrorState, ModuleLoadingState } from '@/components/common/ModuleState';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -33,9 +32,12 @@ const Notifications: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [filter, setFilter] = useState<'all' | 'unread' | 'read'>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [scopeFilter, setScopeFilter] = useState<string>('all');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const response: any = await api.getNotifications();
       const notificationsData = response.data || [];
@@ -61,6 +63,7 @@ const Notifications: React.FC = () => {
     } catch (error) {
       console.error('Error fetching notifications:', error);
       setNotifications([]);
+      setLoadError(error instanceof Error ? error.message : 'Unable to load notifications.');
     } finally {
       setIsLoading(false);
     }
@@ -173,13 +176,17 @@ const Notifications: React.FC = () => {
     if (filter === 'unread' && n.read) return false;
     if (filter === 'read' && !n.read) return false;
     if (typeFilter !== 'all' && n.type !== typeFilter) return false;
+    if (scopeFilter !== 'all') {
+      const scopeValue = String(n.entity_type || '').toLowerCase();
+      if (!scopeValue.includes(scopeFilter)) return false;
+    }
     return true;
   });
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   if (isLoading) {
-    return <LoadingPage text="Loading notifications..." />;
+    return <ModuleLoadingState title="Loading notifications" description="Fetching unread, read, and history records." />;
   }
 
   return (
@@ -226,6 +233,20 @@ const Notifications: React.FC = () => {
           </SelectContent>
         </Select>
 
+        <Select value={scopeFilter} onValueChange={setScopeFilter}>
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="Scope" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Scopes</SelectItem>
+            <SelectItem value="lead">Leads</SelectItem>
+            <SelectItem value="project">Projects</SelectItem>
+            <SelectItem value="task">Tasks</SelectItem>
+            <SelectItem value="finance">Finance</SelectItem>
+            <SelectItem value="time">Time</SelectItem>
+          </SelectContent>
+        </Select>
+
         {notifications.length > 0 && (
           <Button
             variant="outline"
@@ -247,18 +268,27 @@ const Notifications: React.FC = () => {
         <span>
           Unread: <strong className="text-foreground">{unreadCount}</strong>
         </span>
+        <span>
+          Visible: <strong className="text-foreground">{filteredNotifications.length}</strong>
+        </span>
       </div>
 
       {/* Notifications List */}
-      {filteredNotifications.length === 0 ? (
-        <EmptyState
-          icon={Bell}
+      {loadError ? (
+        <ModuleErrorState
+          title="Notifications unavailable"
+          description={loadError}
+          onAction={fetchNotifications}
+        />
+      ) : filteredNotifications.length === 0 ? (
+        <ModuleEmptyState
           title="No notifications"
           description={
             filter === 'all'
               ? "You're all caught up! No notifications at the moment."
               : `No ${filter} notifications found.`
           }
+          icon={Bell}
         />
       ) : (
         <div className="bg-card rounded-lg border border-border shadow-card divide-y divide-border">

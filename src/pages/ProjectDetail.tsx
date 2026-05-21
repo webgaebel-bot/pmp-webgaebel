@@ -629,12 +629,21 @@ const ProjectDetail: React.FC = () => {
           <div className="bg-card rounded-lg border border-border shadow-card">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-semibold">Project Members ({members.length})</h3>
-              {canCreateMembers && (
-                <Button size="sm" className="bg-accent hover:bg-accent/90" onClick={openAddMemberDialog}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Member
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => navigate(`/projects/${id}/roles`)}
+                >
+                  Manage Roles
                 </Button>
-              )}
+                {canCreateMembers && (
+                  <Button size="sm" className="bg-accent hover:bg-accent/90" onClick={openAddMemberDialog}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Member
+                  </Button>
+                )}
+              </div>
             </div>
             
             {members.length === 0 ? (

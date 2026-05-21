@@ -49,6 +49,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermission';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
+import { useQueryClient } from '@tanstack/react-query';
 import type { User, Role } from '@/types';
 
 // Mock data
@@ -109,6 +110,7 @@ const Users: React.FC = () => {
   const { user: currentUser } = useAuth();
   const permission = usePermission();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
   const [isLoading, setIsLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
@@ -247,6 +249,8 @@ const Users: React.FC = () => {
       // Refresh users
       const response: any = await api.getUsers();
       setUsers(response.data || mockUsers);
+      // Ensure other components (e.g. Salary) refetch employee list
+      queryClient.invalidateQueries(['employees']);
     } catch (error: any) {
       toast({
         title: 'Error',

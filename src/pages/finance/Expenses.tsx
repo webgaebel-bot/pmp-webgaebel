@@ -25,6 +25,8 @@ import { ArrowLeft, Plus, Search, Edit, Trash2 } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
+import { ModuleEmptyState, ModuleLoadingState } from '@/components/common/ModuleState';
+import { formatMoney } from '@/lib/financeEngine';
 
 const Expenses: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -35,8 +37,11 @@ const Expenses: React.FC = () => {
     category: '',
     description: '',
     amount: '',
+    currency: 'USD',
     expense_date: '',
     payment_method: 'bank_transfer',
+    payment_method_other: '',
+    project_id: '',
   });
   const queryClient = useQueryClient();
 
@@ -64,6 +69,12 @@ const Expenses: React.FC = () => {
   });
   const expenses = expensesResponse?.data || [];
 
+  const { data: projectsResponse } = useQuery({
+    queryKey: ['finance-projects'],
+    queryFn: async () => api.getProjects(),
+  });
+  const projects = projectsResponse?.data || [];
+
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
       return api.post('/finance/expenses', data);
@@ -76,8 +87,11 @@ const Expenses: React.FC = () => {
         category: '',
         description: '',
         amount: '',
+        currency: 'USD',
         expense_date: '',
         payment_method: 'bank_transfer',
+        payment_method_other: '',
+        project_id: '',
       });
     },
     onError: () => {
@@ -124,6 +138,7 @@ const Expenses: React.FC = () => {
     e.description?.toLowerCase().includes(search.toLowerCase()) ||
     e.category?.toLowerCase().includes(search.toLowerCase())
   ) || [];
+  const expenseCurrency = filteredExpenses[0]?.currency || 'USD';
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -142,7 +157,7 @@ const Expenses: React.FC = () => {
               Add Expense
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[500px]">
+          <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>Add New Expense</DialogTitle>
             </DialogHeader>
@@ -157,7 +172,6 @@ const Expenses: React.FC = () => {
                   required
                 >
                   <option value="">Select category</option>
-                  <option value="salary">Salary</option>
                   <option value="software">Software</option>
                   <option value="marketing">Marketing</option>
                   <option value="office">Office</option>
@@ -186,6 +200,20 @@ const Expenses: React.FC = () => {
                 />
               </div>
               <div>
+                <Label htmlFor="currency">Currency</Label>
+                <select
+                  id="currency"
+                  value={formData.currency}
+                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md bg-background"
+                  required
+                >
+                  {['USD', 'PKR', 'EUR', 'GBP', 'AED'].map((currency) => (
+                    <option key={currency} value={currency}>{currency}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <Label htmlFor="expense_date">Date</Label>
                 <Input
                   id="expense_date"
@@ -202,11 +230,37 @@ const Expenses: React.FC = () => {
                   value={formData.payment_method}
                   onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md bg-background"
-                >
+                  >
                   <option value="bank_transfer">Bank Transfer</option>
                   <option value="credit_card">Credit Card</option>
                   <option value="cash">Cash</option>
                   <option value="check">Check</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              {formData.payment_method === 'other' ? (
+                <div>
+                  <Label htmlFor="payment_method_other">Custom Payment Method</Label>
+                  <Input
+                    id="payment_method_other"
+                    value={formData.payment_method_other}
+                    onChange={(e) => setFormData({ ...formData, payment_method_other: e.target.value })}
+                    placeholder="e.g. Bank transfer app"
+                  />
+                </div>
+              ) : null}
+              <div>
+                <Label htmlFor="project_id">Project</Label>
+                <select
+                  id="project_id"
+                  value={formData.project_id}
+                  onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md bg-background"
+                >
+                  <option value="">Select project</option>
+                  {projects.map((project: any) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
                 </select>
               </div>
               <Button type="submit" className="w-full" disabled={createMutation.isPending}>
@@ -232,6 +286,11 @@ const Expenses: React.FC = () => {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <ModuleLoadingState title="Loading expenses" description="Syncing company expenses from Supabase." />
+          ) : filteredExpenses.length === 0 ? (
+            <ModuleEmptyState title="No expenses found" description="Add an expense or adjust the search term." />
+          ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -239,26 +298,14 @@ const Expenses: React.FC = () => {
                   <TableHead>Category</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Amount</TableHead>
+                  <TableHead>Project</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Method</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8">
-                      Loading...
-                    </TableCell>
-                  </TableRow>
-                ) : filteredExpenses.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      No expenses found. Add your first expense to get started.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredExpenses.map((expense: any) => (
+                {filteredExpenses.map((expense: any) => (
                     <TableRow key={expense.id}>
                       <TableCell>
                         <Badge variant="outline" className="capitalize">
@@ -266,7 +313,8 @@ const Expenses: React.FC = () => {
                         </Badge>
                       </TableCell>
                       <TableCell className="font-medium">{expense.description}</TableCell>
-                      <TableCell>${expense.amount?.toLocaleString()}</TableCell>
+                      <TableCell>{formatMoney(expense.amount, expense.currency || expenseCurrency)}</TableCell>
+                      <TableCell>{expense.project?.name || expense.project_name || '-'}</TableCell>
                       <TableCell>{new Date(expense.expense_date).toLocaleDateString()}</TableCell>
                       <TableCell className="capitalize">{expense.payment_method?.replace('_', ' ')}</TableCell>
                       <TableCell>
@@ -280,11 +328,11 @@ const Expenses: React.FC = () => {
                          </div>
                        </TableCell>
                     </TableRow>
-                  ))
-                )}
+                ))}
               </TableBody>
             </Table>
           </div>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -1,6 +1,30 @@
 import { ApiError } from '@/services/api';
 import { getSupabaseClient } from '@/lib/supabase';
-import { PERMISSION_DEFINITIONS } from '@/lib/permissions';
+import { PERMISSION_DEFINITIONS, isSuperAdminRole } from '@/lib/permissions';
+import { createAuditService } from '@/services/auditService';
+import { createAuthService } from '@/services/authService';
+import { createCalendarService } from '@/services/calendarService';
+import { createFileService } from '@/services/fileService';
+import { createFinanceService } from '@/services/financeService';
+import { createLeadService } from '@/services/leadService';
+import { createNotificationService } from '@/services/notificationService';
+import { createPayrollService } from '@/services/payrollService';
+import { createPermissionService } from '@/services/permissionService';
+import { createProfileService } from '@/services/profileService';
+import { createProjectService } from '@/services/projectService';
+import { createTaskService } from '@/services/taskService';
+import { createTimeTrackingService } from '@/services/timeTrackingService';
+import { calculateFinanceSummary } from '@/lib/financeEngine';
+import {
+  clampPage,
+  clampPageSize,
+  evaluateRole,
+  requireOwnership,
+  requirePermission,
+  requireProjectMembership,
+  resolveScope,
+} from '@/services/security/accessControl';
+import type { Task } from '@/types';
 import type {
   AddLeadActivityPayload,
   CreateFlexibleFollowupPayload,
@@ -54,10 +78,48 @@ const normalizeUrlValue = (value?: string | null) =>
 
 const monthKey = (value?: string | null) => {
   if (!value) return 'Unknown';
-  return new Date(value).toLocaleString('en-US', { month: 'short' });
+  return new Date(value).toLocaleString('en-US', { month: 'short', year: 'numeric' });
+};
+
+const getRangeBounds = (range?: string) => {
+  const end = new Date();
+  const start = new Date(end);
+  switch (String(range || 'month').toLowerCase()) {
+    case 'year':
+      start.setMonth(start.getMonth() - 11);
+      start.setDate(1);
+      break;
+    case 'quarter':
+      start.setMonth(start.getMonth() - 2);
+      start.setDate(1);
+      break;
+    case 'month':
+    default:
+      start.setDate(1);
+      break;
+  }
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start: start.toISOString(), end: end.toISOString() };
 };
 
 export class SupabaseApiService {
+  private readonly modules = {
+    auth: createAuthService(this),
+    permission: createPermissionService(this),
+    profile: createProfileService(this),
+    project: createProjectService(this),
+    task: createTaskService(this),
+    lead: createLeadService(this),
+    notification: createNotificationService(this),
+    calendar: createCalendarService(this),
+    timeTracking: createTimeTrackingService(this),
+    finance: createFinanceService(this),
+    payroll: createPayrollService(this),
+    audit: createAuditService(this),
+    file: createFileService(this),
+  };
+
   constructor(private fallback?: RestFallback) {}
 
   private get client() {
@@ -120,17 +182,147 @@ export class SupabaseApiService {
       .filter(Boolean);
   }
 
+  private async getAccessibleProjectIds(userId: string) {
+    const { data, error } = await this.client
+      .from('project_members')
+      .select('project_id')
+      .eq('user_id', userId);
+
+    if (error) {
+      throw formatError(error, 'Unable to load project access.');
+    }
+
+    return ensureArray(data).map((row: any) => String(row.project_id)).filter(Boolean);
+  }
+
   private async getCurrentAccessContext() {
     const profile = await this.getCurrentProfileOrThrow();
     const role = await this.getRoleById(profile.role_id);
     const permissions = await this.getPermissionsByRoleId(profile.role_id);
-    const roleName = String(role?.name || '').toLowerCase().replace(/_/g, ' ');
-    const canViewAllLeads =
-      roleName === 'super admin' ||
-      roleName === 'superadmin' ||
-      permissions.includes('leads.view.all');
+    const canViewAllLeads = permissions.includes('leads.view.all');
+    const canViewTeamLeads = permissions.includes('leads.view.team');
+    const canViewAllProjects = permissions.includes('projects.view.all');
+    const canViewTeamProjects = permissions.includes('projects.view.team');
+    const canViewAllTime = permissions.includes('time.view.all');
+    const canViewTeamTime = permissions.includes('time.view.team');
+    const canViewAllNotifications = permissions.includes('notifications.view.all');
+    const canViewAllFinance = permissions.includes('finance.view.all');
+    const canViewTeamFinance = permissions.includes('finance.view.team');
+    const isAdminActor =
+      isSuperAdminRole(role) ||
+      permissions.includes('roles.manage') ||
+      permissions.includes('permissions.manage');
 
-    return { profile, role, permissions, canViewAllLeads };
+    return {
+      profile,
+      role,
+      permissions,
+      canViewAllLeads,
+      canViewTeamLeads,
+      canViewAllProjects,
+      canViewTeamProjects,
+      canViewAllTime,
+      canViewTeamTime,
+      canViewAllNotifications,
+      canViewAllFinance,
+      canViewTeamFinance,
+      isAdminActor,
+    };
+  }
+
+  private isMissingRpcFunctionError(error: any, functionName: string) {
+    const message = [error?.message, error?.details, error?.hint]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const code = String(error?.code || '').toUpperCase();
+    const fnName = functionName.toLowerCase();
+    return (
+      code === 'PGRST202' ||
+      message.includes(`public.${fnName}`) ||
+      message.includes(`function ${fnName}`) ||
+      message.includes('schema cache')
+    );
+  }
+
+  private isMissingTableError(error: any, tableName: string) {
+    const message = [error?.message, error?.details, error?.hint]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const code = String(error?.code || '').toUpperCase();
+    return code === 'PGRST205' || message.includes(`table 'public.${tableName}'`) || message.includes(`public.${tableName}`);
+  }
+
+  private isRpcResultShapeError(error: any) {
+    const message = [error?.message, error?.details, error?.hint]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return message.includes('cannot coerce the result to a single json object');
+  }
+
+  private firstRpcRow<T = any>(value: T | T[] | null | undefined): T | null {
+    if (Array.isArray(value)) return (value[0] as T) || null;
+    return (value as T) || null;
+  }
+
+  private async updateLeadWithFallback(leadId: string, patch: Record<string, any>, fallbackMessage: string) {
+    const { data, error } = await this.client.rpc('update_lead_secure', {
+      p_lead_id: leadId,
+      p_patch: patch,
+    });
+
+    const normalizedData = this.firstRpcRow(data);
+    if (!error && normalizedData) {
+      return normalizedData;
+    }
+
+    if (!this.isMissingRpcFunctionError(error, 'update_lead_secure') && !this.isRpcResultShapeError(error)) {
+      throw formatError(error, fallbackMessage);
+    }
+
+    const { error: fallbackError } = await this.client
+      .from('leads')
+      .update(patch)
+      .eq('id', leadId);
+
+    if (fallbackError) {
+      throw formatError(fallbackError, fallbackMessage);
+    }
+
+    return null;
+  }
+
+  private async createTimeTrackingSessionWithFallback(session: Record<string, any>, fallbackMessage: string) {
+    const { data, error } = await this.client.rpc('create_time_tracking_session_secure', {
+      p_session: session,
+    });
+
+    if (!error && data) {
+      return data;
+    }
+
+    if (!this.isMissingRpcFunctionError(error, 'create_time_tracking_session_secure')) {
+      throw formatError(error, fallbackMessage);
+    }
+
+    const insertPayload = {
+      ...session,
+      started_at: session.started_at || new Date().toISOString(),
+    };
+
+    const { data: created, error: fallbackError } = await this.client
+      .from('time_tracking_sessions')
+      .insert([insertPayload])
+      .select()
+      .single();
+
+    if (fallbackError || !created) {
+      throw formatError(fallbackError, fallbackMessage);
+    }
+
+    return created;
   }
 
   private extractDuplicateSignals(input: Partial<Lead> & Partial<CreateLeadPayload>) {
@@ -164,7 +356,9 @@ export class SupabaseApiService {
     const incoming = this.extractDuplicateSignals(payload);
     const { data, error } = await this.client
       .from('leads')
-      .select('id, name, email, phone, company, designation, website, linkedin_url, facebook_url, instagram_url, services_offered, source, metadata');
+      .select('id, name, email, phone, company, designation, website, linkedin_url, facebook_url, instagram_url, services_offered, source, metadata')
+      .order('created_at', { ascending: false })
+      .limit(250);
 
     if (error) throw formatError(error, 'Unable to validate duplicate lead.');
 
@@ -196,9 +390,6 @@ export class SupabaseApiService {
       const weakMatchFields = [
         incoming.fullName && incoming.fullName === existing.fullName,
         incoming.company && incoming.company === existing.company,
-        incoming.niche && incoming.niche === existing.niche,
-        incoming.service && incoming.service === existing.service,
-        incoming.source && incoming.source === existing.source,
       ].filter(Boolean).length;
 
       const fullRecordMatch = Boolean(incoming.fullName && incoming.company && weakMatchFields >= 3);
@@ -717,7 +908,9 @@ export class SupabaseApiService {
         followup_sent_at: row.followup_sent_at || undefined,
         followup_notes: row.followup_notes || undefined,
         close_value: row.close_value != null ? Number(row.close_value) : undefined,
-        assigned_to: row.assigned_to ? String(row.assigned_to) : undefined,
+      assigned_to: row.assigned_to ? String(row.assigned_to) : undefined,
+      project_id: row.project_id ? String(row.project_id) : undefined,
+      project_name: row.project?.name || undefined,
       assigned_to_name: row.assignee?.name || undefined,
       assigned_to_avatar: row.assignee?.avatar_url || row.assignee?.profile_image || undefined,
       created_by: row.created_by ? String(row.created_by) : undefined,
@@ -747,10 +940,11 @@ export class SupabaseApiService {
       *,
       assignee:profiles!leads_assigned_to_fkey(id, name, email, avatar_url, profile_image),
       owner:profiles!leads_created_by_fkey(id, name, email),
+      project:projects(id, name),
       lead_activities(id, lead_id, activity_type, summary, description, duration_minutes, outcome, created_by, user_id, created_at, activity_at),
       lead_notes(id, lead_id, note, content, created_at, user_id),
       lead_followups(id, lead_id, followup_type, scheduled_at, due_at, completed, completed_at, reminder_sent, notes, description, status, created_at, assigned_to),
-      lead_contacts(id, lead_id, name, email, phone, is_primary, role, created_at),
+      lead_contacts(id, lead_id, name, email, phone, is_primary, created_at),
       lead_tag_links(lead_id, tag_id, tag:lead_tags(id, name, color))
     `;
   }
@@ -783,8 +977,17 @@ export class SupabaseApiService {
   }
 
   async get<T = any>(endpoint: string): Promise<T> {
+    if (endpoint === '/users') {
+      return (await this.getUsers()) as T;
+    }
+    if (endpoint === '/currencies') {
+      return (await this.getCurrencies()) as T;
+    }
     if (endpoint === '/leads') {
       return (await this.getLeads()) as T;
+    }
+    if (endpoint === '/leads/taxonomies' || endpoint.startsWith('/leads/taxonomies?')) {
+      return (await this.getLeadTaxonomies(endpoint)) as T;
     }
     if (endpoint === '/finance/clients') {
       return (await this.getFinanceClients()) as T;
@@ -797,6 +1000,15 @@ export class SupabaseApiService {
     }
     if (endpoint === '/finance/founders') {
       return (await this.getFinanceFounders()) as T;
+    }
+    if (endpoint === '/finance/salaries') {
+      return (await this.getFinanceSalaries()) as T;
+    }
+    if (endpoint === '/finance/taxes') {
+      return (await this.getFinanceTaxes()) as T;
+    }
+    if (endpoint === '/finance/commissions') {
+      return (await this.getFinanceCommissions()) as T;
     }
     if (endpoint === '/finance/founders/equity-total') {
       return (await this.getFoundersEquityTotal()) as T;
@@ -822,8 +1034,14 @@ export class SupabaseApiService {
   }
 
   async post<T = any>(endpoint: string, data?: any): Promise<T> {
+    if (endpoint === '/currencies') {
+      return (await this.createCurrency(data)) as T;
+    }
     if (endpoint === '/leads') {
       return (await this.createLead(data)) as T;
+    }
+    if (endpoint === '/leads/taxonomies') {
+      return (await this.createLeadTaxonomy(data)) as T;
     }
     if (endpoint === '/time-logs') {
       return (await this.createTimeLog(data)) as T;
@@ -840,10 +1058,33 @@ export class SupabaseApiService {
     if (endpoint === '/finance/founders') {
       return (await this.createFinanceFounder(data)) as T;
     }
+    if (endpoint === '/finance/salaries') {
+      return (await this.createFinanceSalary(data)) as T;
+    }
+    if (endpoint === '/finance/taxes') {
+      return (await this.createFinanceTax(data)) as T;
+    }
+    if (endpoint === '/finance/commissions') {
+      return (await this.createFinanceCommission(data)) as T;
+    }
     if (endpoint === '/finance/settings') {
       return (await this.saveFinanceSettings(data)) as T;
     }
+    if (endpoint === '/time-logs/session/start') {
+      return (await this.startTimeSession(data)) as T;
+    }
+    if (endpoint === '/time-logs/session/stop') {
+      return (await this.stopTimeSession(data.session_id, data)) as T;
+    }
     return this.fallbackOrThrow('post', endpoint, data);
+  }
+
+  async patch<T = any>(endpoint: string, data?: any): Promise<T> {
+    const taxonomyUpdateMatch = endpoint.match(/^\/leads\/taxonomies\/(.+)$/);
+    if (taxonomyUpdateMatch) {
+      return (await this.updateLeadTaxonomy(taxonomyUpdateMatch[1], data)) as T;
+    }
+    return this.fallbackOrThrow('patch', endpoint, data);
   }
 
   async put<T = any>(endpoint: string, data?: any): Promise<T> {
@@ -851,10 +1092,18 @@ export class SupabaseApiService {
     if (founderUpdateMatch) {
       return (await this.updateFinanceFounder(founderUpdateMatch[1], data)) as T;
     }
+    const salaryUpdateMatch = endpoint.match(/^\/finance\/salaries\/(.+)$/);
+    if (salaryUpdateMatch) {
+      return (await this.updateFinanceSalary(salaryUpdateMatch[1], data)) as T;
+    }
     return this.fallbackOrThrow('put', endpoint, data);
   }
 
   async delete<T = any>(endpoint: string): Promise<T> {
+    const taxonomyDeleteMatch = endpoint.match(/^\/leads\/taxonomies\/(.+)$/);
+    if (taxonomyDeleteMatch) {
+      return (await this.deleteLeadTaxonomy(taxonomyDeleteMatch[1])) as T;
+    }
     const leadDeleteMatch = endpoint.match(/^\/leads\/(.+)$/);
     if (leadDeleteMatch) {
       return (await this.deleteLead(leadDeleteMatch[1])) as T;
@@ -875,9 +1124,29 @@ export class SupabaseApiService {
     if (founderDeleteMatch) {
       return (await this.deleteFinanceFounder(founderDeleteMatch[1])) as T;
     }
+    const salaryDeleteMatch = endpoint.match(/^\/finance\/salaries\/(.+)$/);
+    if (salaryDeleteMatch) {
+      return (await this.deleteFinanceSalary(salaryDeleteMatch[1])) as T;
+    }
+    const taxDeleteMatch = endpoint.match(/^\/finance\/taxes\/(.+)$/);
+    if (taxDeleteMatch) {
+      return (await this.deleteFinanceTax(taxDeleteMatch[1])) as T;
+    }
+    const commissionDeleteMatch = endpoint.match(/^\/finance\/commissions\/(.+)$/);
+    if (commissionDeleteMatch) {
+      return (await this.deleteFinanceCommission(commissionDeleteMatch[1])) as T;
+    }
     const timeLogDeleteMatch = endpoint.match(/^\/time-logs\/(.+)$/);
     if (timeLogDeleteMatch) {
       return (await this.deleteTimeLog(timeLogDeleteMatch[1])) as T;
+    }
+    const logDeleteMatch = endpoint.match(/^\/activity-logs\/(.+)$/);
+    if (logDeleteMatch) {
+      return (await this.deleteActivityLog(logDeleteMatch[1])) as T;
+    }
+    const currencyDeleteMatch = endpoint.match(/^\/currencies\/(.+)$/);
+    if (currencyDeleteMatch) {
+      return (await this.deleteCurrency(currencyDeleteMatch[1])) as T;
     }
     return this.fallbackOrThrow('delete', endpoint);
   }
@@ -921,34 +1190,38 @@ export class SupabaseApiService {
   }
 
   async getDashboard() {
-    const [projectsRes, tasksRes, usersRes] = await Promise.all([
-      this.client.from('projects').select('id, status'),
-      this.client.from('tasks').select('id, status, due_date'),
-      this.client.from('profiles').select('id, status'),
-    ]);
+    const [projectsRes, tasksRes] = await Promise.all([this.getProjects(), this.getTasks()]);
 
-    if (projectsRes.error) throw formatError(projectsRes.error, 'Unable to load project stats.');
-    if (tasksRes.error) throw formatError(tasksRes.error, 'Unable to load task stats.');
-    if (usersRes.error) throw formatError(usersRes.error, 'Unable to load team stats.');
+    const projects = ensureArray((projectsRes as any).data);
+    const tasks = ensureArray((tasksRes as any).data);
+    const projectMembers = new Set<string>();
+    projects.forEach((project: any) => {
+      ensureArray(project.members).forEach((member: any) => {
+        if (member?.user_id) projectMembers.add(String(member.user_id));
+      });
+    });
+    tasks.forEach((task: any) => {
+      if (task.assigned_to) projectMembers.add(String(task.assigned_to));
+      if (task.reporter?.id) projectMembers.add(String(task.reporter.id));
+    });
+    const memberIds = [...projectMembers];
+    const { data: memberProfiles, error: memberError } = memberIds.length
+      ? await this.client.from('profiles').select('id, status').in('id', memberIds)
+      : { data: [], error: null as any };
+
+    if (memberError) throw formatError(memberError, 'Unable to load team stats.');
 
     const now = new Date();
-    const tasks = ensureArray(tasksRes.data);
-    const overdueTasks = tasks.filter(
-      (task: any) =>
-        task.due_date &&
-        new Date(task.due_date) < now &&
-        normalizeStatus(task.status) !== 'done'
-    ).length;
+    const overdueTasks = tasks.filter((task: any) => task.due_date && new Date(task.due_date) < now && normalizeStatus(task.status) !== 'done').length;
+    const activeMembers = ensureArray(memberProfiles).filter((profile: any) => normalizeStatus(profile.status) === 'active').length;
 
     return {
       success: true,
       data: {
         projects: {
-          total: ensureArray(projectsRes.data).length,
+          total: projects.length,
           active: String(
-            ensureArray(projectsRes.data).filter((project: any) =>
-              ['active', 'in_progress', 'planning', 'on_hold'].includes(normalizeStatus(project.status))
-            ).length
+            projects.filter((project: any) => ['active', 'in_progress', 'planning', 'on_hold'].includes(normalizeStatus(project.status))).length
           ),
         },
         tasks: {
@@ -956,23 +1229,20 @@ export class SupabaseApiService {
         },
         overdueTasks,
         teamMembers: {
-          total: ensureArray(usersRes.data).length,
-          online: String(ensureArray(usersRes.data).filter((user: any) => normalizeStatus(user.status) === 'active').length),
+          total: memberIds.length,
+          online: String(activeMembers),
         },
       },
     };
   }
 
   async getProjectProgressReport() {
-    const { data, error } = await this.client
-      .from('projects')
-      .select('id, name, status, tasks(id, status)');
-
-    if (error) throw formatError(error, 'Unable to load project progress.');
+    const projectsRes = await this.getProjects();
+    const projects = ensureArray((projectsRes as any).data);
 
     return {
       success: true,
-      data: ensureArray(data).map((project: any) => {
+      data: projects.map((project: any) => {
         const totalTasks = ensureArray(project.tasks).length;
         const completedTasks = ensureArray(project.tasks).filter((task: any) => normalizeStatus(task.status) === 'done').length;
 
@@ -989,17 +1259,20 @@ export class SupabaseApiService {
   }
 
   async getTeamPerformanceReport() {
-    const [usersRes, tasksRes] = await Promise.all([
-      this.client.from('profiles').select('id, name, email, avatar_url, profile_image'),
-      this.client.from('tasks').select('id, assignee_id, status'),
-    ]);
+    const tasksRes = await this.getTasks();
+    const tasks = ensureArray((tasksRes as any).data);
+    const assigneeIds = [...new Set(tasks.map((task: any) => task.assigned_to).filter(Boolean))];
+    const { data: users, error } = assigneeIds.length
+      ? await this.client
+          .from('profiles')
+          .select('id, name, email, avatar_url, profile_image')
+          .in('id', assigneeIds)
+      : { data: [], error: null as any };
 
-    if (usersRes.error) throw formatError(usersRes.error, 'Unable to load users.');
-    if (tasksRes.error) throw formatError(tasksRes.error, 'Unable to load tasks.');
+    if (error) throw formatError(error, 'Unable to load users.');
 
-    const tasks = ensureArray(tasksRes.data);
-    const data = ensureArray(usersRes.data).map((user: any) => {
-      const assigned = tasks.filter((task: any) => task.assignee_id === user.id);
+    const data = ensureArray(users).map((user: any) => {
+      const assigned = tasks.filter((task: any) => String(task.assigned_to || '') === String(user.id));
       const completed = assigned.filter((task: any) => normalizeStatus(task.status) === 'done');
       const completionRate = assigned.length > 0 ? Math.round((completed.length / assigned.length) * 100) : 0;
 
@@ -1017,7 +1290,9 @@ export class SupabaseApiService {
   }
 
   async getTaskDistributionReport() {
-    const { data, error } = await this.client.from('tasks').select('status');
+    const tasksRes = await this.getTasks();
+    const data = ensureArray((tasksRes as any).data).map((task: any) => ({ status: task.status }));
+    const error = null;
     if (error) throw formatError(error, 'Unable to load task distribution.');
 
     const grouped = ensureArray(data).reduce((acc: Record<string, number>, task: any) => {
@@ -1033,7 +1308,13 @@ export class SupabaseApiService {
   }
 
   async getTaskActivityReport() {
-    const { data, error } = await this.client.from('tasks').select('created_at, completed_at, status');
+    const tasksRes = await this.getTasks();
+    const data = ensureArray((tasksRes as any).data).map((task: any) => ({
+      created_at: task.created_at,
+      completed_at: task.completed_at,
+      status: task.status,
+    }));
+    const error = null;
     if (error) throw formatError(error, 'Unable to load task activity.');
 
     const grouped: Record<string, { month: string; created: number; completed: number }> = {};
@@ -1057,7 +1338,10 @@ export class SupabaseApiService {
   }
 
   async getProjects() {
-    const { data, error } = await this.client
+    const access = await this.getCurrentAccessContext();
+    const projectIds = access.canViewAllProjects ? [] : await this.getAccessibleProjectIds(access.profile.id);
+
+    let query = this.client
       .from('projects')
       .select(`
         id,
@@ -1077,6 +1361,16 @@ export class SupabaseApiService {
       `)
       .order('created_at', { ascending: false });
 
+    if (!access.canViewAllProjects) {
+      if (projectIds.length > 0) {
+        query = query.in('id', projectIds);
+      } else {
+        query = query.eq('created_by', access.profile.id);
+      }
+    }
+
+    const { data, error } = await query;
+
     if (error) throw formatError(error, 'Unable to load projects.');
 
     return {
@@ -1086,6 +1380,14 @@ export class SupabaseApiService {
   }
 
   async getProject(id: string) {
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects) {
+      const projectIds = await this.getAccessibleProjectIds(access.profile.id);
+      if (!projectIds.includes(String(id))) {
+        throw new ApiError('You do not have access to this project.', 403, 'PROJECT_ACCESS_DENIED');
+      }
+    }
+
     const { data, error } = await this.client
       .from('projects')
       .select(`
@@ -1113,25 +1415,22 @@ export class SupabaseApiService {
   }
 
   async createProject(payload: any) {
-    const currentUser = await this.getCurrentProfileOrThrow();
-    const insertPayload = {
-      name: payload.name,
-      description: payload.description || null,
-      priority: payload.priority || 'medium',
-      status: payload.status || 'planning',
-      start_date: payload.start_date || null,
-      end_date: payload.end_date || null,
-      created_by: currentUser.id,
-    };
-
-    const { data, error } = await this.client.from('projects').insert(insertPayload).select().single();
-    if (error || !data) throw formatError(error, 'Failed to create project.');
-
-    await this.client.from('project_members').insert({
-      project_id: data.id,
-      user_id: currentUser.id,
-      role: 'owner',
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects && !access.permissions.includes('projects.create')) {
+      throw new ApiError('You do not have permission to create projects.', 403, 'PROJECT_CREATE_DENIED');
+    }
+    const { data, error } = await this.client.rpc('create_project_secure', {
+      p_project: {
+        name: payload.name,
+        description: payload.description || null,
+        priority: payload.priority || 'medium',
+        status: payload.status || 'planning',
+        progress: payload.progress || 0,
+        start_date: payload.start_date || null,
+        end_date: payload.end_date || null,
+      },
     });
+    if (error || !data) throw formatError(error, 'Failed to create project.');
 
     await this.logActivity('CREATE', 'project', String(data.id), data.name);
 
@@ -1139,9 +1438,24 @@ export class SupabaseApiService {
   }
 
   async updateProject(id: string, payload: any) {
-    const { error } = await this.client
-      .from('projects')
-      .update({
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects && !access.permissions.includes('projects.update')) {
+      const project = await this.getProject(id);
+      const projectData = project.data as any;
+      const currentUserId = String(access.profile.id);
+      const isOwnerOrManager =
+        String(projectData.created_by_id || '') === currentUserId ||
+        ensureArray(projectData.members).some((member: any) =>
+          String(member.user_id) === currentUserId && ['owner', 'manager'].includes(String(member.role || '').toLowerCase())
+        );
+      if (!isOwnerOrManager) {
+        throw new ApiError('You do not have permission to update projects.', 403, 'PROJECT_UPDATE_DENIED');
+      }
+    }
+
+    const { error } = await this.client.rpc('update_project_secure', {
+      p_project_id: id,
+      p_patch: {
         name: payload.name,
         description: payload.description,
         priority: payload.priority,
@@ -1149,9 +1463,8 @@ export class SupabaseApiService {
         start_date: payload.start_date || null,
         end_date: payload.end_date || null,
         progress: payload.progress,
-      })
-      .eq('id', id);
-
+      },
+    });
     if (error) throw formatError(error, 'Failed to update project.');
 
     await this.logActivity('UPDATE', 'project', id, payload.name || id);
@@ -1161,7 +1474,20 @@ export class SupabaseApiService {
 
   async deleteProject(id: string) {
     const project = await this.getProject(id);
-    const { error } = await this.client.from('projects').delete().eq('id', id);
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects && !access.permissions.includes('projects.delete')) {
+      const projectData = project.data as any;
+      const currentUserId = String(access.profile.id);
+      const isOwnerOrManager =
+        String(projectData.created_by_id || '') === currentUserId ||
+        ensureArray(projectData.members).some((member: any) =>
+          String(member.user_id) === currentUserId && ['owner', 'manager'].includes(String(member.role || '').toLowerCase())
+        );
+      if (!isOwnerOrManager) {
+        throw new ApiError('You do not have permission to delete projects.', 403, 'PROJECT_DELETE_DENIED');
+      }
+    }
+    const { error } = await this.client.rpc('delete_project_secure', { p_project_id: id });
     if (error) throw formatError(error, 'Failed to delete project.');
 
     await this.logActivity('DELETE', 'project', id, project.data?.name || id);
@@ -1170,10 +1496,12 @@ export class SupabaseApiService {
   }
 
   async getUserProjects(userId: string) {
+    const access = await this.getCurrentAccessContext();
+    const targetUserId = access.canViewAllProjects ? String(userId) : String(access.profile.id);
     const { data, error } = await this.client
       .from('project_members')
       .select('project:projects(*)')
-      .eq('user_id', userId);
+      .eq('user_id', targetUserId);
 
     if (error) throw formatError(error, 'Unable to load user projects.');
 
@@ -1181,6 +1509,14 @@ export class SupabaseApiService {
   }
 
   async getProjectMembers(projectId: string) {
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects) {
+      const projectIds = await this.getAccessibleProjectIds(access.profile.id);
+      if (!projectIds.includes(String(projectId))) {
+        throw new ApiError('You do not have access to this project.', 403, 'PROJECT_ACCESS_DENIED');
+      }
+    }
+
     const { data, error } = await this.client
       .from('project_members')
       .select('id, user_id, role, joined_at, user:profiles!project_members_user_id_fkey(id, name, email, avatar_url, profile_image)')
@@ -1213,10 +1549,22 @@ export class SupabaseApiService {
   }
 
   async getMinimalProjects() {
-    const { data, error } = await this.client
+    const access = await this.getCurrentAccessContext();
+    let query = this.client
       .from('projects')
       .select('id, name')
       .order('name', { ascending: true });
+
+    if (!access.canViewAllProjects) {
+      const projectIds = await this.getAccessibleProjectIds(access.profile.id);
+      if (projectIds.length > 0) {
+        query = query.in('id', projectIds);
+      } else {
+        query = query.eq('created_by', access.profile.id);
+      }
+    }
+
+    const { data, error } = await query;
 
     if (error) throw formatError(error, 'Unable to load projects.');
 
@@ -1224,15 +1572,15 @@ export class SupabaseApiService {
   }
 
   async addProjectMember(projectId: string, userId: string, role: string) {
-    const { data, error } = await this.client
-      .from('project_members')
-      .insert({
-        project_id: projectId,
-        user_id: userId,
-        role: role || 'member',
-      })
-      .select()
-      .single();
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects && !access.permissions.includes('members.create')) {
+      throw new ApiError('You do not have permission to add project members.', 403, 'PROJECT_MEMBER_CREATE_DENIED');
+    }
+    const { data, error } = await this.client.rpc('assign_project_member_secure', {
+      p_project_id: projectId,
+      p_user_id: userId,
+      p_role: role || 'member',
+    });
 
     if (error) throw formatError(error, 'Failed to add project member.');
 
@@ -1242,6 +1590,10 @@ export class SupabaseApiService {
   }
 
   async removeProjectMember(projectId: string, userId: string) {
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects && !access.permissions.includes('members.delete')) {
+      throw new ApiError('You do not have permission to remove project members.', 403, 'PROJECT_MEMBER_DELETE_DENIED');
+    }
     const { error } = await this.client
       .from('project_members')
       .delete()
@@ -1256,6 +1608,9 @@ export class SupabaseApiService {
   }
 
   async getTasks(params?: Record<string, string>) {
+    const access = await this.getCurrentAccessContext();
+    const currentUserId = String(access.profile.id);
+    const accessibleProjectIds = access.canViewAllProjects ? [] : await this.getAccessibleProjectIds(currentUserId);
     let query = this.client
       .from('tasks')
       .select(`
@@ -1280,6 +1635,14 @@ export class SupabaseApiService {
         reporter:profiles!tasks_reporter_id_fkey(id, name, email, avatar_url, profile_image)
       `)
       .order('created_at', { ascending: false });
+
+    if (!access.canViewAllProjects) {
+      const conditions = [`reporter_id.eq.${currentUserId}`, `assignee_id.eq.${currentUserId}`];
+      if (accessibleProjectIds.length > 0) {
+        conditions.push(`project_id.in.(${accessibleProjectIds.join(',')})`);
+      }
+      query = query.or(conditions.join(','));
+    }
 
     if (params?.project_id) {
       query = query.eq('project_id', params.project_id);
@@ -1325,7 +1688,11 @@ export class SupabaseApiService {
   }
 
   async getTask(id: string) {
-    const { data, error } = await this.client
+    const access = await this.getCurrentAccessContext();
+    const currentUserId = String(access.profile.id);
+    const accessibleProjectIds = access.canViewAllProjects ? [] : await this.getAccessibleProjectIds(currentUserId);
+
+    let query = this.client
       .from('tasks')
       .select(`
         id,
@@ -1348,8 +1715,17 @@ export class SupabaseApiService {
         assignee:profiles!tasks_assignee_id_fkey(id, name, email, avatar_url, profile_image),
         reporter:profiles!tasks_reporter_id_fkey(id, name, email, avatar_url, profile_image)
       `)
-      .eq('id', id)
-      .single();
+      .eq('id', id);
+
+    if (!access.canViewAllProjects) {
+      const conditions = [`reporter_id.eq.${currentUserId}`, `assignee_id.eq.${currentUserId}`];
+      if (accessibleProjectIds.length > 0) {
+        conditions.push(`project_id.in.(${accessibleProjectIds.join(',')})`);
+      }
+      query = query.or(conditions.join(','));
+    }
+
+    const { data, error } = await query.single();
 
     if (error || !data) throw formatError(error, 'Task not found.');
 
@@ -1361,19 +1737,31 @@ export class SupabaseApiService {
   }
 
   async createTask(payload: any) {
-    const currentUser = await this.getCurrentProfileOrThrow();
-    const insertPayload: any = {
-      title: payload.title,
-      description: payload.description || null,
-      priority: payload.priority || 'medium',
-      status: payload.status || 'todo',
-      project_id: payload.project_id,
-      due_date: payload.due_date || null,
-      reporter_id: currentUser.id,
-      assignee_id: payload.assignee_id || null,
-    };
+    const access = await this.getCurrentAccessContext();
+    if (!access.permissions.includes('tasks.create') && !access.canViewAllProjects) {
+      throw new ApiError('You do not have permission to create tasks.', 403, 'TASK_CREATE_DENIED');
+    }
 
-    const { data, error } = await this.client.from('tasks').insert(insertPayload).select().single();
+    if (!access.canViewAllProjects) {
+      const accessibleProjectIds = await this.getAccessibleProjectIds(String(access.profile.id));
+      if (!accessibleProjectIds.includes(String(payload.project_id))) {
+        throw new ApiError('You do not have access to this project.', 403, 'TASK_PROJECT_DENIED');
+      }
+    }
+
+    const { data, error } = await this.client.rpc('create_task_secure', {
+      p_task: {
+        title: payload.title,
+        description: payload.description || null,
+        priority: payload.priority || 'medium',
+        status: payload.status || 'todo',
+        project_id: payload.project_id,
+        due_date: payload.due_date || null,
+        assignee_id: payload.assignee_id || null,
+        estimated_hours: payload.estimated_hours,
+        actual_hours: payload.actual_hours,
+      },
+    });
     if (error || !data) throw formatError(error, 'Failed to create task.');
 
     await this.logActivity('CREATE', 'task', String(data.id), data.title);
@@ -1382,6 +1770,21 @@ export class SupabaseApiService {
   }
 
   async updateTask(id: string, payload: any) {
+    const access = await this.getCurrentAccessContext();
+    const task = await this.getTask(id);
+    const taskData = task.data as Task;
+    const currentUserId = String(access.profile.id);
+    const accessibleProjectIds = access.canViewAllProjects ? [] : await this.getAccessibleProjectIds(currentUserId);
+    const canAccessTask =
+      String(taskData.reporter?.id || '') === currentUserId ||
+      String(taskData.assigned_to || '') === currentUserId ||
+      (taskData.project_id ? accessibleProjectIds.includes(taskData.project_id) : false) ||
+      access.permissions.includes('tasks.update') ||
+      access.isAdminActor;
+
+    if (!canAccessTask) {
+      throw new ApiError('You do not have access to this task.', 403, 'TASK_ACCESS_DENIED');
+    }
     const updatePayload: any = {
       title: payload.title,
       description: payload.description,
@@ -1394,11 +1797,10 @@ export class SupabaseApiService {
       actual_hours: payload.actual_hours,
     };
 
-    if (normalizeStatus(payload.status) === 'done') {
-      updatePayload.completed_at = new Date().toISOString();
-    }
-
-    const { error } = await this.client.from('tasks').update(updatePayload).eq('id', id);
+    const { error } = await this.client.rpc('update_task_secure', {
+      p_task_id: id,
+      p_patch: updatePayload,
+    });
     if (error) throw formatError(error, 'Failed to update task.');
 
     await this.logActivity('UPDATE', 'task', id, payload.title || id);
@@ -1408,7 +1810,13 @@ export class SupabaseApiService {
 
   async deleteTask(id: string) {
     const task = await this.getTask(id);
-    const { error } = await this.client.from('tasks').delete().eq('id', id);
+    const access = await this.getCurrentAccessContext();
+    const taskData = task.data as Task;
+    const isReporter = taskData.reporter?.id === access.profile.id;
+    if (!isReporter && !access.permissions.includes('tasks.delete') && !access.isAdminActor) {
+      throw new ApiError('You do not have permission to delete tasks.', 403, 'TASK_DELETE_DENIED');
+    }
+    const { error } = await this.client.rpc('delete_task_secure', { p_task_id: id });
     if (error) throw formatError(error, 'Failed to delete task.');
 
     await this.logActivity('DELETE', 'task', id, task.data?.title || id);
@@ -1417,10 +1825,21 @@ export class SupabaseApiService {
   }
 
   async updateTaskStatus(id: string, status: string) {
-    const updatePayload: any = { status };
-    updatePayload.completed_at = normalizeStatus(status) === 'done' ? new Date().toISOString() : null;
-
-    const { error } = await this.client.from('tasks').update(updatePayload).eq('id', id);
+    const access = await this.getCurrentAccessContext();
+    const task = await this.getTask(id);
+    const taskData = task.data as Task;
+    const canUpdate =
+      taskData.assigned_to === access.profile.id ||
+      taskData.reporter?.id === access.profile.id ||
+      access.permissions.includes('tasks.update') ||
+      access.isAdminActor;
+    if (!canUpdate) {
+      throw new ApiError('You do not have permission to update this task.', 403, 'TASK_UPDATE_DENIED');
+    }
+    const { error } = await this.client.rpc('update_task_secure', {
+      p_task_id: id,
+      p_patch: { status },
+    });
     if (error) throw formatError(error, 'Failed to update task status.');
 
     await this.logActivity('UPDATE', 'task', id, `status:${status}`);
@@ -1429,7 +1848,21 @@ export class SupabaseApiService {
   }
 
   async updateTaskPriority(id: string, priority: string) {
-    const { error } = await this.client.from('tasks').update({ priority }).eq('id', id);
+    const access = await this.getCurrentAccessContext();
+    const task = await this.getTask(id);
+    const taskData = task.data as Task;
+    const canUpdate =
+      taskData.assigned_to === access.profile.id ||
+      taskData.reporter?.id === access.profile.id ||
+      access.permissions.includes('tasks.update') ||
+      access.isAdminActor;
+    if (!canUpdate) {
+      throw new ApiError('You do not have permission to update this task.', 403, 'TASK_UPDATE_DENIED');
+    }
+    const { error } = await this.client.rpc('update_task_secure', {
+      p_task_id: id,
+      p_patch: { priority },
+    });
     if (error) throw formatError(error, 'Failed to update task priority.');
 
     await this.logActivity('UPDATE', 'task', id, `priority:${priority}`);
@@ -1438,6 +1871,9 @@ export class SupabaseApiService {
   }
 
   async getUserTasks(userId: string) {
+    const access = await this.getCurrentAccessContext();
+    const currentUserId = String(access.profile.id);
+    const targetUserId = access.canViewAllProjects ? String(userId) : currentUserId;
     const { data, error } = await this.client
       .from('tasks')
       .select(`
@@ -1461,7 +1897,7 @@ export class SupabaseApiService {
         assignee:profiles!tasks_assignee_id_fkey(id, name, email, avatar_url, profile_image),
         reporter:profiles!tasks_reporter_id_fkey(id, name, email, avatar_url, profile_image)
       `)
-      .eq('assignee_id', userId)
+      .eq('assignee_id', targetUserId)
       .order('created_at', { ascending: false });
 
     if (error) throw formatError(error, 'Unable to load user tasks.');
@@ -1470,7 +1906,15 @@ export class SupabaseApiService {
   }
 
   async assignTask(taskId: string, userId: string) {
-    const { error } = await this.client.from('tasks').update({ assignee_id: userId }).eq('id', taskId);
+    const access = await this.getCurrentAccessContext();
+    await this.getTask(taskId);
+    if (!access.permissions.includes('tasks.assign') && !access.isAdminActor) {
+      throw new ApiError('You do not have permission to assign tasks.', 403, 'TASK_ASSIGN_DENIED');
+    }
+    const { error } = await this.client.rpc('update_task_secure', {
+      p_task_id: taskId,
+      p_patch: { assignee_id: userId },
+    });
     if (error) throw formatError(error, 'Failed to assign task.');
 
     await this.logActivity('ASSIGN', 'task', taskId, `assignee:${userId}`);
@@ -1479,7 +1923,15 @@ export class SupabaseApiService {
   }
 
   async unassignTask(taskId: string) {
-    const { error } = await this.client.from('tasks').update({ assignee_id: null }).eq('id', taskId);
+    const access = await this.getCurrentAccessContext();
+    await this.getTask(taskId);
+    if (!access.permissions.includes('tasks.assign') && !access.isAdminActor) {
+      throw new ApiError('You do not have permission to unassign tasks.', 403, 'TASK_ASSIGN_DENIED');
+    }
+    const { error } = await this.client.rpc('update_task_secure', {
+      p_task_id: taskId,
+      p_patch: { assignee_id: null },
+    });
     if (error) throw formatError(error, 'Failed to unassign task.');
 
     await this.logActivity('UPDATE', 'task', taskId, 'assignee:removed');
@@ -1520,6 +1972,7 @@ export class SupabaseApiService {
 
   async addTaskComment(taskId: string, content: string, parentId?: string | number) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    await this.getTask(taskId);
     const { data, error } = await this.client
       .from('task_comments')
       .insert({
@@ -1540,13 +1993,22 @@ export class SupabaseApiService {
   }
 
   async deleteTaskComment(commentId: string) {
+    const currentUser = await this.getCurrentProfileOrThrow();
+    const access = await this.getCurrentAccessContext();
     const { data: comment, error: readError } = await this.client
       .from('task_comments')
-      .select('task_id, content')
+      .select('task_id, content, user_id')
       .eq('id', commentId)
       .single();
 
     if (readError || !comment) throw formatError(readError, 'Comment not found.');
+    if (
+      String(comment.user_id) !== String(currentUser.id) &&
+      !access.permissions.includes('tasks.delete') &&
+      !access.isAdminActor
+    ) {
+      throw new ApiError('You do not have permission to delete this comment.', 403, 'COMMENT_DELETE_DENIED');
+    }
 
     const { error } = await this.client.from('task_comments').delete().eq('id', commentId);
     if (error) throw formatError(error, 'Failed to delete comment.');
@@ -1568,6 +2030,13 @@ export class SupabaseApiService {
     const relatedType = String(formData.get('related_type') || formData.get('relatedType') || 'task');
     if (!relatedId) {
       throw new ApiError('File related record is required.', 400, 'FILE_RELATED_ID_REQUIRED');
+    }
+    if (relatedType === 'project') {
+      await this.getProject(relatedId);
+    } else if (relatedType === 'task') {
+      await this.getTask(relatedId);
+    } else if (relatedType === 'lead') {
+      await this.getLeadById(relatedId);
     }
 
     const uploaded = await this.uploadToStorage(file, `${relatedType}/${relatedId}`);
@@ -1607,8 +2076,16 @@ export class SupabaseApiService {
   }
 
   async deleteFile(id: string) {
+    const access = await this.getCurrentAccessContext();
     const { data, error: readError } = await this.client.from('files').select('*').eq('id', id).single();
     if (readError || !data) throw formatError(readError, 'File not found.');
+    if (
+      String(data.uploaded_by) !== String(access.profile.id) &&
+      !access.permissions.includes('files.delete') &&
+      !access.isAdminActor
+    ) {
+      throw new ApiError('You do not have permission to delete this file.', 403, 'FILE_DELETE_DENIED');
+    }
     if (data.file_path) {
       await this.client.storage.from('files').remove([data.file_path]);
     }
@@ -1618,25 +2095,30 @@ export class SupabaseApiService {
   }
 
   async getUsers() {
-    const currentProfile = await this.getCurrentProfileOrThrow().catch(() => null);
-    const currentRole = currentProfile ? await this.getRoleById(currentProfile.role_id).catch(() => null) : null;
-    const hideCurrentUser = ['super admin', 'superadmin'].includes(String(currentRole?.name || '').toLowerCase().replace(/_/g, ' '));
-
-    const { data, error } = await this.client
+    const access = await this.getCurrentAccessContext();
+    let query = this.client
       .from('profiles')
       .select('id, name, email, avatar_url, profile_image, status, created_at, last_login_at, role_id')
       .order('created_at', { ascending: false });
 
+    if (!access.permissions.includes('users.view.all') && !access.isAdminActor) {
+      query = query.eq('id', access.profile.id);
+    }
+
+    const { data, error } = await query;
+
     if (error) throw formatError(error, 'Unable to load users.');
 
-    const visibleProfiles = hideCurrentUser
-      ? ensureArray(data).filter((profile: any) => String(profile.id) !== String(currentProfile?.id))
-      : ensureArray(data);
-    const users = await Promise.all(visibleProfiles.map((profile: any) => this.hydrateUser(profile)));
+    const users = await Promise.all(ensureArray(data).map((profile: any) => this.hydrateUser(profile)));
     return { success: true, data: users };
   }
 
   async getUser(id: string) {
+    const access = await this.getCurrentAccessContext();
+    if (String(id) !== String(access.profile.id) && !access.permissions.includes('users.view.all')) {
+      throw new ApiError('You do not have permission to view this profile.', 403, 'USER_VIEW_DENIED');
+    }
+
     const { data, error } = await this.client
       .from('profiles')
       .select('id, name, email, avatar_url, profile_image, status, created_at, last_login_at, role_id')
@@ -1656,6 +2138,11 @@ export class SupabaseApiService {
   role_id?: string;      // ← ye UUID hai roles table se e.g. "ffd85053-c24b-48b4-87cb-e3377021ba43"
   phone?: string;
 }) {
+  const access = await this.getCurrentAccessContext();
+  if (!access.permissions.includes('users.create') && !access.isAdminActor) {
+    throw new ApiError('You do not have permission to create users.', 403, 'USER_CREATE_DENIED');
+  }
+
   // Current session ka token lo
   const { data: { session } } = await this.client.auth.getSession();
  
@@ -1692,11 +2179,18 @@ export class SupabaseApiService {
 }
 
   async updateUser(id: string, payload: any) {
+    const access = await this.getCurrentAccessContext();
+    const isOwnProfile = String(id) === String(access.profile.id);
+    const canAdminUpdate = access.permissions.includes('users.update') || access.isAdminActor;
+    if (!isOwnProfile && !canAdminUpdate) {
+      throw new ApiError('You do not have permission to update this user.', 403, 'USER_UPDATE_DENIED');
+    }
+
     const updatePayload: any = {
       name: payload.name,
       email: payload.email,
-      status: payload.status,
-      role_id: payload.role_id || payload.role?.id,
+      status: canAdminUpdate ? payload.status : undefined,
+      role_id: canAdminUpdate ? payload.role_id || payload.role?.id : undefined,
     };
 
     Object.keys(updatePayload).forEach((key) => updatePayload[key] === undefined && delete updatePayload[key]);
@@ -2016,7 +2510,7 @@ export class SupabaseApiService {
     const { data, error } = await this.client
       .from('notifications')
       .select('*')
-      .or(`user_id.is.null,user_id.eq.${currentUserId}`)
+      .eq('user_id', currentUserId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -2051,6 +2545,18 @@ export class SupabaseApiService {
   }
 
   async markNotificationAsRead(id: string) {
+    const currentUserId = await this.getCurrentUserId();
+    const { data: notification, error: loadError } = await this.client
+      .from('notifications')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', currentUserId)
+      .single();
+
+    if (loadError || !notification) {
+      throw formatError(loadError, 'Notification not found.');
+    }
+
     const { error } = await this.client.from('notifications').update({ is_read: true }).eq('id', id);
     if (error) {
       throw formatError(error, 'Failed to mark notification as read.');
@@ -2059,6 +2565,18 @@ export class SupabaseApiService {
   }
 
   async deleteNotification(id: string) {
+    const currentUserId = await this.getCurrentUserId();
+    const { data: notification, error: loadError } = await this.client
+      .from('notifications')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', currentUserId)
+      .single();
+
+    if (loadError || !notification) {
+      throw formatError(loadError, 'Notification not found.');
+    }
+
     const { error } = await this.client.from('notifications').delete().eq('id', id);
     if (error) {
       throw formatError(error, 'Failed to delete notification.');
@@ -2068,22 +2586,9 @@ export class SupabaseApiService {
 
   async getCalendar(startDate?: string, endDate?: string) {
     const [projectsRes, tasksRes] = await Promise.all([
-      this.client
-        .from('projects')
-        .select('id, name, description, status, start_date, end_date, created_at')
-        .order('created_at', { ascending: false }),
-      this.client
-        .from('tasks')
-        .select('id, title, description, status, due_date, project_id, created_at')
-        .order('created_at', { ascending: false }),
+      this.getProjects(),
+      this.getTasks(),
     ]);
-
-    if (projectsRes.error) {
-      throw formatError(projectsRes.error, 'Unable to load calendar projects.');
-    }
-    if (tasksRes.error) {
-      throw formatError(tasksRes.error, 'Unable to load calendar tasks.');
-    }
 
     const rangeStart = startDate ? new Date(startDate) : null;
     const rangeEnd = endDate ? new Date(endDate) : null;
@@ -2129,32 +2634,115 @@ export class SupabaseApiService {
 
   async createTimeLog(data: any) {
     const currentUserId = await this.getCurrentUserId();
+    const access = await this.getCurrentAccessContext();
     const hours = Number(data?.hours || 0);
     const minutes = Number(data?.minutes || 0);
     const normalizedHours = hours > 0 ? hours : minutes / 60;
+    const projectId = data?.project_id ? String(data.project_id) : '';
+    const taskId = data?.task_id ? String(data.task_id) : '';
 
-    const { data: created, error } = await this.client
-      .from('time_logs')
-      .insert({
+    if (normalizedHours <= 0) {
+      throw new ApiError('Time entry duration must be greater than zero.', 400, 'TIME_DURATION_REQUIRED');
+    }
+
+    if (projectId) {
+      const projectIds = await this.getAccessibleProjectIds(currentUserId);
+      if (!access.canViewAllTime && !projectIds.includes(projectId)) {
+        throw new ApiError('You do not have access to this project.', 403, 'TIME_PROJECT_DENIED');
+      }
+    }
+
+    if (taskId) {
+      await this.getTask(taskId);
+    }
+
+    const { data: created, error } = await this.client.rpc('create_time_log_secure', {
+      p_time_log: {
         user_id: currentUserId,
-        project_id: data?.project_id || null,
-        task_id: data?.task_id || null,
+        created_by: currentUserId,
+        updated_by: currentUserId,
+        project_id: projectId || null,
+        task_id: taskId || null,
+        lead_id: data?.lead_id || null,
+        session_id: data?.session_id || data?.timer_session_id || null,
         log_date: data?.date,
         hours: normalizedHours,
+        duration_minutes: Math.round(normalizedHours * 60),
+        start_time: data?.start_time || null,
+        end_time: data?.end_time || null,
         description: data?.description || null,
         status: 'pending',
-      })
-      .select()
-      .single();
+        is_manual: data?.is_manual === true || (data?.manual_hours != null && Number(data?.manual_hours) > 0) || (data?.manual_minutes != null && Number(data?.manual_minutes) > 0),
+        approval_status: 'pending',
+        lead_source: data?.lead_source || data?.source_platform || data?.source || null,
+        timer_type: data?.timer_type || (data?.project_id ? 'project' : 'sales'),
+        work_type: data?.work_type || null,
+        manual_leads_count: Number(data?.manual_leads_count || 0),
+      },
+    });
 
     if (error || !created) {
-      throw formatError(error, 'Failed to create time log.');
+      if (!this.isMissingRpcFunctionError(error, 'create_time_log_secure')) {
+        throw formatError(error, 'Failed to create time log.');
+      }
+
+      const fallbackPayload = {
+        user_id: currentUserId,
+        created_by: currentUserId,
+        updated_by: currentUserId,
+        project_id: projectId || null,
+        task_id: taskId || null,
+        lead_id: data?.lead_id || null,
+        session_id: data?.session_id || data?.timer_session_id || null,
+        log_date: data?.date,
+        hours: normalizedHours,
+        duration_minutes: Math.round(normalizedHours * 60),
+        start_time: data?.start_time || null,
+        end_time: data?.end_time || null,
+        description: data?.description || null,
+        status: 'pending',
+        is_manual: data?.is_manual === true || (data?.manual_hours != null && Number(data?.manual_hours) > 0) || (data?.manual_minutes != null && Number(data?.manual_minutes) > 0),
+        approval_status: 'pending',
+        lead_source: data?.lead_source || data?.source_platform || data?.source || null,
+        timer_type: data?.timer_type || (data?.project_id ? 'project' : 'sales'),
+        work_type: data?.work_type || null,
+        manual_leads_count: Number(data?.manual_leads_count || 0),
+      };
+
+      const { data: fallbackCreated, error: fallbackError } = await this.client
+        .from('time_logs')
+        .insert([fallbackPayload])
+        .select()
+        .single();
+
+      if (fallbackError || !fallbackCreated) {
+        throw formatError(fallbackError, 'Failed to create time log.');
+      }
+
+      await this.logActivity('CREATE', 'time_log', String(fallbackCreated.id), String(fallbackCreated.id));
+      return { success: true, data: fallbackCreated };
     }
+
+    await this.logActivity('CREATE', 'time_log', String(created.id), String(created.id));
 
     return { success: true, data: created };
   }
 
   async updateLead(id: string | number, data: Partial<Lead> & { tags?: string[]; contacts?: CreateLeadPayload['contacts'] }) {
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllLeads) {
+      const lead = await this.getLeadById(String(id));
+      const leadData = lead.data as Lead;
+      const currentUserId = String(access.profile.id);
+      const canAccessLead =
+        leadData.created_by === currentUserId ||
+        leadData.assigned_to === currentUserId ||
+        (leadData.project_id ? (await this.getAccessibleProjectIds(currentUserId)).includes(leadData.project_id) : false);
+      if (!canAccessLead) {
+        throw new ApiError('You do not have permission to update this lead.', 403, 'LEAD_UPDATE_DENIED');
+      }
+    }
+
     await this.assertLeadIsNotDuplicate(data, id);
     const payload: Record<string, unknown> = {
       name: data.name,
@@ -2207,8 +2795,7 @@ export class SupabaseApiService {
 
     Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
-    const { error } = await this.client.from('leads').update(payload).eq('id', id);
-    if (error) throw formatError(error, 'Failed to update lead.');
+    const updatedLead = await this.updateLeadWithFallback(String(id), payload, 'Failed to update lead.');
 
     if (Array.isArray(data.tags)) {
       const normalizedTags = [...new Set(data.tags.map((tag) => tag.trim()).filter(Boolean))];
@@ -2219,7 +2806,7 @@ export class SupabaseApiService {
       await this.replaceLeadContacts(String(id), data.contacts);
     }
 
-    return this.getLeadById(String(id));
+    return { success: true, data: updatedLead ? this.mapLeadRecord(updatedLead) : (await this.getLeadById(String(id))).data };
   }
 
   async importLeads(formData: FormData) {
@@ -2289,8 +2876,108 @@ export class SupabaseApiService {
     return { success: true, data: { inserted, skipped, errors: errors.slice(0, 10) } };
   }
 
+  async getLeadTaxonomies(endpoint?: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.view', 'You do not have permission to view lead taxonomies.');
+    const url = new URL(`http://local${endpoint || '/leads/taxonomies'}`);
+    const activeParam = url.searchParams.get('active');
+    let query = this.client
+      .from('lead_taxonomies')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (activeParam === 'true' || activeParam === '1') {
+      query = query.eq('is_active', true);
+    } else if (activeParam === 'false' || activeParam === '0') {
+      query = query.eq('is_active', false);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw formatError(error, 'Failed to fetch lead taxonomies.');
+    }
+    return { success: true, data: ensureArray(data) };
+  }
+
+  async createLeadTaxonomy(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.taxonomies.manage', 'You do not have permission to create lead taxonomies.');
+    const currentUserId = access.profile.id;
+
+    // Payload mein sirf wahi fields rakhi hain jo aapne batayi hain
+    const payload = {
+      name: String(data.name).trim(),
+      taxonomy_type: data.taxonomy_type,
+      created_by: currentUserId,
+      is_active: data.is_active !== undefined ? Boolean(data.is_active) : true,
+      // created_at database khud handle karega (DEFAULT now())
+      // id database khud generate karega (UUID/Serial)
+    };
+
+    const { data: created, error } = await this.client
+      .from('lead_taxonomies')
+      .insert(payload)
+      .select('id, name, taxonomy_type, created_by, created_at, is_active') // Explicitly sirf yehi columns select kiye hain
+      .single();
+
+    if (error) {
+      throw formatError(error, 'Failed to create lead taxonomy.');
+    }
+
+    await this.logActivity('CREATE', 'lead_taxonomy', String(created.id), String(created.id));
+    return { success: true, data: created };
+  }
+
+  async updateLeadTaxonomy(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.taxonomies.manage', 'You do not have permission to update lead taxonomies.');
+
+    const payload: Record<string, any> = {};
+    if (data?.name !== undefined) payload.name = String(data.name).trim();
+    if (data?.taxonomy_type !== undefined) payload.taxonomy_type = data.taxonomy_type;
+    if (data?.is_active !== undefined) payload.is_active = Boolean(data.is_active);
+
+    if (!Object.keys(payload).length) {
+      throw new ApiError('No taxonomy fields to update.', 400, 'TAXONOMY_UPDATE_EMPTY');
+    }
+
+    const { data: updated, error } = await this.client
+      .from('lead_taxonomies')
+      .update(payload)
+      .eq('id', id)
+      .select('id, name, taxonomy_type, created_by, created_at, is_active')
+      .single();
+
+    if (error || !updated) {
+      throw formatError(error, 'Failed to update lead taxonomy.');
+    }
+
+    await this.logActivity('UPDATE', 'lead_taxonomy', String(updated.id), String(updated.id));
+    return { success: true, data: updated };
+  }
+
+  async deleteLeadTaxonomy(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.taxonomies.manage', 'You do not have permission to delete lead taxonomies.');
+    const { error } = await this.client
+      .from('lead_taxonomies')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      throw formatError(error, 'Failed to delete lead taxonomy.');
+    }
+
+    await this.logActivity('DELETE', 'lead_taxonomy', id, id);
+    return { success: true };
+  }
+
   async getLeads(filters?: LeadFilters & { page?: number; pageSize?: number }) {
     const access = await this.getCurrentAccessContext();
+    const currentUserId = String(access.profile.id);
+    const page = clampPage(filters?.page);
+    const pageSize = clampPageSize(filters?.pageSize);
     const buildQuery = (selectClause: string, includeExtendedSearch: boolean) => {
       let query = this.client
         .from('leads')
@@ -2300,7 +2987,7 @@ export class SupabaseApiService {
       if (access.canViewAllLeads && filters?.owner_id) {
         query = query.eq('created_by', filters.owner_id);
       } else if (!access.canViewAllLeads) {
-        query = query.eq('created_by', access.profile.id);
+        query = query.or(`created_by.eq.${currentUserId},assigned_to.eq.${currentUserId}`);
       }
       if (filters?.status?.length) query = query.in('status', filters.status);
       if (filters?.pipeline_stage?.length) query = query.in('pipeline_stage', filters.pipeline_stage);
@@ -2323,6 +3010,8 @@ export class SupabaseApiService {
       if (typeof filters?.budget_max === 'number') query = query.lte('budget', filters.budget_max);
       if (filters?.has_followup_due) query = query.not('next_followup_at', 'is', null);
       if (filters?.overdue_only) query = query.lt('next_followup_at', new Date().toISOString());
+      const start = (page - 1) * pageSize;
+      query = query.range(start, start + pageSize - 1);
       return query;
     };
 
@@ -2344,14 +3033,9 @@ export class SupabaseApiService {
       });
     }
 
-    const page = filters?.page || 1;
-    const pageSize = filters?.pageSize || 25;
-    const start = (page - 1) * pageSize;
-    const paged = mapped.slice(start, start + pageSize);
-
     return {
       success: true,
-      data: paged,
+      data: mapped,
       total: mapped.length,
       page,
       pageSize,
@@ -2359,6 +3043,38 @@ export class SupabaseApiService {
   }
 
   async getLeadById(id: string) {
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllLeads) {
+      const currentUserId = String(access.profile.id);
+      const scopedConditions = [`created_by.eq.${currentUserId}`, `assigned_to.eq.${currentUserId}`];
+
+      let { data: scopedLead, error: scopedError } = await this.client
+        .from('leads')
+        .select(this.getLeadSelectClause())
+        .eq('id', id)
+        .or(scopedConditions.join(','))
+        .single();
+
+      if (scopedError) {
+        console.warn('Rich scoped lead detail query failed; retrying with base lead columns.', scopedError);
+        const fallback = await this.client
+          .from('leads')
+          .select('id, name, email, phone, company, designation, website, linkedin_url, facebook_url, instagram_url, x_url, services_offered, source, priority, pipeline_stage, lead_score, budget, expected_close_date, outreach_status, outreach_channel, first_contacted_at, last_reachout_at, followup_sent_at, followup_notes, close_value, assigned_to, project_id, notes, metadata, created_by, status, completed, converted_at, created_at, updated_at')
+          .eq('id', id)
+          .or(scopedConditions.join(','))
+          .single();
+        scopedLead = fallback.data;
+        scopedError = fallback.error;
+      }
+
+      if (scopedError || !scopedLead) throw formatError(scopedError, 'Lead not found.');
+
+      return {
+        success: true,
+        data: this.mapLeadRecord(scopedLead),
+      };
+    }
+
     let { data, error } = await this.client
       .from('leads')
       .select(this.getLeadSelectClause())
@@ -2366,7 +3082,11 @@ export class SupabaseApiService {
       .single();
     if (error) {
       console.warn('Rich lead detail query failed; retrying with base lead columns.', error);
-      const fallback = await this.client.from('leads').select('*').eq('id', id).single();
+      const fallback = await this.client
+        .from('leads')
+        .select('id, name, email, phone, company, designation, website, linkedin_url, facebook_url, instagram_url, x_url, services_offered, source, priority, pipeline_stage, lead_score, budget, expected_close_date, outreach_status, outreach_channel, first_contacted_at, last_reachout_at, followup_sent_at, followup_notes, close_value, assigned_to, project_id, notes, metadata, created_by, status, completed, converted_at, created_at, updated_at')
+        .eq('id', id)
+        .single();
       data = fallback.data;
       error = fallback.error;
     }
@@ -2407,9 +3127,10 @@ export class SupabaseApiService {
         first_contacted_at: leadData.first_contacted_at || null,
         last_reachout_at: leadData.last_reachout_at || null,
         followup_sent_at: leadData.followup_sent_at || null,
-        followup_notes: leadData.followup_notes || null,
-        close_value: leadData.close_value || null,
-        assigned_to: leadData.assigned_to || null,
+      followup_notes: leadData.followup_notes || null,
+      close_value: leadData.close_value || null,
+      assigned_to: leadData.assigned_to || null,
+      project_id: leadData.project_id || null,
       notes: notes || null,
       metadata: { ...(leadData.metadata || {}), custom_fields: leadData.custom_fields || {} },
       created_by: currentUser.id,
@@ -2417,21 +3138,41 @@ export class SupabaseApiService {
         completed: ['won', 'lost'].includes(this.normalizeLeadStage(leadData.pipeline_stage || 'new')),
     };
 
-    const { data: lead, error } = await this.client.from('leads').insert([insertPayload]).select().single();
-    if (error || !lead) throw formatError(error, 'Failed to create lead.');
+    const { data: leadResult, error } = await this.client.rpc('create_lead_secure', {
+      p_lead: insertPayload,
+    });
+    const leadRow = this.firstRpcRow<any>(leadResult);
+    let createdLeadId = leadRow?.id ?? leadRow ?? null;
+    if (error || !createdLeadId) {
+      if (!this.isMissingRpcFunctionError(error, 'create_lead_secure') && !this.isRpcResultShapeError(error)) {
+        throw formatError(error, 'Failed to create lead.');
+      }
+
+      const { data: fallbackLead, error: fallbackError } = await this.client
+        .from('leads')
+        .insert([insertPayload])
+        .select('id')
+        .single();
+
+      if (fallbackError || !fallbackLead?.id) {
+        throw formatError(fallbackError, 'Failed to create lead.');
+      }
+
+      createdLeadId = fallbackLead.id;
+    }
 
     if (tags?.length) {
-      await this.replaceLeadTags(String(lead.id), [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))]);
+      await this.replaceLeadTags(String(createdLeadId), [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))]);
     }
 
     if (contacts?.length) {
-      await this.replaceLeadContacts(String(lead.id), contacts);
+      await this.replaceLeadContacts(String(createdLeadId), contacts);
     }
 
     if (notes) {
       await this.client.from('lead_notes').insert([
         {
-          lead_id: lead.id,
+          lead_id: createdLeadId,
           user_id: currentUser.id,
           note: notes,
           content: notes,
@@ -2439,14 +3180,52 @@ export class SupabaseApiService {
       ]);
     }
 
-    return this.getLeadById(String(lead.id));
+    // Auto link running session
+    const { data: runningSession } = await this.client
+      .from('time_tracking_sessions')
+      .select('id')
+      .eq('user_id', currentUser.id)
+      .eq('session_status', 'running')
+      .order('started_at', { ascending: false })
+      .limit(1);
+
+    if (runningSession && runningSession.length > 0) {
+      const activeSessionId = runningSession[0].id;
+      const { error: linkError } = await this.client.rpc('link_lead_to_time_session_secure', {
+        p_session_id: activeSessionId,
+        p_lead_id: createdLeadId,
+      });
+      if (linkError && !this.isMissingRpcFunctionError(linkError, 'link_lead_to_time_session_secure')) {
+        throw formatError(linkError, 'Failed to link lead to active timer session.');
+      }
+
+      const { error: summaryError } = await this.client.rpc('refresh_time_tracking_session_summary', {
+        p_session_id: activeSessionId,
+      });
+      if (summaryError && !this.isMissingRpcFunctionError(summaryError, 'refresh_time_tracking_session_summary')) {
+        throw formatError(summaryError, 'Failed to refresh active timer session.');
+      }
+    }
+
+    return this.getLeadById(String(createdLeadId));
   }
 
   async deleteLead(id: string | number) {
-    const { data: lead, error: readError } = await this.client.from('leads').select('id, name').eq('id', id).single();
+    const access = await this.getCurrentAccessContext();
+    const { data: lead, error: readError } = await this.client.from('leads').select('id, name, created_by, assigned_to, project_id').eq('id', id).single();
     if (readError || !lead) throw formatError(readError, 'Lead not found.');
 
-    const { error } = await this.client.from('leads').delete().eq('id', id);
+    if (!access.canViewAllLeads) {
+      const currentUserId = String(access.profile.id);
+      const canAccessLead =
+        String(lead.created_by) === currentUserId ||
+        String(lead.assigned_to || '') === currentUserId;
+      if (!canAccessLead) {
+        throw new ApiError('You do not have permission to delete this lead.', 403, 'LEAD_DELETE_DENIED');
+      }
+    }
+
+    const { error } = await this.client.rpc('delete_lead_secure', { p_lead_id: id });
     if (error) throw formatError(error, 'Failed to delete lead.');
 
     await this.logActivity('DELETE', 'lead', String(id), lead.name);
@@ -2455,6 +3234,7 @@ export class SupabaseApiService {
 
   async addActivity(leadId: string, data: AddLeadActivityPayload) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    await this.getLeadById(leadId);
     const { data: created, error } = await this.client
       .from('lead_activities')
       .insert([
@@ -2478,6 +3258,7 @@ export class SupabaseApiService {
 
   async addNote(leadId: string, content: string) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    await this.getLeadById(leadId);
     const { data: created, error } = await this.client
       .from('lead_notes')
       .insert([
@@ -2498,6 +3279,7 @@ export class SupabaseApiService {
 
   async scheduleFollowup(leadId: string, data: ScheduleLeadFollowupPayload) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    await this.getLeadById(leadId);
     const { data: created, error } = await this.client
       .from('lead_followups')
       .insert([
@@ -2520,7 +3302,7 @@ export class SupabaseApiService {
 
     if (error || !created) throw formatError(error, 'Failed to schedule follow-up.');
 
-    await this.client.from('leads').update({ next_followup_at: data.scheduled_at }).eq('id', leadId);
+    await this.updateLeadWithFallback(leadId, { next_follow_up_at: data.scheduled_at }, 'Failed to schedule follow-up.');
     await this.addActivity(leadId, { activity_type: 'followup', description: `${data.followup_type} follow-up scheduled` });
     return { success: true, data: this.mapLeadFollowups([created])[0] };
   }
@@ -2579,39 +3361,45 @@ export class SupabaseApiService {
   }
 
   async updateLeadScore(leadId: string, score: number) {
-    const { error } = await this.client.from('leads').update({ lead_score: score }).eq('id', leadId);
-    if (error) throw formatError(error, 'Failed to update lead score.');
+    await this.updateLeadWithFallback(leadId, { lead_score: score }, 'Failed to update lead score.');
     return { success: true };
   }
 
   async bulkUpdateStatus(leadIds: string[], status: string) {
     const pipelineStage = this.normalizeLeadStage(status);
-    const { error } = await this.client
-      .from('leads')
-      .update({ status, pipeline_stage: pipelineStage, completed: pipelineStage === 'won' || pipelineStage === 'lost' })
-      .in('id', leadIds);
-
-    if (error) throw formatError(error, 'Failed to update selected leads.');
+    await Promise.all(leadIds.map(async (leadId) => {
+      await this.updateLeadWithFallback(leadId, { status, pipeline_stage: pipelineStage, completed: pipelineStage === 'won' || pipelineStage === 'lost' }, 'Failed to update selected leads.');
+    }));
     return { success: true };
   }
 
   async bulkAssign(leadIds: string[], userId: string) {
-    const { error } = await this.client.from('leads').update({ assigned_to: userId }).in('id', leadIds);
-    if (error) throw formatError(error, 'Failed to assign selected leads.');
+    await Promise.all(leadIds.map(async (leadId) => {
+      await this.updateLeadWithFallback(leadId, { assigned_to: userId }, 'Failed to assign selected leads.');
+    }));
     return { success: true };
   }
 
   async bulkDelete(leadIds: string[]) {
-    const { error } = await this.client.from('leads').delete().in('id', leadIds);
-    if (error) throw formatError(error, 'Failed to delete selected leads.');
+    await Promise.all(leadIds.map(async (leadId) => {
+      const { error } = await this.client.rpc('delete_lead_secure', { p_lead_id: leadId });
+      if (error) throw formatError(error, 'Failed to delete selected leads.');
+    }));
     return { success: true };
   }
 
   async getLeadStats(): Promise<{ success: true; data: LeadStats }> {
-    const { data, error } = await this.client.from('leads').select('created_at, pipeline_stage, source, priority, lead_score, completed, converted_at');
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.view', 'You do not have permission to view lead stats.');
+    const { data, error } = await this.client
+      .from('leads')
+      .select('created_at, pipeline_stage, source, priority, lead_score, completed, converted_at, created_by, assigned_to')
+      .order('created_at', { ascending: false })
+      .limit(1000);
     if (error) throw formatError(error, 'Unable to load lead stats.');
 
-    const leads = ensureArray(data);
+    const currentUserId = String(access.profile.id);
+    const leads = ensureArray(data).filter((row: any) => access.canViewAllLeads || String(row.created_by || '') === currentUserId || String(row.assigned_to || '') === currentUserId);
     const monthStart = new Date();
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
@@ -2815,12 +3603,20 @@ export class SupabaseApiService {
   }
 
   async getFinanceClients() {
-    const { data, error } = await this.client.from('clients').select('*').order('created_at', { ascending: false });
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.clients.view', 'You do not have permission to view finance clients.');
+    const { data, error } = await this.client
+      .from('clients')
+      .select('id, name, email, phone, company, address, status, notes, total_revenue, last_payment_date, created_at, updated_at')
+      .order('created_at', { ascending: false })
+      .limit(1000);
     if (error) throw formatError(error, 'Unable to load clients.');
     return { success: true, data: ensureArray(data) };
   }
 
   async createFinanceClient(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.clients.manage', 'You do not have permission to create finance clients.');
     const { data: created, error } = await this.client
       .from('clients')
       .insert({
@@ -2839,81 +3635,128 @@ export class SupabaseApiService {
   }
 
   async deleteFinanceClient(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.clients.manage', 'You do not have permission to delete finance clients.');
     const { error } = await this.client.from('clients').delete().eq('id', id);
     if (error) throw formatError(error, 'Failed to delete client.');
     return { success: true };
   }
 
   async getFinanceExpenses() {
-    const { data, error } = await this.client.from('expenses').select('*').order('expense_date', { ascending: false });
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.expenses.view', 'You do not have permission to view expenses.');
+    const currentUserId = String(access.profile.id);
+    let query = this.client
+      .from('expenses')
+      .select('id, category, description, amount, currency, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at')
+      .order('expense_date', { ascending: false })
+      .limit(1000);
+
+    if (!access.canViewAllFinance) {
+      query = query.eq('created_by', currentUserId);
+    }
+
+    const { data, error } = await query;
     if (error) throw formatError(error, 'Unable to load expenses.');
     return { success: true, data: ensureArray(data) };
   }
 
   async createFinanceExpense(data: any) {
-    const currentUserId = await this.getCurrentUserId();
-    const { data: created, error } = await this.client
-      .from('expenses')
-      .insert({
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.expenses.manage', 'You do not have permission to create expenses.');
+    const { data: created, error } = await this.client.rpc('create_finance_expense_secure', {
+      p_expense: {
         category: data?.category,
         description: data?.description,
         amount: Number(data?.amount || 0),
+        currency: data?.currency || 'USD',
         expense_date: data?.expense_date,
         payment_method: data?.payment_method || 'bank_transfer',
-        created_by: currentUserId,
-      })
-      .select()
-      .single();
+        payment_method_other: data?.payment_method_other || null,
+        project_id: data?.project_id || null,
+        receipt_url: data?.receipt_url || null,
+      },
+    });
 
     if (error || !created) throw formatError(error, 'Failed to create expense.');
     return { success: true, data: created };
   }
 
   async deleteFinanceExpense(id: string) {
-    const { error } = await this.client.from('expenses').delete().eq('id', id);
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.expenses.manage', 'You do not have permission to delete expenses.');
+    const { error } = await this.client.rpc('delete_finance_expense_secure', { p_expense_id: id });
     if (error) throw formatError(error, 'Failed to delete expense.');
     return { success: true };
   }
 
   async getFinancePayments() {
-    const { data, error } = await this.client.from('payments').select('*').order('payment_date', { ascending: false });
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.view', 'You do not have permission to view payments.');
+    const currentUserId = String(access.profile.id);
+    let query = this.client
+      .from('payments')
+      .select('id, client_name, amount, currency, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, invoice_id, created_by, created_at, updated_at')
+      .order('payment_date', { ascending: false })
+      .limit(1000);
+
+    if (!access.canViewAllFinance) {
+      query = query.eq('created_by', currentUserId);
+    }
+
+    const { data, error } = await query;
     if (error) throw formatError(error, 'Unable to load payments.');
     return { success: true, data: ensureArray(data) };
   }
 
   async createFinancePayment(data: any) {
-    const currentUserId = await this.getCurrentUserId();
-    const { data: created, error } = await this.client
-      .from('payments')
-      .insert({
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to create payments.');
+    const { data: created, error } = await this.client.rpc('create_finance_payment_secure', {
+      p_payment: {
         client_name: data?.client_name,
         amount: Number(data?.amount || 0),
+        currency: data?.currency || 'USD',
         payment_date: data?.payment_date,
         payment_method: data?.payment_method || 'bank_transfer',
+        payment_method_other: data?.payment_method_other || null,
         status: data?.status || 'completed',
         description: data?.description || null,
-        created_by: currentUserId,
-      })
-      .select()
-      .single();
+        project_id: data?.project_id || null,
+        received_amount: Number(data?.received_amount || 0),
+        tax_amount: Number(data?.tax_amount || 0),
+        commission_amount: Number(data?.commission_amount || 0),
+        invoice_id: data?.invoice_id || null,
+      },
+    });
 
     if (error || !created) throw formatError(error, 'Failed to create payment.');
     return { success: true, data: created };
   }
 
   async deleteFinancePayment(id: string) {
-    const { error } = await this.client.from('payments').delete().eq('id', id);
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to delete payments.');
+    const { error } = await this.client.rpc('delete_finance_payment_secure', { p_payment_id: id });
     if (error) throw formatError(error, 'Failed to delete payment.');
     return { success: true };
   }
 
   async getFinanceFounders() {
-    const { data, error } = await this.client.from('founders').select('*').order('created_at', { ascending: false });
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.founders.view', 'You do not have permission to view founders.');
+    const { data, error } = await this.client
+      .from('founders')
+      .select('id, name, role, equity_percentage, vested_percentage, join_date, user_id, email, phone, created_at, updated_at')
+      .order('created_at', { ascending: false })
+      .limit(1000);
     if (error) throw formatError(error, 'Unable to load founders.');
     return { success: true, data: ensureArray(data) };
   }
 
   async createFinanceFounder(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.founders.manage', 'You do not have permission to create founders.');
     const { data: created, error } = await this.client
       .from('founders')
       .insert({
@@ -2930,6 +3773,8 @@ export class SupabaseApiService {
   }
 
   async updateFinanceFounder(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.founders.manage', 'You do not have permission to update founders.');
     const { data: updated, error } = await this.client
       .from('founders')
       .update({
@@ -2946,20 +3791,29 @@ export class SupabaseApiService {
   }
 
   async deleteFinanceFounder(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.founders.manage', 'You do not have permission to delete founders.');
     const { error } = await this.client.from('founders').delete().eq('id', id);
     if (error) throw formatError(error, 'Failed to delete founder.');
     return { success: true };
   }
 
   async getFoundersEquityTotal() {
-    const { data, error } = await this.client.from('founders').select('equity_percentage');
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.founders.view', 'You do not have permission to view founders.');
+    const { data, error } = await this.client.from('founders').select('equity_percentage').limit(1000);
     if (error) throw formatError(error, 'Unable to load founder equity.');
     const total = ensureArray(data).reduce((sum: number, founder: any) => sum + Number(founder.equity_percentage || 0), 0);
     return { success: true, data: { data: { total } } };
   }
 
   async getFinanceSettings() {
-    const { data, error } = await this.client.from('finance_settings').select('*');
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.view', 'You do not have permission to view finance settings.');
+    const { data, error } = await this.client
+      .from('finance_settings')
+      .select('id, setting_key, setting_value, created_at, updated_at')
+      .limit(1000);
     if (error) throw formatError(error, 'Unable to load finance settings.');
     const mapped = ensureArray(data).reduce((acc: Record<string, any>, item: any) => {
       acc[item.setting_key] = item.setting_value;
@@ -2968,7 +3822,272 @@ export class SupabaseApiService {
     return { success: true, data: { data: mapped } };
   }
 
+  async getFinanceSalaries() {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.salaries.view', 'You do not have permission to view salaries.');
+    const currentUserId = String(access.profile.id);
+    let query = this.client
+      .from('salary_runs')
+      .select('id, salary_month, currency, created_at, created_by, salary_entries(id, user_id, months_count, monthly_salary, total_salary, notes, profiles:user_id(id, name))')
+      .order('salary_month', { ascending: false });
+    if (!access.canViewAllFinance) {
+      query = query.eq('created_by', currentUserId);
+    }
+
+    const { data: runs, error: runError } = await query;
+
+    if (runError) throw formatError(runError, 'Failed to fetch salaries.');
+
+    const formatted: any[] = [];
+    ensureArray(runs).forEach((run: any) => {
+      ensureArray(run.salary_entries).forEach((entry: any) => {
+        let details: any = {};
+        try {
+          if (entry.notes) details = JSON.parse(entry.notes);
+        } catch (e) {
+          details = { notes: entry.notes };
+        }
+        
+        formatted.push({
+          id: entry.id,
+          run_id: run.id,
+          employee_id: entry.user_id,
+          employee_name: entry.profiles?.name || 'Unknown',
+          base_salary: entry.monthly_salary,
+          salary_months: entry.months_count,
+          total_salary: entry.total_salary,
+          currency: run.currency,
+          salary_date: run.salary_month,
+          bonus: details.bonus || 0,
+          deductions: details.deductions || 0,
+          payment_method: details.payment_method || 'bank_transfer',
+          payment_method_other: details.payment_method_other || '',
+          notes: details.notes || '',
+        });
+      });
+    });
+
+    return { success: true, data: formatted };
+  }
+
+  async createFinanceSalary(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.salaries.manage', 'You do not have permission to create salary records.');
+    const currentUserId = await this.getCurrentUserId();
+    
+    // First find or create a salary run for this month and currency
+    const salaryDate = data.salary_date || new Date().toISOString().split('T')[0];
+    const { data: runSearch, error: searchError } = await this.client
+      .from('salary_runs')
+      .select('id')
+      .eq('salary_month', salaryDate)
+      .eq('currency', data.currency || 'USD')
+      .maybeSingle();
+
+    let runId = runSearch?.id;
+
+    if (!runId) {
+      const { data: newRun, error: createError } = await this.client
+        .from('salary_runs')
+        .insert({
+          salary_month: salaryDate,
+          currency: data.currency || 'USD',
+          total_salary: 0,
+          created_by: currentUserId
+        })
+        .select()
+        .single();
+      
+      if (createError) throw formatError(createError, 'Failed to create salary run.');
+      runId = newRun.id;
+    }
+
+    const monthsCount = Number(data.salary_months) || 1;
+    const baseSalary = Number(data.base_salary) || 0;
+    const bonus = Number(data.bonus) || 0;
+    const deductions = Number(data.deductions) || 0;
+    const totalSalary = (baseSalary * monthsCount) + bonus - deductions;
+
+    const details = JSON.stringify({
+      bonus,
+      deductions,
+      payment_method: data.payment_method,
+      payment_method_other: data.payment_method_other,
+      notes: data.notes
+    });
+
+    const { data: entry, error: entryError } = await this.client
+      .from('salary_entries')
+      .insert({
+        salary_run_id: runId,
+        user_id: data.employee_id,
+        months_count: monthsCount,
+        monthly_salary: baseSalary,
+        total_salary: totalSalary,
+        notes: details
+      })
+      .select()
+      .single();
+
+    if (entryError) throw formatError(entryError, 'Failed to create salary entry.');
+    return { success: true, data: entry };
+  }
+
+  async updateFinanceSalary(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.salaries.manage', 'You do not have permission to update salary records.');
+    // Basic update for the entry
+    const monthsCount = Number(data.salary_months) || 1;
+    const baseSalary = Number(data.base_salary) || 0;
+    const bonus = Number(data.bonus) || 0;
+    const deductions = Number(data.deductions) || 0;
+    const totalSalary = (baseSalary * monthsCount) + bonus - deductions;
+
+    const details = JSON.stringify({
+      bonus,
+      deductions,
+      payment_method: data.payment_method,
+      payment_method_other: data.payment_method_other,
+      notes: data.notes
+    });
+
+    const { data: entry, error } = await this.client
+      .from('salary_entries')
+      .update({
+        user_id: data.employee_id,
+        months_count: monthsCount,
+        monthly_salary: baseSalary,
+        total_salary: totalSalary,
+        notes: details
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw formatError(error, 'Failed to update salary entry.');
+    return { success: true, data: entry };
+  }
+
+  async deleteFinanceSalary(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.salaries.manage', 'You do not have permission to delete salary records.');
+    const { error } = await this.client
+      .from('salary_entries')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw formatError(error, 'Failed to delete salary entry.');
+    return { success: true };
+  }
+
+  async getFinanceTaxes() {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.taxes.view', 'You do not have permission to view taxes.');
+    const currentUserId = String(access.profile.id);
+    let query = this.client.from('project_taxes').select('*, projects(name)').order('created_at', { ascending: false });
+    if (!access.canViewAllFinance) {
+      query = query.eq('created_by', currentUserId);
+    }
+    const { data, error } = await query;
+    if (error) throw formatError(error, 'Failed to fetch taxes.');
+    return { success: true, data };
+  }
+
+  async createFinanceTax(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.taxes.manage', 'You do not have permission to add taxes.');
+    const currentUserId = await this.getCurrentUserId();
+    const { data: created, error } = await this.client.from('project_taxes').insert({
+      project_id: data.project_id,
+      title: data.title,
+      rate: Number(data.rate) || 0,
+      amount: Number(data.amount) || 0,
+      currency: data.currency || 'USD',
+      status: data.status || 'active',
+      effective_from: data.effective_from || null,
+      effective_to: data.effective_to || null,
+      created_by: currentUserId,
+    }).select().single();
+    if (error) throw formatError(error, 'Failed to add project tax.');
+    return { success: true, data: created };
+  }
+
+  async deleteFinanceTax(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.taxes.manage', 'You do not have permission to delete taxes.');
+    const { error } = await this.client.from('project_taxes').delete().eq('id', id);
+    if (error) throw formatError(error, 'Failed to delete tax.');
+    return { success: true };
+  }
+
+  async getFinanceCommissions() {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.commissions.view', 'You do not have permission to view commissions.');
+    const currentUserId = String(access.profile.id);
+    let query = this.client.from('project_commissions').select('*, projects(name)').order('created_at', { ascending: false });
+    if (!access.canViewAllFinance) {
+      query = query.eq('created_by', currentUserId);
+    }
+    const { data, error } = await query;
+    if (error) throw formatError(error, 'Failed to fetch commissions.');
+    return { success: true, data };
+  }
+
+  async getCurrencies() {
+    const { data, error } = await this.client.from('system_currencies').select('*').order('code', { ascending: true });
+    // If table doesn't exist yet, return defaults
+    if (error) {
+      return { success: true, data: [{ code: 'USD', symbol: '$', name: 'US Dollar' }, { code: 'EUR', symbol: '€', name: 'Euro' }, { code: 'GBP', symbol: '£', name: 'British Pound' }, { code: 'PKR', symbol: 'Rs', name: 'Pakistani Rupee' }] };
+    }
+    return { success: true, data };
+  }
+
+  async createCurrency(data: any) {
+    const { data: created, error } = await this.client.from('system_currencies').insert({
+      code: data.code,
+      symbol: data.symbol,
+      name: data.name,
+    }).select().single();
+    if (error) throw formatError(error, 'Failed to add currency.');
+    return { success: true, data: created };
+  }
+
+  async deleteCurrency(id: string) {
+    const { error } = await this.client.from('system_currencies').delete().eq('id', id);
+    if (error) throw formatError(error, 'Failed to delete currency.');
+    return { success: true };
+  }
+
+  async createFinanceCommission(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.commissions.manage', 'You do not have permission to add commissions.');
+    const currentUserId = await this.getCurrentUserId();
+    const { data: created, error } = await this.client.from('project_commissions').insert({
+      project_id: data.project_id,
+      title: data.title,
+      rate: Number(data.rate) || 0,
+      amount: Number(data.amount) || 0,
+      currency: data.currency || 'USD',
+      status: data.status || 'active',
+      effective_from: data.effective_from || null,
+      effective_to: data.effective_to || null,
+      created_by: currentUserId,
+    }).select().single();
+    if (error) throw formatError(error, 'Failed to add project commission.');
+    return { success: true, data: created };
+  }
+
+  async deleteFinanceCommission(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.commissions.manage', 'You do not have permission to delete commissions.');
+    const { error } = await this.client.from('project_commissions').delete().eq('id', id);
+    if (error) throw formatError(error, 'Failed to delete commission.');
+    return { success: true };
+  }
+
   async saveFinanceSettings(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.settings.manage', 'You do not have permission to update finance settings.');
     const rows = Object.entries(data || {}).map(([setting_key, setting_value]) => ({
       setting_key,
       setting_value: String(setting_value),
@@ -2980,10 +4099,22 @@ export class SupabaseApiService {
   }
 
   async getFinanceStats(range: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.view', 'You do not have permission to view finance stats.');
+    const bounds = getRangeBounds(range);
+    const currentUserId = String(access.profile.id);
+    const restrictToOwn = !access.canViewAllFinance;
+    const foundersEquityPromise = access.permissions.includes('finance.founders.view')
+      ? this.getFoundersEquityTotal()
+      : Promise.resolve({ success: true, data: { data: { total: 0 } } });
     const [paymentsRes, expensesRes, foundersEquityRes, settingsRes] = await Promise.all([
-      this.client.from('payments').select('amount, payment_date, status'),
-      this.client.from('expenses').select('amount, expense_date'),
-      this.getFoundersEquityTotal(),
+      restrictToOwn
+        ? this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
+      restrictToOwn
+        ? this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
+      foundersEquityPromise,
       this.getFinanceSettings(),
     ]);
 
@@ -2992,27 +4123,42 @@ export class SupabaseApiService {
 
     const payments = ensureArray(paymentsRes.data);
     const expenses = ensureArray(expensesRes.data);
-    const revenue = payments.filter((p: any) => p.status === 'completed').reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
-    const expenseTotal = expenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
-    const netProfit = revenue - expenseTotal;
     const settings = (settingsRes as any)?.data?.data || {};
     const futureFundPercentage = Number(settings.future_fund_percentage || 20);
     const commissionPercentage = Number(settings.commission_percentage || 15);
     const taxRate = Number(settings.tax_rate || 30);
-    const outstanding = payments.filter((p: any) => p.status !== 'completed').reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    const revenue = payments
+      .filter((p: any) => p.status === 'completed')
+      .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    const expenseTotal = expenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
+    const summary = calculateFinanceSummary({
+      revenue,
+      expenses: expenseTotal,
+      futureFundRate: futureFundPercentage,
+      salaries: Number(settings.monthly_salaries || 0),
+      taxes: Number(revenue * (taxRate / 100)),
+      commissions: Number(revenue * (commissionPercentage / 100)),
+    });
+    const outstanding = payments
+      .filter((p: any) => p.status !== 'completed')
+      .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
 
     return {
       success: true,
       data: {
         data: {
-          revenue,
-          expenses: expenseTotal,
-          netProfit,
+          revenue: summary.revenue,
+          expenses: summary.expenses,
+          netProfit: summary.netProfit,
+          grossProfit: summary.grossProfit,
+          futureFund: summary.futureFund,
+          founderProfit: summary.founderProfit,
+          liabilities: summary.liabilities,
           outstanding,
           distribution: [
-            { label: 'Future Fund', percentage: futureFundPercentage, amount: netProfit * (futureFundPercentage / 100) },
-            { label: 'Commission', percentage: commissionPercentage, amount: netProfit * (commissionPercentage / 100) },
-            { label: 'Tax Reserve', percentage: taxRate, amount: netProfit * (taxRate / 100) },
+            { label: 'Future Fund', percentage: futureFundPercentage, amount: summary.futureFund },
+            { label: 'Commission', percentage: commissionPercentage, amount: summary.commissions },
+            { label: 'Tax Reserve', percentage: taxRate, amount: summary.taxes },
             { label: 'Founder Equity Allocated', percentage: foundersEquityRes.data.data.total || 0, amount: 0 },
           ],
         },
@@ -3022,9 +4168,18 @@ export class SupabaseApiService {
   }
 
   async getFinanceChart(_range: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.view', 'You do not have permission to view finance charts.');
+    const bounds = getRangeBounds(_range);
+    const currentUserId = String(access.profile.id);
+    const restrictToOwn = !access.canViewAllFinance;
     const [paymentsRes, expensesRes] = await Promise.all([
-      this.client.from('payments').select('amount, payment_date, status'),
-      this.client.from('expenses').select('amount, expense_date'),
+      restrictToOwn
+        ? this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
+      restrictToOwn
+        ? this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
     ]);
 
     if (paymentsRes.error) throw formatError(paymentsRes.error, 'Unable to load payment chart.');
@@ -3051,23 +4206,86 @@ export class SupabaseApiService {
   }
 
   async getTimeLogs() {
-    const { data, error } = await this.client
-      .from('time_logs')
-      .select(`
-        id,
-        user_id,
-        project_id,
-        task_id,
-        log_date,
-        hours,
-        description,
-        status,
-        user:profiles!time_logs_user_id_fkey(id, name),
-        project:projects(id, name),
-        task:tasks(id, title)
-      `)
-      .order('log_date', { ascending: false });
+    const access = await this.getCurrentAccessContext();
+    const currentUserId = String(access.profile.id);
+    const buildQuery = async (rich: boolean) => {
+      const selectClause = rich
+        ? `
+          id,
+          user_id,
+          project_id,
+          task_id,
+          log_date,
+          hours,
+          duration_minutes,
+          start_time,
+          end_time,
+          is_manual,
+          approval_status,
+          work_type,
+          manual_leads_count,
+          description,
+          status,
+          created_by,
+          updated_by,
+          timer_type,
+          lead_source,
+          session_id,
+          user:profiles!time_logs_user_id_fkey(id, name),
+          project:projects(id, name),
+          task:tasks(id, title)
+        `
+        : `
+          id,
+          user_id,
+          project_id,
+          task_id,
+          log_date,
+          hours,
+          duration_minutes,
+          start_time,
+          end_time,
+          is_manual,
+          approval_status,
+          work_type,
+          manual_leads_count,
+          description,
+          status,
+          created_by,
+          updated_by,
+          timer_type,
+          lead_source,
+          session_id
+        `;
 
+      let query = this.client
+        .from('time_logs')
+        .select(selectClause)
+        .order('log_date', { ascending: false });
+
+      if (access.canViewAllTime) {
+        // Full access is intentionally limited to elevated roles/permissions.
+      } else if (access.canViewTeamTime) {
+        const projectIds = await this.getAccessibleProjectIds(currentUserId);
+        if (projectIds.length > 0) {
+          query = query.or(`user_id.eq.${currentUserId},project_id.in.(${projectIds.join(',')})`);
+        } else {
+          query = query.eq('user_id', currentUserId);
+        }
+      } else {
+        query = query.eq('user_id', currentUserId);
+      }
+
+      return query;
+    };
+
+    let result = await buildQuery(true);
+    if (result.error) {
+      console.warn('Rich time log query failed; retrying with base columns.', result.error);
+      result = await buildQuery(false);
+    }
+
+    const { data, error } = result;
     if (error) throw formatError(error, 'Unable to load time logs.');
 
     return {
@@ -3079,6 +4297,18 @@ export class SupabaseApiService {
         task_id: log.task_id ? String(log.task_id) : '',
         date: log.log_date,
         hours: log.hours,
+        duration_minutes: Number(log.duration_minutes || 0),
+        start_time: log.start_time || null,
+        end_time: log.end_time || null,
+        is_manual: Boolean(log.is_manual),
+        created_by: log.created_by ? String(log.created_by) : String(log.user_id || ''),
+        updated_by: log.updated_by ? String(log.updated_by) : undefined,
+        timer_type: log.timer_type || (log.project_id ? 'project' : 'sales'),
+        lead_source: log.lead_source || '',
+        approval_status: log.approval_status || log.status,
+        work_type: log.work_type || '',
+        manual_leads_count: Number(log.manual_leads_count || 0),
+        session_id: log.session_id ? String(log.session_id) : undefined,
         description: log.description,
         status: log.status,
         user_name: log.user?.name || '',
@@ -3092,7 +4322,7 @@ export class SupabaseApiService {
     const currentUserId = await this.getCurrentUserId();
     const { data, error } = await this.client
       .from('time_logs')
-      .select('hours, status, log_date')
+      .select('hours, approval_status, status, log_date')
       .eq('user_id', currentUserId);
 
     if (error) throw formatError(error, 'Unable to load time log stats.');
@@ -3101,7 +4331,7 @@ export class SupabaseApiService {
     const today = new Date().toISOString().split('T')[0];
     const todaysHours = logs.filter((log: any) => log.log_date === today).reduce((sum: number, log: any) => sum + Number(log.hours || 0), 0);
     const weeklyHours = logs.reduce((sum: number, log: any) => sum + Number(log.hours || 0), 0);
-    const approvedHours = logs.filter((log: any) => log.status === 'approved').reduce((sum: number, log: any) => sum + Number(log.hours || 0), 0);
+    const approvedHours = logs.filter((log: any) => (log.approval_status || log.status) === 'approved').reduce((sum: number, log: any) => sum + Number(log.hours || 0), 0);
     const productivity = weeklyHours > 0 ? (approvedHours / weeklyHours) * 100 : 0;
 
     return {
@@ -3116,9 +4346,93 @@ export class SupabaseApiService {
   }
 
   async deleteTimeLog(id: string) {
-    const { error } = await this.client.from('time_logs').delete().eq('id', id);
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'time.delete', 'You do not have permission to delete time logs.');
+    const { error } = await this.client.rpc('delete_time_entry_secure', {
+      p_time_log_id: id,
+    });
     if (error) throw formatError(error, 'Failed to delete time log.');
     return { success: true };
+  }
+
+  async startTimeSession(data: any) {
+    const currentUserId = await this.getCurrentUserId();
+    const sessionPayload = {
+      user_id: currentUserId,
+      project_id: data.project_id || null,
+      task_id: data.task_id || null,
+      session_status: 'running',
+      entry_mode: 'timer',
+      source_platform: data.source_platform ? String(data.source_platform).toLowerCase() : null,
+      source_platform_other: data.source_platform_other || null,
+      lead_generation_target: Number(data.lead_generation_target || 0),
+      manual_leads_count: 0,
+      notes: data.notes || null,
+    };
+
+    const { data: created, error } = await this.client.rpc('create_time_tracking_session_secure', {
+      p_session: sessionPayload,
+    });
+
+    if (!error && created) {
+      return { success: true, data: created };
+    }
+
+    if (!this.isMissingRpcFunctionError(error, 'create_time_tracking_session_secure') && !this.isMissingTableError(error, 'time_tracking_sessions')) {
+      throw formatError(error, 'Failed to start time tracking session.');
+    }
+
+    const syntheticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return {
+      success: true,
+      data: {
+        id: syntheticId,
+        ...sessionPayload,
+        started_at: new Date().toISOString(),
+        session_status: 'running',
+      },
+    };
+  }
+
+  async stopTimeSession(sessionId: string, data: any) {
+    if (String(sessionId || '').startsWith('local-')) {
+      return {
+        success: true,
+        data: {
+          id: sessionId,
+          session_status: 'stopped',
+          stopped_at: new Date().toISOString(),
+          notes: data.notes || null,
+        },
+      };
+    }
+
+    const { data: updated, error } = await this.client
+      .from('time_tracking_sessions')
+      .update({
+        session_status: 'stopped',
+        stopped_at: new Date().toISOString(),
+        notes: data.notes || null,
+      })
+      .eq('id', sessionId)
+      .select()
+      .single();
+
+    if (error || !updated) {
+      if (this.isMissingTableError(error, 'time_tracking_sessions')) {
+        return {
+          success: true,
+          data: {
+            id: sessionId,
+            session_status: 'stopped',
+            stopped_at: new Date().toISOString(),
+            notes: data.notes || null,
+          },
+        };
+      }
+      throw formatError(error, 'Failed to stop time tracking session.');
+    }
+    return { success: true, data: updated };
   }
 
   async getInbox() {

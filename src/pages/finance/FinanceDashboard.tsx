@@ -1,10 +1,27 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings } from 'lucide-react';
 import { api } from '@/services/api';
+import { usePermission } from '@/hooks/usePermission';
+import { ModuleEmptyState, ModuleErrorState, ModuleLoadingState } from '@/components/common/ModuleState';
+import { calculateFinanceSummary, formatMoney } from '@/lib/financeEngine';
+import { TaxModal } from './TaxModal';
+import { CommissionModal } from './CommissionModal';
+import { toast } from 'sonner';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Trash2 } from 'lucide-react';
+import Swal from 'sweetalert2';
 import {
   AreaChart,
   Area,
@@ -22,10 +39,20 @@ import {
 } from 'recharts';
 
 const FinanceDashboard: React.FC = () => {
+  const queryClient = useQueryClient();
   const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month');
+  const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
+  const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
   const navigate = useNavigate();
+  const permission = usePermission();
 
-  const { data: statsResponse, isLoading } = useQuery({
+  const {
+    data: statsResponse,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['finance-stats', timeRange],
     queryFn: async () => {
       const response = await api.get(`/finance/stats?range=${timeRange}`);
@@ -33,6 +60,55 @@ const FinanceDashboard: React.FC = () => {
     },
   });
   const stats = statsResponse?.data;
+
+  const { data: currentSettingsResponse } = useQuery({
+    queryKey: ['finance-settings'],
+    queryFn: async () => api.get('/finance/settings'),
+  });
+
+  const { data: taxesResponse } = useQuery({
+    queryKey: ['finance-taxes'],
+    queryFn: async () => api.get('/finance/taxes'),
+  });
+  const taxes = taxesResponse?.data || [];
+
+  const { data: commissionsResponse } = useQuery({
+    queryKey: ['finance-commissions'],
+    queryFn: async () => api.get('/finance/commissions'),
+  });
+  const commissions = commissionsResponse?.data || [];
+
+  const deleteTaxMutation = useMutation({
+    mutationFn: async (id: string) => api.delete(`/finance/taxes/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['finance-taxes'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-stats'] });
+      toast.success('Tax deleted');
+    },
+  });
+
+  const deleteCommissionMutation = useMutation({
+    mutationFn: async (id: string) => api.delete(`/finance/commissions/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['finance-commissions'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-stats'] });
+      toast.success('Commission deleted');
+    },
+  });
+
+  const handleDeleteTax = (id: string) => {
+    Swal.fire({ title: 'Delete Tax?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes', confirmButtonColor: '#ef4444' }).then((r) => {
+      if (r.isConfirmed) deleteTaxMutation.mutate(id);
+    });
+  };
+
+  const handleDeleteCommission = (id: string) => {
+    Swal.fire({ title: 'Delete Commission?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes', confirmButtonColor: '#ef4444' }).then((r) => {
+      if (r.isConfirmed) deleteCommissionMutation.mutate(id);
+    });
+  };
+
+  const currentSettings = currentSettingsResponse?.data || {};
 
   const { data: chartDataResponse } = useQuery({
     queryKey: ['finance-chart', timeRange],
@@ -44,6 +120,15 @@ const FinanceDashboard: React.FC = () => {
   const chartData = chartDataResponse?.data?.data || [];
   const distributionData = stats?.data?.distribution || [];
   const distributionColors = ['#0f766e', '#2563eb', '#f59e0b', '#7c3aed'];
+  const currencyCode = stats?.data?.currency || 'USD';
+  const financeSummary = calculateFinanceSummary({
+    revenue: Number(stats?.data?.revenue || 0),
+    expenses: Number(stats?.data?.expenses || 0),
+    salaries: Number(stats?.data?.salaries || 0),
+    taxes: Number(stats?.data?.taxes || 0),
+    commissions: Number(stats?.data?.commissions || 0),
+    futureFundRate: Number(stats?.data?.futureFundRate || 10),
+  });
 
   const statCards = [
     {
@@ -96,12 +181,53 @@ const FinanceDashboard: React.FC = () => {
       onClick: () => navigate('/finance/clients?create=1'),
     },
     {
+      title: 'Salary Management',
+      description: 'Open the salary module for employee payroll records.',
+      icon: Wallet,
+      onClick: () => navigate('/salary'),
+    },
+    {
       title: 'Add Founder',
       description: 'Update founder ownership and finance distribution.',
       icon: Settings,
       onClick: () => navigate('/finance/founders?create=1'),
     },
-  ];
+    {
+      title: 'Add Project Tax',
+      description: 'Add tax tracking for a specific project.',
+      icon: Receipt,
+      onClick: () => setIsTaxModalOpen(true),
+    },
+    {
+      title: 'Add Commission',
+      description: 'Log outsider resource or agent commission.',
+      icon: Users,
+      onClick: () => setIsCommissionModalOpen(true),
+    },
+  ].filter((action) => {
+    if (action.title === 'Add Payment') return permission.canAny(['finance.payments.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Add Expense') return permission.canAny(['finance.expenses.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Add Client') return permission.canAny(['finance.clients.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Salary Management') return permission.canAny(['finance.salaries.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Add Founder') return permission.canAny(['finance.founders.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Add Project Tax') return permission.canAny(['finance.taxes.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Add Commission') return permission.canAny(['finance.commissions.manage', 'finance.settings.manage', 'finance.view.all']);
+    return true;
+  });
+
+  if (isLoading) {
+    return <ModuleLoadingState title="Loading finance dashboard" description="Fetching revenue, profit, and liability summaries." />;
+  }
+
+  if (isError) {
+    return (
+      <ModuleErrorState
+        title="Finance dashboard unavailable"
+        description={error instanceof Error ? error.message : 'Unable to fetch finance data right now.'}
+        onAction={() => refetch()}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -133,12 +259,12 @@ const FinanceDashboard: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((stat, index) => (
           <Card key={index} className="hover:shadow-md transition-shadow">
-            <CardContent className="p-6">
+          <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
                   <p className="text-2xl font-bold mt-1">
-                    {isLoading ? '...' : `$${stat.value.toLocaleString()}`}
+                    {formatMoney(stat.value, currencyCode)}
                   </p>
                 </div>
                 <div className={`p-3 rounded-lg ${stat.bgColor}`}>
@@ -150,37 +276,61 @@ const FinanceDashboard: React.FC = () => {
         ))}
       </div>
 
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {[
+          { title: 'Gross Profit', value: financeSummary.grossProfit },
+          { title: 'Future Fund', value: financeSummary.futureFund },
+          { title: 'Founder Profit', value: financeSummary.founderProfit },
+          { title: 'Liabilities', value: financeSummary.liabilities },
+          { title: 'Net Profit', value: financeSummary.netProfit },
+        ].map((item) => (
+          <Card key={item.title}>
+            <CardContent className="p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.title}</p>
+              <p className="mt-2 text-2xl font-semibold">{formatMoney(item.value, currencyCode)}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
       <Card>
         <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>Finance Actions</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Add payments, expenses, clients and founders records from here.
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => navigate('/finance/settings')}>
-            Finance Settings
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {quickActions.map((action) => (
-              <button
-                key={action.title}
-                type="button"
-                onClick={action.onClick}
-                className="rounded-xl border bg-background p-5 text-left transition-all hover:border-primary hover:shadow-sm"
+            <div>
+              <CardTitle>Finance Actions</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Add payments, expenses, clients and founders records from here.
+              </p>
+            </div>
+            <Button variant="outline" onClick={() => navigate('/finance/settings')}>
+              Finance Settings
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {quickActions.length === 0 ? (
+              <ModuleEmptyState
+                title="No finance actions available"
+                description="Your role currently has read-only access to finance data."
+              />
+            ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {quickActions.map((action) => (
+                <button
+                  key={action.title}
+                  type="button"
+                  onClick={action.onClick}
+                  className="rounded-xl border bg-background p-5 text-left transition-all hover:border-primary hover:shadow-sm"
               >
                 <div className="mb-4 inline-flex rounded-lg bg-primary/10 p-3 text-primary">
                   <action.icon className="h-5 w-5" />
                 </div>
                 <h3 className="font-semibold text-foreground">{action.title}</h3>
                 <p className="mt-2 text-sm text-muted-foreground">{action.description}</p>
-              </button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+                </button>
+              ))}
+            </div>
+            )}
+          </CardContent>
+        </Card>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <Card className="xl:col-span-2">
@@ -280,7 +430,7 @@ const FinanceDashboard: React.FC = () => {
                     <p className="font-medium text-sm"><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: distributionColors[index % distributionColors.length] }} />{item.label}</p>
                     <p className="text-xs text-muted-foreground">{item.percentage}%</p>
                   </div>
-                  <p className="text-base font-semibold">${item.amount.toLocaleString()}</p>
+                  <p className="text-base font-semibold">{formatMoney(item.amount, currencyCode)}</p>
                 </div>
               ))}
               {!distributionData.length && (
@@ -292,6 +442,87 @@ const FinanceDashboard: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Project Taxes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {taxes.length === 0 ? (
+              <ModuleEmptyState title="No taxes" description="Add project taxes using quick actions." />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Rate/Amount</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {taxes.map((t: any) => (
+                      <TableRow key={t.id}>
+                        <TableCell className="font-medium">{t.projects?.name || 'Unknown'}</TableCell>
+                        <TableCell>{t.title}</TableCell>
+                        <TableCell>{t.rate ? `${t.rate}%` : formatMoney(t.amount, t.currency)}</TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" onClick={() => handleDeleteTax(t.id)}>
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Outsider Commissions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {commissions.length === 0 ? (
+              <ModuleEmptyState title="No commissions" description="Add commissions using quick actions." />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Rate/Amount</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {commissions.map((c: any) => (
+                      <TableRow key={c.id}>
+                        <TableCell className="font-medium">{c.projects?.name || 'Unknown'}</TableCell>
+                        <TableCell>{c.title}</TableCell>
+                        <TableCell>{c.rate ? `${c.rate}%` : formatMoney(c.amount, c.currency)}</TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" onClick={() => handleDeleteCommission(c.id)}>
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <TaxModal open={isTaxModalOpen} onOpenChange={setIsTaxModalOpen} />
+      <CommissionModal open={isCommissionModalOpen} onOpenChange={setIsCommissionModalOpen} />
     </div>
   );
 };

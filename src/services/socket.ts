@@ -11,7 +11,7 @@ let socket: Socket | null = null;
 
 const getToken = (): string | null => {
   try {
-    return localStorage.getItem('auth_token');
+    return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
   } catch {
     return null;
   }
