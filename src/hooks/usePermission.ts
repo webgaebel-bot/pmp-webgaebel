@@ -73,13 +73,13 @@ export const usePermission = () => {
      * Dashboard (1 + 5 new + 5 granular)
      */
     canViewDashboard: (): boolean => hasPermission('dashboard.view'),
-    canViewDashboardStats: (): boolean => hasPermission('dashboard.stats.view'),
-    canViewProjectProgress: (): boolean => hasPermission('dashboard.project_progress'),
-    canViewTeamPerformance: (): boolean => hasPermission('dashboard.team_performance'),
-    canViewTaskCharts: (): boolean => hasPermission('dashboard.task_charts'),
-    canViewProjectDashboard: (): boolean => hasPermission('dashboard.projects.view'),
-    canViewLeadDashboard: (): boolean => hasPermission('dashboard.leads.view'),
-    canViewFinanceDashboard: (): boolean => hasPermission('dashboard.finance.view'),
+    canViewDashboardStats: (): boolean => isAdmin() && hasPermission('dashboard.stats.view'),
+    canViewProjectProgress: (): boolean => isAdmin() && hasPermission('dashboard.project_progress'),
+    canViewTeamPerformance: (): boolean => isAdmin() && hasPermission('dashboard.team_performance'),
+    canViewTaskCharts: (): boolean => isAdmin() && hasPermission('dashboard.task_charts'),
+    canViewProjectDashboard: (): boolean => isAdmin() && hasPermission('dashboard.projects.view'),
+    canViewLeadDashboard: (): boolean => isAdmin() && hasPermission('dashboard.leads.view'),
+    canViewFinanceDashboard: (): boolean => isAdmin() && hasPermission('dashboard.finance.view'),
     canViewSalesDashboard: (): boolean => hasPermission('sales.dashboard.view') || hasPermission('sales.view'),
     // Leads
     canViewLeads: (): boolean => hasPermission('leads.view'),
@@ -172,7 +172,7 @@ export const usePermission = () => {
      * Activity Logs (2)
      */
     canViewActivityLogs: (): boolean => hasPermission('activity_logs.view'),
-    canViewActivityLogsDashboard: (): boolean => hasPermission('activity_logs.dashboard'),
+    canViewActivityLogsDashboard: (): boolean => isAdmin() && hasPermission('activity_logs.dashboard'),
 
     /**
      * Mails/Email (7)

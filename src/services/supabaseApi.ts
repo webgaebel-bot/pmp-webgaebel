@@ -1,6 +1,6 @@
 import { ApiError } from '@/services/api';
 import { getSupabaseClient } from '@/lib/supabase';
-import { PERMISSION_DEFINITIONS, isSuperAdminRole } from '@/lib/permissions';
+import { PERMISSION_DEFINITIONS, isSuperAdminRole, normalizeRoleName } from '@/lib/permissions';
 import { createAuditService } from '@/services/auditService';
 import { createAuthService } from '@/services/authService';
 import { createCalendarService } from '@/services/calendarService';
@@ -75,6 +75,87 @@ const normalizeUrlValue = (value?: string | null) =>
     .replace(/^https?:\/\//, '')
     .replace(/^www\./, '')
     .replace(/\/+$/, '');
+
+const humanizeText = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .replace(/[_:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const formatActivityEntityLabel = (entityType?: string | null) => {
+  const key = String(entityType || '').trim().toLowerCase();
+  const map: Record<string, string> = {
+    project: 'Project',
+    task: 'Task',
+    user: 'User',
+    role: 'Role',
+    rolepermissions: 'Role permissions',
+    rolepermission: 'Role permissions',
+    permission: 'Permission',
+    file: 'File',
+    mail: 'Mail',
+    lead: 'Lead',
+    lead_taxonomy: 'Lead taxonomy',
+    time_log: 'Time log',
+    notification: 'Notification',
+  };
+
+  return map[key] || humanizeText(key || 'Activity');
+};
+
+const isLikelyIdentifier = (value?: string | null) =>
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)$/i.test(String(value || '').trim());
+
+const formatActivitySummary = (action?: string | null, entityType?: string | null) => {
+  const label = formatActivityEntityLabel(entityType).toLowerCase();
+  const verbMap: Record<string, string> = {
+    create: 'Created',
+    update: 'Updated',
+    delete: 'Deleted',
+    assign: 'Assigned',
+    task_comment_added: 'Added comment to',
+  };
+  const normalizedAction = String(action || 'update').trim().toLowerCase();
+  const verb = verbMap[normalizedAction] || 'Updated';
+
+  if (normalizedAction === 'task_comment_added') {
+    return `${verb} ${label}`;
+  }
+
+  return `${verb} ${label}`;
+};
+
+const formatActivityDetail = (entityType?: string | null, entityName?: string | null, entityId?: string | null) => {
+  const type = String(entityType || '').trim().toLowerCase();
+  const rawName = String(entityName || '').trim();
+  const rawId = String(entityId || '').trim();
+
+  const identifier = rawName || rawId;
+  if (!identifier || isLikelyIdentifier(identifier)) return '';
+
+  if (rawName.startsWith('permissions:')) {
+    const count = rawName.split(':')[1] || '0';
+    return `Updated ${count} permission${count === '1' ? '' : 's'}`;
+  }
+
+  if (rawName.startsWith('member:')) {
+    return `Updated member assignment ${rawName.split(':')[1] || ''}`.trim();
+  }
+
+  if (rawName.startsWith('assignee:removed')) return 'Removed assignee';
+  if (rawName.startsWith('assignee:')) return `Assigned to ${rawName.split(':')[1] || 'user'}`;
+  if (rawName.startsWith('status:')) return `Status changed to ${humanizeText(rawName.split(':')[1] || '')}`;
+  if (rawName.startsWith('priority:')) return `Priority changed to ${humanizeText(rawName.split(':')[1] || '')}`;
+
+  if (type === 'rolepermissions') return 'Role permission settings updated';
+  if (type === 'time_log') return 'Time log entry created';
+  if (type === 'lead_taxonomy') return 'Lead taxonomy entry created';
+  if (type === 'mail') return 'Mail activity updated';
+  if (type === 'lead') return 'Lead record updated';
+
+  return humanizeText(rawName || rawId);
+};
 
 const monthKey = (value?: string | null) => {
   if (!value) return 'Unknown';
@@ -398,7 +479,20 @@ export class SupabaseApiService {
     });
 
     if (duplicate) {
-      throw new ApiError('This lead already exists.', 409, 'LEAD_DUPLICATE');
+      const duplicateName = String(duplicate.name || duplicate.company || 'Existing lead').trim();
+      const duplicateCreatedAt = duplicate.created_at ? new Date(duplicate.created_at).toLocaleString() : '';
+      const duplicateDetails = JSON.stringify({
+        duplicate_id: duplicate.id,
+        duplicate_name: duplicateName,
+        duplicate_created_at: duplicateCreatedAt || undefined,
+      });
+
+      throw new ApiError(
+        `This lead already exists: ${duplicateName}.`,
+        409,
+        'LEAD_DUPLICATE',
+        duplicateDetails
+      );
     }
   }
 
@@ -546,17 +640,18 @@ export class SupabaseApiService {
   private async logActivity(action: string, entityType: string, entityId: string, entityName: string) {
     try {
       const profile = await this.getCurrentProfileOrThrow();
+      const normalizedEntityName = formatActivityDetail(entityType, entityName, entityId) || entityName || entityId;
       await this.client.from('activity_logs').insert({
         user_id: profile.id,
         action,
         entity_type: entityType,
         entity_id: entityId,
-        entity_name: entityName,
+        entity_name: normalizedEntityName,
       });
       await this.client.from('notifications').insert({
         user_id: null,
         title: `${entityType} ${action.toLowerCase()}`,
-        message: `${profile.name || profile.email || 'A user'} ${action.toLowerCase()} ${entityName || entityType}.`,
+        message: `${profile.name || profile.email || 'A user'} ${action.toLowerCase()} ${normalizedEntityName || entityType}.`,
         type: action.toLowerCase(),
         entity_type: entityType,
         entity_id: entityId,
@@ -2403,10 +2498,14 @@ export class SupabaseApiService {
       data: sortByCreatedAtDesc(
         ensureArray(data).map((log: any) => ({
           id: String(log.id),
+          user_id: log.user?.id ? String(log.user.id) : '',
           action: log.action,
           entity_type: log.entity_type,
           entity_id: log.entity_id,
-          entity_name: log.entity_name,
+          entity_name: formatActivityEntityLabel(log.entity_type),
+          entity_label: formatActivityEntityLabel(log.entity_type),
+          details: formatActivityDetail(log.entity_type, log.entity_name, log.entity_id),
+          summary: formatActivitySummary(log.action, log.entity_type),
           created_at: log.created_at,
           user_name: log.user?.name || 'Unknown User',
           email: log.user?.email || '',
@@ -3205,6 +3304,24 @@ export class SupabaseApiService {
       if (summaryError && !this.isMissingRpcFunctionError(summaryError, 'refresh_time_tracking_session_summary')) {
         throw formatError(summaryError, 'Failed to refresh active timer session.');
       }
+
+      const { data: sessionRow, error: sessionReadError } = await this.client
+        .from('time_tracking_sessions')
+        .select('id, manual_leads_count')
+        .eq('id', activeSessionId)
+        .single();
+
+      if (!sessionReadError && sessionRow) {
+        const nextCount = Number(sessionRow.manual_leads_count || 0) + 1;
+        const { error: sessionUpdateError } = await this.client
+          .from('time_tracking_sessions')
+          .update({ manual_leads_count: nextCount })
+          .eq('id', activeSessionId);
+
+        if (sessionUpdateError) {
+          console.warn('Failed to increment running session lead count:', sessionUpdateError);
+        }
+      }
     }
 
     return this.getLeadById(String(createdLeadId));
@@ -3472,6 +3589,55 @@ export class SupabaseApiService {
         monthly_trend: [...monthlyTrendMap.values()],
       },
     };
+  }
+
+  async getLeadOwnershipReport() {
+    const access = await this.getCurrentAccessContext();
+    const isDashboardAdmin =
+      isSuperAdminRole(access.role) ||
+      normalizeRoleName(access.role).includes('admin') ||
+      access.isAdminActor;
+
+    if (!isDashboardAdmin) {
+      throw new ApiError('You do not have permission to view lead ownership stats.', 403, 'DASHBOARD_ADMIN_REQUIRED');
+    }
+
+    const { data: usersData, error: usersError } = await this.getUsers();
+    if (usersError) throw formatError(usersError, 'Unable to load users for lead ownership stats.');
+    const users = ensureArray((usersData as any)?.data || (usersData as any) || []);
+
+    let query = this.client
+      .from('leads')
+      .select('created_by, owner:profiles!leads_created_by_fkey(id, name, email, avatar_url, profile_image)')
+      .order('created_at', { ascending: false })
+      .limit(2000);
+
+    if (!access.canViewAllLeads) {
+      const currentUserId = String(access.profile.id);
+      query = query.or(`created_by.eq.${currentUserId},assigned_to.eq.${currentUserId}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw formatError(error, 'Unable to load lead ownership stats.');
+
+    const countMap = new Map<string, number>();
+    ensureArray(data).forEach((row: any) => {
+      const ownerId = String(row.created_by || row.owner?.id || '');
+      if (!ownerId) return;
+      countMap.set(ownerId, (countMap.get(ownerId) || 0) + 1);
+    });
+
+    const report = ensureArray(users)
+      .map((user: any) => ({
+        user_id: String(user.id),
+        user_name: user.name || user.email || 'User',
+        user_email: user.email || '',
+        user_avatar: user.avatar || user.profile_image || '',
+        leads_count: countMap.get(String(user.id)) || 0,
+      }))
+      .sort((a: any, b: any) => b.leads_count - a.leads_count || a.user_name.localeCompare(b.user_name));
+
+    return { success: true, data: report };
   }
 
   private async replaceLeadTags(leadId: string, tags: string[]) {

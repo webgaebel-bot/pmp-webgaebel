@@ -122,13 +122,22 @@ function normalizeStatusValue(value: string | undefined, fallback: string) {
 }
 
 function downloadCsv(rows: Lead[]) {
-  const headers = ['name', 'email', 'phone', 'company', 'website', 'linkedin_url', 'facebook_url', 'instagram_url', 'x_url', 'services_offered', 'source', 'priority', 'pipeline_stage', 'outreach_status', 'outreach_channel', 'last_reachout_at', 'followup_sent_at', 'lead_score', 'budget', 'close_value', 'next_followup_at'];
+  const orderedRows = [...rows].sort((left, right) => {
+    const leftTime = left.created_at ? new Date(left.created_at).getTime() : 0;
+    const rightTime = right.created_at ? new Date(right.created_at).getTime() : 0;
+    return rightTime - leftTime;
+  });
+  const headers = ['created_at', 'updated_at', 'name', 'email', 'phone', 'company', 'website', 'linkedin_url', 'facebook_url', 'instagram_url', 'x_url', 'services_offered', 'source', 'priority', 'pipeline_stage', 'outreach_status', 'outreach_channel', 'last_reachout_at', 'followup_sent_at', 'lead_score', 'budget', 'close_value', 'next_followup_at'];
   const csv = [
     headers.join(','),
-    ...rows.map((lead) =>
+    ...orderedRows.map((lead) =>
       headers
         .map((header) => {
-          const value = String((lead as unknown as Record<string, unknown>)[header] ?? '').replace(/"/g, '""');
+          const rawValue =
+            header === 'source'
+              ? getLeadPlatformSourceValue(lead)
+              : (lead as unknown as Record<string, unknown>)[header] ?? '';
+          const value = String(rawValue).replace(/"/g, '""');
           return `"${value}"`;
         })
         .join(',')
@@ -144,12 +153,43 @@ function downloadCsv(rows: Lead[]) {
   URL.revokeObjectURL(url);
 }
 
+function filterRowsByDateRange(rows: Lead[], dateFrom?: string, dateTo?: string) {
+  if (!dateFrom && !dateTo) return rows;
+  const fromTime = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY;
+  const toTime = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : Number.POSITIVE_INFINITY;
+  return rows.filter((lead) => {
+    const createdAt = lead.created_at ? new Date(lead.created_at).getTime() : 0;
+    return createdAt >= fromTime && createdAt <= toTime;
+  });
+}
+
+function getLeadPlatformSourceValue(lead: Lead) {
+  const customSource = String((lead.custom_fields as Record<string, unknown> | undefined)?.platform_source || '').trim();
+  if (lead.source === 'manual' && customSource) {
+    return customSource;
+  }
+  return lead.source || '';
+}
+
+function getStableBlankRowId(
+  rowIdsRef: React.MutableRefObject<string[]>,
+  prefix: string,
+  index: number
+) {
+  if (!rowIdsRef.current[index]) {
+    rowIdsRef.current[index] = `${prefix}-${index + 1}-${Math.random().toString(36).slice(2, 9)}`;
+  }
+  return rowIdsRef.current[index];
+}
+
 const Leads: React.FC = () => {
   const { user, hasPermission } = useAuth();
   const queryClient = useQueryClient();
   const importInputRef = useRef<HTMLInputElement>(null);
   const blankRowLeadIds = useRef<Record<string, string>>({});
   const blankRowFollowupIds = useRef<Record<string, string>>({});
+  const leadBlankRowIds = useRef<string[]>([]);
+  const followupBlankRowIds = useRef<string[]>([]);
   const pendingBlankRows = useRef<Record<string, boolean>>({});
   const pendingBlankFollowupRows = useRef<Record<string, boolean>>({});
   const queuedBlankValues = useRef<Record<string, Record<string, string>>>({});
@@ -168,6 +208,8 @@ const Leads: React.FC = () => {
   const [leadDrawerOpen, setLeadDrawerOpen] = useState(false);
   const [activeLeadId, setActiveLeadId] = useState<string>();
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [leadRowWarnings, setLeadRowWarnings] = useState<Record<string, string>>({});
+  const [sheetFullscreen, setSheetFullscreen] = useState<'leads' | 'followups' | null>(null);
   const [bulkAction, setBulkAction] = useState('');
   const [bulkAssignTo, setBulkAssignTo] = useState('');
   const navigate = useNavigate();
@@ -347,6 +389,24 @@ const Leads: React.FC = () => {
     }
   }, [canViewFollowups, view]);
 
+  React.useEffect(() => {
+    if (!sheetFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [sheetFullscreen]);
+
+  React.useEffect(() => {
+    if (view !== 'table' && sheetFullscreen === 'leads') {
+      setSheetFullscreen(null);
+    }
+    if (view !== 'followups' && sheetFullscreen === 'followups') {
+      setSheetFullscreen(null);
+    }
+  }, [sheetFullscreen, view]);
+
   const openLead = (leadId: string) => {
     setActiveLeadId(leadId);
     setLeadDrawerOpen(true);
@@ -449,6 +509,37 @@ const Leads: React.FC = () => {
     });
   };
 
+  const handleExportLeads = async () => {
+    const baseRows = selectedLeadIds.length ? allLeads.filter((lead: Lead) => selectedLeadIds.includes(lead.id)) : allLeads;
+    const result = await Swal.fire({
+      title: 'Export leads',
+      html: `
+        <div style="display:grid;gap:12px;text-align:left;">
+          <label style="display:grid;gap:6px;">
+            <span>From date</span>
+            <input id="export-date-from" type="date" class="swal2-input" style="width:100%;margin:0;" value="${filters.date_from || ''}">
+          </label>
+          <label style="display:grid;gap:6px;">
+            <span>To date</span>
+            <input id="export-date-to" type="date" class="swal2-input" style="width:100%;margin:0;" value="${filters.date_to || ''}">
+          </label>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Export CSV',
+      confirmButtonColor: '#0f766e',
+      preConfirm: () => ({
+        from: (document.getElementById('export-date-from') as HTMLInputElement | null)?.value || '',
+        to: (document.getElementById('export-date-to') as HTMLInputElement | null)?.value || '',
+      }),
+    });
+
+    if (!result.isConfirmed) return;
+
+    const filteredRows = filterRowsByDateRange(baseRows, result.value?.from, result.value?.to);
+    downloadCsv(filteredRows);
+  };
+
   const leadRows: FlexibleSheetRow[] = useMemo(() => {
     const dataRows = leads.map((lead) => ({
       id: lead.id,
@@ -456,6 +547,7 @@ const Leads: React.FC = () => {
       raw: lead,
       values: leadColumns.reduce<Record<string, string>>((acc, column) => {
         if (column.id === 'company_name') acc[column.id] = lead.company || lead.name || '';
+        else if (column.systemField === 'source') acc[column.id] = getLeadPlatformSourceValue(lead);
         else if (column.systemField) acc[column.id] = String((lead as unknown as Record<string, unknown>)[column.systemField as string] ?? '');
         else acc[column.id] = String(lead.custom_fields?.[column.id] ?? '');
         return acc;
@@ -463,7 +555,7 @@ const Leads: React.FC = () => {
     }));
 
     const blankRows = Array.from({ length: Math.max(sheetRowCount - dataRows.length, 0) }, (_, index) => ({
-      id: `blank-${page}-${index + 1}`,
+      id: getStableBlankRowId(leadBlankRowIds, `lead-page-${page}`, index),
       ownerName: '',
       raw: null,
       values: {},
@@ -482,13 +574,18 @@ const Leads: React.FC = () => {
     }, {});
 
     const fallbackName = values.company_name || values.email || values.phone || values.niche || lead?.name || `Lead ${new Date().toLocaleString()}`;
+    const rawPlatformSource = String(values.platform_source || values.source || lead?.custom_fields?.platform_source || lead?.source || 'manual').trim();
+    const normalizedSource = normalizeSourceValue(rawPlatformSource);
+    if (rawPlatformSource && rawPlatformSource.toLowerCase().replace(/\s+/g, '_') !== normalizedSource) {
+      custom_fields.platform_source = rawPlatformSource;
+    }
 
     return {
       name: fallbackName,
       company: values.company_name || undefined,
       designation: values.niche || undefined,
       services_offered: values.service || undefined,
-      source: normalizeSourceValue(values.platform_source || lead?.source || 'manual'),
+      source: normalizedSource,
       email: values.email || undefined,
       phone: values.phone || undefined,
       website: values.website || undefined,
@@ -510,6 +607,13 @@ const Leads: React.FC = () => {
     if (!payload) return;
 
     try {
+      setLeadRowWarnings((current) => {
+        if (!current[rowId]) return current;
+        const next = { ...current };
+        delete next[rowId];
+        return next;
+      });
+
       if (existingId) {
         if (!canUpdateLead) return;
         await api.updateLead(existingId, payload);
@@ -538,9 +642,30 @@ const Leads: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Lead autosave failed:', error);
-      const message = error?.error_code === 'LEAD_DUPLICATE'
-        ? 'This lead already exists. Autosave skipped the duplicate row.'
-        : error?.message || 'Unable to autosave this lead row.';
+      let message = error?.message || 'Unable to autosave this lead row.';
+      if (error?.error_code === 'LEAD_DUPLICATE') {
+        let duplicateLabel = 'Existing row';
+        try {
+          const duplicateInfo = error?.details ? JSON.parse(error.details) : null;
+          if (duplicateInfo?.duplicate_id) {
+            const duplicateIndex = allLeads.findIndex((lead: Lead) => String(lead.id) === String(duplicateInfo.duplicate_id));
+            if (duplicateIndex >= 0) {
+              duplicateLabel = `Row ${duplicateIndex + 1}`;
+            }
+          }
+          if (duplicateInfo?.duplicate_name) {
+            message = `${duplicateLabel} already has data: ${duplicateInfo.duplicate_name}.`;
+          } else {
+            message = `${duplicateLabel} already has data.`;
+          }
+        } catch {
+          message = 'This lead already exists. A matching row already has data.';
+        }
+        setLeadRowWarnings((current) => ({
+          ...current,
+          [rowId]: message,
+        }));
+      }
       const errorKey = `${rowId}:${error?.error_code || message}`;
       const now = Date.now();
       if (!shownAutosaveErrors.current[errorKey] || now - shownAutosaveErrors.current[errorKey] > 5000) {
@@ -591,7 +716,7 @@ const Leads: React.FC = () => {
     }));
 
     const blankRows = Array.from({ length: Math.max(followupSheetRowCount - dataRows.length, 0) }, (_, index) => ({
-      id: `followup-blank-${index + 1}`,
+      id: getStableBlankRowId(followupBlankRowIds, 'followup', index),
       ownerName: '',
       raw: null,
       values: {},
@@ -762,7 +887,7 @@ const Leads: React.FC = () => {
                 {mutations.importLeads.isPending ? 'Importing...' : 'Import CSV'}
               </Button>
             ) : null}
-            <Button variant="secondary" onClick={() => downloadCsv(selectedLeadIds.length ? allLeads.filter((lead: Lead) => selectedLeadIds.includes(lead.id)) : allLeads)}>
+            <Button variant="secondary" onClick={handleExportLeads}>
               <Download className="mr-2 h-4 w-4" />
               Export
             </Button>
@@ -927,7 +1052,8 @@ const Leads: React.FC = () => {
           ) : null}
 
           {view === 'table' ? (
-            <>
+            <div className={sheetFullscreen === 'leads' ? 'fixed inset-0 z-50 bg-background/95 p-4 backdrop-blur-sm' : ''}>
+              <div className={sheetFullscreen === 'leads' ? 'flex h-full flex-col gap-4' : 'space-y-4'}>
               {isLeadSheetLoading ? (
                 <ModuleLoadingState
                   title="Loading leads"
@@ -950,6 +1076,9 @@ const Leads: React.FC = () => {
                   onSaveRow={(canUpdateLead || canCreateLead) ? saveLeadRow : undefined}
                   onAddRow={canCreateLead ? addLeadRow : undefined}
                   onDeleteRow={canDeleteLead ? handleDeleteLead : undefined}
+                  rowWarnings={leadRowWarnings}
+                  isFullscreen={sheetFullscreen === 'leads'}
+                  onToggleFullscreen={() => setSheetFullscreen((current) => (current === 'leads' ? null : 'leads'))}
                   canAdd={canCreateLead}
                   canEdit={canUpdateLead || canCreateLead}
                   canDelete={canDeleteLead}
@@ -972,11 +1101,13 @@ const Leads: React.FC = () => {
                   </Button>
                 </div>
               </div>
-            </>
+              </div>
+            </div>
           ) : null}
 
           {view === 'followups' ? (
-            <div className="space-y-4">
+            <div className={sheetFullscreen === 'followups' ? 'fixed inset-0 z-50 bg-background/95 p-4 backdrop-blur-sm' : ''}>
+              <div className={sheetFullscreen === 'followups' ? 'flex h-full flex-col gap-4' : 'space-y-4'}>
               <Input
                 value={followupSearch}
                 onChange={(event) => setFollowupSearch(event.target.value)}
@@ -996,23 +1127,26 @@ const Leads: React.FC = () => {
                   action={canCreateFollowups ? { label: 'Add Follow-up Rows', onClick: addFollowupRows } : undefined}
                 />
               ) : (
-              <FlexibleSheetTable
-                title="Editable Follow-up Sheet"
-                columns={followupColumnsWithOptions}
-                rows={followupRows}
-                showOwner={canViewAllLeads}
-                emptyText={followupQuery.isLoading ? 'Loading follow-ups...' : 'No follow-up rows found.'}
-                onColumnsChange={setFollowupColumns}
-                onSaveRow={(canUpdateFollowups || canCreateFollowups) ? saveFollowupRow : undefined}
-                onAddRow={canCreateFollowups ? addFollowupRows : undefined}
-                onDeleteRow={canDeleteFollowups ? (rowId) => followupMutations.deleteFollowup.mutate(rowId) : undefined}
-                canAdd={canCreateFollowups}
-                canEdit={canUpdateFollowups || canCreateFollowups}
-                canDelete={canDeleteFollowups}
-                canManageColumns={canUpdateFollowups}
-                autoSave
-              />
+                <FlexibleSheetTable
+                  title="Editable Follow-up Sheet"
+                  columns={followupColumnsWithOptions}
+                  rows={followupRows}
+                  showOwner={canViewAllLeads}
+                  emptyText={followupQuery.isLoading ? 'Loading follow-ups...' : 'No follow-up rows found.'}
+                  onColumnsChange={setFollowupColumns}
+                  onSaveRow={(canUpdateFollowups || canCreateFollowups) ? saveFollowupRow : undefined}
+                  onAddRow={canCreateFollowups ? addFollowupRows : undefined}
+                  onDeleteRow={canDeleteFollowups ? (rowId) => followupMutations.deleteFollowup.mutate(rowId) : undefined}
+                  isFullscreen={sheetFullscreen === 'followups'}
+                  onToggleFullscreen={() => setSheetFullscreen((current) => (current === 'followups' ? null : 'followups'))}
+                  canAdd={canCreateFollowups}
+                  canEdit={canUpdateFollowups || canCreateFollowups}
+                  canDelete={canDeleteFollowups}
+                  canManageColumns={canUpdateFollowups}
+                  autoSave
+                />
               )}
+              </div>
             </div>
           ) : null}
 

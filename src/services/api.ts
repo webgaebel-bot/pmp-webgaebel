@@ -779,6 +779,10 @@ class ApiService {
     return this.request<any>('/leads/stats');
   }
 
+  async getLeadOwnershipReport(): Promise<any> {
+    return this.request<any>('/report/reports/lead-ownership');
+  }
+
   async importLeads(formData: FormData): Promise<any> {
     const token = this.getToken();
     const response = await fetch(this.buildUrl('/leads/import'), {

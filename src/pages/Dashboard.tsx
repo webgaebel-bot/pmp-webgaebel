@@ -42,6 +42,14 @@ import LeadsAnalyticsCard from '@/components/dashboard/LeadsAnalyticsCard';
 
 const COLORS = ['hsl(142, 71%, 45%)', 'hsl(199, 89%, 48%)', 'hsl(38, 92%, 50%)', 'hsl(0, 84%, 60%)'];
 
+interface LeadOwnershipRow {
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  user_avatar?: string;
+  leads_count: number;
+}
+
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const permission = usePermission();
@@ -54,8 +62,10 @@ const Dashboard: React.FC = () => {
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [leadStats, setLeadStats] = useState<any | null>(null);
   const [recentLeads, setRecentLeads] = useState<any[]>([]);
+  const [leadOwnership, setLeadOwnership] = useState<LeadOwnershipRow[]>([]);
   const [financeStats, setFinanceStats] = useState<any | null>(null);
-  const statsUnavailable = permission.canViewDashboardStats() && !stats;
+  const canViewAdminDashboardSections = permission.isAdmin();
+  const statsUnavailable = canViewAdminDashboardSections && !stats;
   const isSalesDashboard = permission.canViewSalesDashboard();
   const dashboardStats = stats ?? {
     total_projects: 0,
@@ -75,56 +85,58 @@ const Dashboard: React.FC = () => {
         const promises: Promise<any>[] = [];
 
         // Dashboard stats
-        if (permission.canViewDashboardStats()) {
+        if (canViewAdminDashboardSections) {
           promises.push(api.getDashboard());
         } else {
           promises.push(Promise.resolve({ data: null }));
         }
 
         // Project progress
-        if (permission.canViewProjectProgress()) {
+        if (canViewAdminDashboardSections) {
           promises.push(api.getProjectProgressReport());
         } else {
           promises.push(Promise.resolve({ data: [] }));
         }
 
         // Team performance
-        if (permission.canViewTeamPerformance()) {
+        if (canViewAdminDashboardSections) {
           promises.push(api.getTeamPerformanceReport());
         } else {
           promises.push(Promise.resolve({ data: [] }));
         }
 
         // Task distribution
-        if (permission.canViewTaskCharts()) {
+        if (canViewAdminDashboardSections) {
           promises.push(api.getTaskDistributionReport());
         } else {
           promises.push(Promise.resolve({ data: [] }));
         }
 
         // Task activity
-        if (permission.canViewTaskCharts()) {
+        if (canViewAdminDashboardSections) {
           promises.push(api.getTaskActivityReport());
         } else {
           promises.push(Promise.resolve({ data: [] }));
         }
 
         // Activity logs
-        if (permission.canViewActivityLogsDashboard()) {
+        if (canViewAdminDashboardSections) {
           promises.push(api.getActivityLogs({ limit: '5' }));
         } else {
           promises.push(Promise.resolve([]));
         }
 
-        if (permission.can('dashboard.leads.view') || permission.canViewLeads()) {
+        if (permission.canViewLeads()) {
           promises.push(api.getLeadStats());
           promises.push(api.getLeads({ page: 1, pageSize: 4 }));
+          promises.push(canViewAdminDashboardSections ? api.getLeadOwnershipReport() : Promise.resolve({ data: [] }));
         } else {
           promises.push(Promise.resolve({ data: null }));
           promises.push(Promise.resolve({ data: [] }));
+          promises.push(Promise.resolve({ data: [] }));
         }
 
-        if (permission.can('dashboard.finance.view') || permission.can('finance.view')) {
+        if (canViewAdminDashboardSections) {
           promises.push(api.get('/finance/stats?range=month'));
         } else {
           promises.push(Promise.resolve({ data: null }));
@@ -139,6 +151,7 @@ const Dashboard: React.FC = () => {
           logsRes,
           leadStatsRes,
           recentLeadsRes,
+          leadOwnershipRes,
           financeStatsRes,
         ] = await Promise.allSettled(promises);
 
@@ -216,7 +229,10 @@ const Dashboard: React.FC = () => {
           id: log.id,
           action: log.action || 'Unknown',
           entity_type: log.entity_type,
-          entity_name: log.entity_type,
+          entity_name: log.entity_name || log.entity_type,
+          entity_label: log.entity_label || log.entity_type,
+          details: log.details || '',
+          summary: log.summary || '',
           created_at: log.created_at,
           user: {
             name: log.user_name || 'Unknown User',
@@ -229,6 +245,11 @@ const Dashboard: React.FC = () => {
           (recentLeadsRes.status === 'fulfilled'
             ? ((recentLeadsRes.value as any)?.data?.data || (recentLeadsRes.value as any)?.data || [])
             : []) as any[]
+        );
+        setLeadOwnership(
+          (leadOwnershipRes.status === 'fulfilled'
+            ? ((leadOwnershipRes.value as any)?.data || [])
+            : []) as LeadOwnershipRow[]
         );
         setFinanceStats(financeStatsRes.status === 'fulfilled' ? (financeStatsRes.value as any)?.data?.data || null : null);
       } catch (error) {
@@ -348,6 +369,76 @@ const Dashboard: React.FC = () => {
         </div>
       ) : null}
 
+      {canViewAdminDashboardSections && leadOwnership.length > 0 ? (
+        <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Lead Ownership</p>
+              <h3 className="text-xl font-semibold">Who has the most leads</h3>
+            </div>
+            <div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-600">
+              <Users className="h-5 w-5" />
+            </div>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="space-y-3">
+              {leadOwnership.map((member, index) => (
+                <div key={member.user_id} className="flex items-center gap-4 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
+                  <span className="w-6 text-sm font-semibold text-muted-foreground">{index + 1}</span>
+                  <Avatar className="h-10 w-10">
+                    <AvatarImage src={resolveImageUrl(member.user_avatar)} />
+                    <AvatarFallback className="bg-emerald-500/10 text-emerald-600">
+                      {member.user_name ? member.user_name.split(' ').map((part) => part[0]).join('').slice(0, 2) : 'U'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{member.user_name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{member.user_email || 'No email'}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold text-emerald-600">{member.leads_count}</p>
+                    <p className="text-xs text-muted-foreground">leads</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <p className="text-sm font-medium text-muted-foreground">Top performer</p>
+              {leadOwnership[0] ? (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-12 w-12">
+                      <AvatarImage src={resolveImageUrl(leadOwnership[0].user_avatar)} />
+                      <AvatarFallback className="bg-emerald-500/10 text-emerald-600">
+                        {leadOwnership[0].user_name ? leadOwnership[0].user_name.split(' ').map((part) => part[0]).join('').slice(0, 2) : 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-semibold">{leadOwnership[0].user_name}</p>
+                      <p className="text-sm text-muted-foreground">{leadOwnership[0].leads_count} leads assigned</p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-background">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Total visible owners</p>
+                    <p className="mt-1 text-3xl font-black">{leadOwnership.length}</p>
+                  </div>
+                  <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-background">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Total leads tracked</p>
+                    <p className="mt-1 text-3xl font-black">
+                      {leadOwnership.reduce((sum, member) => sum + Number(member.leads_count || 0), 0)}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                  No lead ownership data found yet.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {quickLinks.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {quickLinks.map((link) => {
@@ -374,7 +465,7 @@ const Dashboard: React.FC = () => {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {(permission.can('dashboard.projects.view') || permission.canViewDashboardStats()) && (
+        {canViewAdminDashboardSections && (
           <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
@@ -427,7 +518,7 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {(permission.can('dashboard.leads.view') || permission.canViewLeads()) && (
+        {permission.canViewLeads() && (
           <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
@@ -482,7 +573,7 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {(permission.can('dashboard.finance.view') || permission.can('finance.view')) && (
+        {canViewAdminDashboardSections && (
           <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
@@ -536,7 +627,7 @@ const Dashboard: React.FC = () => {
 
       {/* Premium Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {(permission.canViewDashboardStats() || permission.canViewTotalProjects()) && (
+        {canViewAdminDashboardSections && permission.canViewTotalProjects() && (
           <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
             <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
               <FolderKanban className="h-24 w-24 text-primary" />
@@ -561,7 +652,7 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {(permission.canViewDashboardStats() || permission.canViewTotalTasks()) && (
+        {canViewAdminDashboardSections && permission.canViewTotalTasks() && (
           <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
             <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
               <CheckSquare className="h-24 w-24 text-blue-500" />
@@ -586,7 +677,7 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {(permission.canViewDashboardStats() || permission.canViewOverdueTasks()) && (
+        {canViewAdminDashboardSections && permission.canViewOverdueTasks() && (
           <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
             <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
               <AlertCircle className="h-24 w-24 text-rose-500" />
@@ -610,7 +701,7 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {(permission.canViewDashboardStats() || (permission.canViewTeamMembers() && permission.canViewOnlineUsers())) && (
+        {canViewAdminDashboardSections && permission.canViewTeamMembers() && permission.canViewOnlineUsers() && (
           <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
             <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
               <Users className="h-24 w-24 text-amber-500" />
@@ -647,6 +738,7 @@ const Dashboard: React.FC = () => {
       ) : null}
 
       {/* Charts Row */}
+      {canViewAdminDashboardSections ? (
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="xl:col-span-2 rounded-3xl border border-border bg-card p-6 shadow-sm">
           <div className="mb-6 flex items-center justify-between gap-4">
@@ -807,8 +899,10 @@ const Dashboard: React.FC = () => {
           )}
         </div>
       </div>
+      ) : null}
 
       {/* Bottom Row */}
+      {canViewAdminDashboardSections ? (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Project Progress */}
         {projectProgress.length > 0 && (
@@ -882,9 +976,10 @@ const Dashboard: React.FC = () => {
           </div>
         )}
       </div>
+      ) : null}
 
       {/* Activity Logs Section */}
-      {permission.canViewActivityLogsDashboard() && activityLogs.length > 0 && (
+      {canViewAdminDashboardSections && activityLogs.length > 0 && (
         <div className="bg-card rounded-lg border border-border p-6 shadow-card">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold">Recent Activity</h2>
@@ -904,10 +999,13 @@ const Dashboard: React.FC = () => {
                     {log.user?.name || 'Unknown User'} {log.action}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {log.entity_type}: <span className="font-medium">{log.entity_name}</span>
+                    {log.summary || `${log.action || 'Action'} ${log.entity_label || log.entity_type}`.trim()}
                   </p>
+                  {log.details && log.details !== log.summary && (
+                    <p className="mt-1 text-xs text-muted-foreground">{log.details}</p>
+                  )}
                   <p className="text-xs text-muted-foreground mt-1">
-                    {new Date(log.created_at).toLocaleDateString()} {new Date(log.created_at).toLocaleTimeString()}
+                    {new Date(log.created_at).toLocaleDateString()} {new Date(log.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                   </p>
                 </div>
               </div>

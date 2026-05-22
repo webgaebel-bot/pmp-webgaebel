@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, Maximize2, Minimize2, Plus, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +24,9 @@ interface FlexibleSheetTableProps {
   onSaveRow?: (rowId: string, values: Record<string, string>, raw?: unknown) => void | Promise<void>;
   onAddRow?: () => void;
   onDeleteRow?: (rowId: string) => void;
+  rowWarnings?: Record<string, string>;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   canAdd?: boolean;
   canEdit?: boolean;
   canDelete?: boolean;
@@ -53,6 +56,9 @@ export function FlexibleSheetTable({
   onSaveRow,
   onAddRow,
   onDeleteRow,
+  rowWarnings = {},
+  isFullscreen = false,
+  onToggleFullscreen,
   canAdd = true,
   canEdit = true,
   canDelete = Boolean(onDeleteRow),
@@ -177,6 +183,12 @@ export function FlexibleSheetTable({
         </div>
         {(canManageColumns || canAdd) ? (
           <div className="flex flex-col gap-2 sm:flex-row">
+            {onToggleFullscreen ? (
+              <Button type="button" variant="outline" onClick={onToggleFullscreen}>
+                {isFullscreen ? <Minimize2 className="mr-2 h-4 w-4" /> : <Maximize2 className="mr-2 h-4 w-4" />}
+                {isFullscreen ? 'Exit Full Screen' : 'Full Screen'}
+              </Button>
+            ) : null}
             {canManageColumns ? (
               <>
                 <Input
@@ -207,7 +219,7 @@ export function FlexibleSheetTable({
         ) : null}
       </div>
 
-      <div className="max-h-[70vh] overflow-auto rounded-lg border" onScroll={handleScroll}>
+      <div className={isFullscreen ? 'max-h-[calc(100vh-14rem)] overflow-auto rounded-lg border' : 'max-h-[70vh] overflow-auto rounded-lg border'} onScroll={handleScroll}>
         <table className="w-full min-w-[1600px] border-collapse text-sm">
           <thead className="bg-muted/60">
             <tr>
@@ -246,10 +258,23 @@ export function FlexibleSheetTable({
             ) : (
               renderedRows.map((row, rowIndex) => {
                 const dirty = Boolean(draftRows[row.id]);
+                const warningMessage = rowWarnings[row.id];
                 return (
                   <tr key={row.id} className="border-t hover:bg-muted/30">
                     <td className="sticky left-0 z-20 border-r bg-background px-3 py-2 text-center text-xs text-muted-foreground">
-                      {rowIndex + 1}
+                      <div className="flex flex-col items-center gap-1">
+                        <span>{rowIndex + 1}</span>
+                        {warningMessage ? (
+                          <Badge
+                            variant="outline"
+                            title={warningMessage}
+                            className="border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+                          >
+                            <AlertTriangle className="mr-1 h-3 w-3" />
+                            Duplicate
+                          </Badge>
+                        ) : null}
+                      </div>
                     </td>
                     {showOwner ? (
                       <td className="sticky left-14 z-10 border-r bg-background px-3 py-2">

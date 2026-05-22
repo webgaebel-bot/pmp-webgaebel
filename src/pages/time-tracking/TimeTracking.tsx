@@ -288,6 +288,17 @@ const TimeTracking: React.FC = () => {
     }).length;
   };
 
+  const countLeadsCreatedFresh = async (startedAt: string, endedAt: string) => {
+    const response = await api.getLeads({
+      page: 1,
+      pageSize: 1000,
+      date_from: startedAt,
+      date_to: endedAt,
+    });
+    const freshLeads = response?.data || [];
+    return freshLeads.filter((lead: any) => String(lead.created_by || '') === String(user?.id || '')).length;
+  };
+
   const modeLogs = useMemo(() => {
     return (visibleTimeLogs || []).filter((log: any) => {
       const salesMeta = parseSalesDescription(log.description);
@@ -433,7 +444,7 @@ const TimeTracking: React.FC = () => {
 
     const stoppedAt = new Date().toISOString();
     const leadsCreated = trackingMode === 'sales' && sessionStartedAt
-      ? countLeadsCreatedInSession(sessionStartedAt, stoppedAt)
+      ? await countLeadsCreatedFresh(sessionStartedAt, stoppedAt).catch(() => countLeadsCreatedInSession(sessionStartedAt, stoppedAt))
       : 0;
 
     if (activeSessionId) {

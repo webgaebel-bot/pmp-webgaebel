@@ -37,6 +37,9 @@ const entityIcons: Record<string, React.ElementType> = {
   file: Settings,
   rolepermissions: Shield,
   rolepermission: Shield,
+  permission: Shield,
+  time_log: Clock,
+  lead_taxonomy: Settings,
 };
 
 const actionColors: Record<string, string> = {
@@ -46,6 +49,8 @@ const actionColors: Record<string, string> = {
   'TASK_COMMENT_ADDED': 'bg-warning/10 text-warning',
   ASSIGN: 'bg-accent/10 text-accent',
 };
+
+const actionLabel = (action?: string) => String(action || 'UNKNOWN').replace(/_/g, ' ');
 
 const Activity: React.FC = () => {
   const { user } = useAuth();
@@ -73,8 +78,10 @@ const Activity: React.FC = () => {
           action: log.action || 'UNKNOWN',
           entity_type: (log.entity_type || '').toLowerCase(),
           entity_id: log.entity_id,
-          entity_name: log.entity_type,
-          details: '',
+          entity_name: log.entity_name || log.entity_type,
+          entity_label: log.entity_label || log.entity_type,
+          details: log.details || '',
+          summary: log.summary || '',
           created_at: log.created_at,
         }));
         
@@ -92,9 +99,11 @@ const Activity: React.FC = () => {
 
   const filteredLogs = logs.filter((log) => {
     const matchesSearch = 
-      log.entity_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.summary?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.details?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       log.user?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.action?.toLowerCase().includes(searchQuery.toLowerCase());
+      log.action?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.entity_label?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesEntity = entityFilter === 'all' || log.entity_type === entityFilter;
     return matchesSearch && matchesEntity;
   });
@@ -194,25 +203,25 @@ const Activity: React.FC = () => {
                             <div className="flex items-center flex-wrap gap-2">
                               <span className="font-medium text-sm">{log.user?.name}</span>
                               <Badge className={`${actionColors[log.action] || 'bg-muted/10 text-muted-foreground'} border-0 text-xs`}>
-                                {log.action?.replace(/_/g, ' ')}
+                                {actionLabel(log.action)}
                               </Badge>
-                              <span className="text-muted-foreground text-xs">on a</span>
                               <Badge variant="secondary" className="font-normal text-xs">
                                 <Icon className="mr-1 h-3 w-3" />
-                                {log.entity_type}
+                                {log.entity_label || log.entity_type}
                               </Badge>
                             </div>
 
-                            <p className="mt-2 text-sm">
-                              <span className="font-medium text-foreground">{log.entity_name}</span>
-                              {log.details && (
-                                <span className="text-muted-foreground"> - {log.details}</span>
-                              )}
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {log.summary || `${actionLabel(log.action)} ${log.entity_label || log.entity_type}`.trim()}
                             </p>
+
+                            {log.details && log.details !== log.summary && (
+                              <p className="mt-1 text-xs text-muted-foreground">{log.details}</p>
+                            )}
 
                             <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
                               <Clock className="h-3 w-3" />
-                              {format(new Date(log.created_at), 'HH:mm')}
+                              {format(new Date(log.created_at), 'h:mm a')}
                             </div>
                           </div>
                         </div>
