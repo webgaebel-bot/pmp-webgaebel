@@ -88,7 +88,7 @@ export const MailCompose: React.FC<MailComposeProps> = ({
                         <Label htmlFor="to">To *</Label>
                         <Input
                             id="to"
-                            type="email"
+                            type="text"
                             value={safeComposeData.to}
                             onChange={(e) => onToChange(e.target.value)}
                             placeholder="Enter email address"

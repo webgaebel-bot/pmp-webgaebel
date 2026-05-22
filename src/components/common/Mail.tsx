@@ -483,10 +483,10 @@ const Mail: React.FC = () => {
 
     const handleComposeToChange = async (value: string) => {
         setComposeData((prev) => ({ ...prev, to: value }));
-        if (value.length > 0) {
+        if (value.trim().length > 0) {
             setIsLoadingSuggestions(true);
             try {
-                const response: any = await api.getUsers();
+                const response: any = await api.getSystemUsers(value.trim());
                 const usersData = response?.data || response || [];
                 const filteredUsers = (Array.isArray(usersData) ? usersData : []).filter((user: any) =>
                     user.email?.toLowerCase().includes(value.toLowerCase()) ||

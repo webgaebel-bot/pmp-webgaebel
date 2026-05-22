@@ -67,9 +67,19 @@ export interface ProjectMember {
   name?: string;
   email?: string;
   user_id?: string;
-  role?: 'owner' | 'manager' | 'member' | 'viewer';
-  project_role?: 'owner' | 'manager' | 'member' | 'viewer';
+  role?: string;
+  project_role?: string;
   joined_at?: string;
+}
+
+export interface ProjectRole {
+  id: string;
+  project_id: string;
+  name: string;
+  description?: string;
+  permissions?: string[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 // Task Types

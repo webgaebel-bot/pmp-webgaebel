@@ -80,7 +80,7 @@ export const usePermission = () => {
     canViewProjectDashboard: (): boolean => isAdmin() && hasPermission('dashboard.projects.view'),
     canViewLeadDashboard: (): boolean => isAdmin() && hasPermission('dashboard.leads.view'),
     canViewFinanceDashboard: (): boolean => isAdmin() && hasPermission('dashboard.finance.view'),
-    canViewSalesDashboard: (): boolean => hasPermission('sales.dashboard.view') || hasPermission('sales.view'),
+    canViewSalesDashboard: (): boolean => hasPermission('sales.dashboard.view'),
     // Leads
     canViewLeads: (): boolean => hasPermission('leads.view'),
     
@@ -160,6 +160,11 @@ export const usePermission = () => {
       hasPermission('members.create') || 
       hasPermission('members.update') || 
       hasPermission('members.delete'),
+
+    /**
+     * Project Roles
+     */
+    canManageProjectRoles: (): boolean => hasPermission('project.roles.manage'),
 
     /**
      * Project Members - specific permissions

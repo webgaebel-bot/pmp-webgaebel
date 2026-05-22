@@ -287,28 +287,28 @@ const Dashboard: React.FC = () => {
       path: '/projects',
       description: 'Open the project workspace and status board.',
       icon: FolderKanban,
-      visible: permission.canViewProjects(),
+      visible: canViewAdminDashboardSections && permission.canViewProjects(),
     },
     {
       title: 'Tasks',
       path: '/tasks',
       description: 'Review current tasks and deadlines.',
       icon: CheckSquare,
-      visible: permission.canViewTasks(),
+      visible: canViewAdminDashboardSections && permission.canViewTasks(),
     },
     {
       title: 'Calendar',
       path: '/calendar',
       description: 'View the project calendar and schedule.',
       icon: TrendingUp,
-      visible: permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']),
+      visible: canViewAdminDashboardSections && permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']),
     },
     {
       title: 'Finance',
       path: '/finance',
       description: 'Open the finance dashboard for revenue data.',
       icon: Users,
-      visible: permission.can('finance.view'),
+      visible: canViewAdminDashboardSections && permission.can('finance.view'),
     },
     {
       title: 'Leads',
@@ -728,7 +728,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Leads Analytics Card */}
-      {permission.canViewLeads() && <LeadsAnalyticsCard />}
+      {canViewAdminDashboardSections && <LeadsAnalyticsCard />}
 
       {/* Calendar Section */}
       {permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']) ? (

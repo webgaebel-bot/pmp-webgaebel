@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -60,17 +60,27 @@ import { usePermission } from '@/hooks/usePermission';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
 import { initSocket, onProjectAssignment } from '@/services/socket';
-import type { Project, ProjectMember, Task, FileAttachment, User } from '@/types';
+import type { Project, ProjectMember, ProjectRole, Task, FileAttachment, User } from '@/types';
+
+const FALLBACK_PROJECT_ROLES = [
+  { name: 'owner', description: 'Full control of project settings and members' },
+  { name: 'manager', description: 'Can manage tasks and project members' },
+  { name: 'lead', description: 'Can oversee a workstream inside the project' },
+  { name: 'member', description: 'Can work on tasks and collaborate' },
+  { name: 'viewer', description: 'Read-only access to the project' },
+];
 
 const ProjectDetail: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
   const permission = usePermission();
   const { toast } = useToast();
 
   const [isLoading, setIsLoading] = useState(true);
   const [project, setProject] = useState<Project | null>(null);
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [projectRoles, setProjectRoles] = useState<ProjectRole[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [files, setFiles] = useState<FileAttachment[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -101,6 +111,27 @@ const ProjectDetail: React.FC = () => {
   const canCreateMembers = permission.canCreateMembers() || permission.canAddProjectMembers();
   const canUpdateMembers = permission.canUpdateMembers() || permission.canUpdateProjectMembers();
   const canDeleteMembers = permission.canDeleteMembers() || permission.canRemoveProjectMembers();
+  const currentMember = useMemo(
+    () =>
+      members.find(
+        (member) =>
+          String(member.user_id || member.user?.id || '').toLowerCase() === String(user?.id || '').toLowerCase()
+      ),
+    [members, user?.id]
+  );
+  const currentProjectRole = useMemo(
+    () =>
+      projectRoles.find(
+        (role) =>
+          String(role.name || '').toLowerCase() ===
+          String(currentMember?.project_role || currentMember?.role || '').toLowerCase()
+      ),
+    [currentMember, projectRoles]
+  );
+  const canManageProjectRoles =
+    permission.isAdmin() ||
+    Boolean(currentProjectRole?.permissions?.includes('project.roles.manage')) ||
+    Boolean(currentProjectRole?.permissions?.includes('projects.manage'));
   const canCreateTask = permission.canCreateTask();
 
   const fetchProjectData = useCallback(async () => {
@@ -108,9 +139,10 @@ const ProjectDetail: React.FC = () => {
     
     setIsLoading(true);
     try {
-      const [projectRes, membersRes, tasksRes, filesRes] = await Promise.allSettled([
+      const [projectRes, membersRes, rolesRes, tasksRes, filesRes] = await Promise.allSettled([
         api.getProject(id),
         api.getProjectMembers(id),
+        api.getProjectRoles(id),
         api.getTasksByProjectId(id),
         api.getFiles(id),
       ]);
@@ -129,6 +161,14 @@ const ProjectDetail: React.FC = () => {
       } else {
         console.error('Failed to fetch members:', membersRes.reason);
         setMembers([]);
+      }
+
+      if (rolesRes.status === 'fulfilled') {
+        const rolesData = (rolesRes.value as any)?.data || [];
+        setProjectRoles(Array.isArray(rolesData) ? rolesData : []);
+      } else {
+        console.error('Failed to fetch project roles:', rolesRes.reason);
+        setProjectRoles([]);
       }
       
       // Handle tasks response
@@ -165,6 +205,20 @@ const ProjectDetail: React.FC = () => {
       fetchProjectData();
     }
   }, [id, fetchProjectData]);
+
+  useEffect(() => {
+    if (!projectRoles.length) return;
+    const selectedExists = projectRoles.some(
+      (role) => String(role.name || '').toLowerCase() === String(selectedRole || '').toLowerCase()
+    );
+    if (!selectedExists) {
+      setSelectedRole(
+        projectRoles.find((role) => String(role.name || '').toLowerCase() === 'member')?.name ||
+          projectRoles[0]?.name ||
+          'member'
+      );
+    }
+  }, [projectRoles, selectedRole]);
 
   useEffect(() => {
     if (!id) return;
@@ -286,7 +340,7 @@ const ProjectDetail: React.FC = () => {
   };
 
   const handleRemoveMember = async (userId: string) => {
-    if (!id) return;
+    if (!id || !userId) return;
     
     try {
       await api.removeProjectMember(id, userId);
@@ -630,13 +684,15 @@ const ProjectDetail: React.FC = () => {
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-semibold">Project Members ({members.length})</h3>
               <div className="flex gap-2">
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  onClick={() => navigate(`/projects/${id}/roles`)}
-                >
-                  Manage Roles
-                </Button>
+                {canManageProjectRoles && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => navigate(`/projects/${id}/roles`)}
+                  >
+                    Manage Roles
+                  </Button>
+                )}
                 {canCreateMembers && (
                   <Button size="sm" className="bg-accent hover:bg-accent/90" onClick={openAddMemberDialog}>
                     <Plus className="mr-2 h-4 w-4" />
@@ -677,7 +733,7 @@ const ProjectDetail: React.FC = () => {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => handleRemoveMember(member.user?.id || member.user_id || member.id)}
+                          onClick={() => handleRemoveMember(member.user_id || member.user?.id || '')}
                         >
                           <UserMinus className="h-4 w-4" />
                         </Button>
@@ -849,19 +905,35 @@ const ProjectDetail: React.FC = () => {
             </div>
             <div className="space-y-2">
               <Label>Role</Label>
-              <Select value={selectedRole} onValueChange={setSelectedRole}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="owner">Owner</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="viewer">Viewer</SelectItem>
-                </SelectContent>
-              </Select>
+                <Select value={selectedRole} onValueChange={setSelectedRole}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(projectRoles.length ? projectRoles : FALLBACK_PROJECT_ROLES).map((role: any) => (
+                      <SelectItem key={String(role.id || role.name)} value={String(role.name)}>
+                        <div className="flex flex-col">
+                          <span className="capitalize">{role.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {role.description || 'Project role'}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-sm text-muted-foreground">
+                  <strong className="text-foreground capitalize">{selectedRole}:</strong>{' '}
+                  {(
+                    projectRoles.find((role) => String(role.name).toLowerCase() === String(selectedRole).toLowerCase())?.description ||
+                    FALLBACK_PROJECT_ROLES.find((role) => String(role.name).toLowerCase() === String(selectedRole).toLowerCase())?.description ||
+                    'Project role'
+                  )}
+                </p>
+              </div>
             </div>
-          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddMemberOpen(false)}>
               Cancel

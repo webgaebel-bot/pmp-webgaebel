@@ -337,6 +337,14 @@ class ApiService {
     return this.request<any>(`/project/members/${projectId}`);
   }
 
+  async getProjectRoles(projectId: string): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/roles`);
+  }
+
+  async getProjectPermissions(projectId: string): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/permissions`);
+  }
+
   async getMinimalProjects(): Promise<any> {
     return this.request<any>('/projects/minimal');
   }
@@ -350,6 +358,26 @@ class ApiService {
   
   async removeProjectMember(projectId: string, userId: string) {
     return this.request<any>(`/project/members/remove/${projectId}/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async createProjectRole(projectId: string, data: any) {
+    return this.request<any>(`/projects/${projectId}/roles`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProjectRole(roleId: string, data: any) {
+    return this.request<any>(`/project-roles/${roleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProjectRole(roleId: string) {
+    return this.request<any>(`/project-roles/${roleId}`, {
       method: 'DELETE',
     });
   }

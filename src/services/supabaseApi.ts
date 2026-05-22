@@ -15,6 +15,7 @@ import { createProjectService } from '@/services/projectService';
 import { createTaskService } from '@/services/taskService';
 import { createTimeTrackingService } from '@/services/timeTrackingService';
 import { calculateFinanceSummary } from '@/lib/financeEngine';
+import { sanitizeProjectPermissions } from '@/lib/projectPermissions';
 import {
   clampPage,
   clampPageSize,
@@ -184,6 +185,14 @@ const getRangeBounds = (range?: string) => {
   return { start: start.toISOString(), end: end.toISOString() };
 };
 
+const DEFAULT_PROJECT_ROLE_SEEDS = [
+  { name: 'owner', description: 'Full control of project settings and members', permissions: ['projects.manage', 'members.manage', 'tasks.manage', 'files.manage', 'project.roles.manage'] },
+  { name: 'manager', description: 'Can manage tasks and project members', permissions: ['projects.view', 'members.manage', 'tasks.manage', 'files.view'] },
+  { name: 'lead', description: 'Can oversee a workstream inside the project', permissions: ['projects.view', 'tasks.view', 'tasks.update'] },
+  { name: 'member', description: 'Can work on tasks and collaborate', permissions: ['projects.view', 'tasks.view'] },
+  { name: 'viewer', description: 'Read-only access to the project', permissions: ['projects.view'] },
+] as const;
+
 export class SupabaseApiService {
   private readonly modules = {
     auth: createAuthService(this),
@@ -274,6 +283,40 @@ export class SupabaseApiService {
     }
 
     return ensureArray(data).map((row: any) => String(row.project_id)).filter(Boolean);
+  }
+
+  private async canManageProjectRoles(projectId: string, access?: Awaited<ReturnType<SupabaseApiService['getCurrentAccessContext']>>) {
+    const resolvedAccess = access || (await this.getCurrentAccessContext());
+    if (resolvedAccess.isAdminActor) return true;
+
+    const { data: membership, error: membershipError } = await this.client
+      .from('project_members')
+      .select('role')
+      .eq('project_id', projectId)
+      .eq('user_id', resolvedAccess.profile.id)
+      .maybeSingle();
+
+    if (membershipError) {
+      throw formatError(membershipError, 'Unable to verify project role permissions.');
+    }
+
+    const memberRoleName = String(membership?.role || '').trim().toLowerCase();
+    if (!memberRoleName) return false;
+
+    const { data: projectRoles, error: rolesError } = await this.client
+      .from('project_roles')
+      .select('name, permissions')
+      .eq('project_id', projectId);
+
+    if (rolesError) {
+      throw formatError(rolesError, 'Unable to verify project role permissions.');
+    }
+
+    const matchedRole = ensureArray(projectRoles).find(
+      (role: any) => String(role.name || '').trim().toLowerCase() === memberRoleName
+    );
+
+    return sanitizeProjectPermissions(matchedRole?.permissions || []).includes('project.roles.manage');
   }
 
   private async getCurrentAccessContext() {
@@ -560,6 +603,12 @@ export class SupabaseApiService {
           }
         : undefined,
     }));
+    const inferredOwnerMember =
+      row.owner ||
+      members.find((member: any) => member.project_role === 'owner' && member.user) ||
+      members.find((member: any) => member.project_role === 'manager' && member.user) ||
+      members.find((member: any) => member.user) ||
+      null;
 
     const taskCount = ensureArray(row.tasks).length;
     const completedTasks = ensureArray(row.tasks).filter((task: any) => isCompletedStatus(task.status)).length;
@@ -577,7 +626,7 @@ export class SupabaseApiService {
       created_at: row.created_at,
       updated_at: row.updated_at,
       created_by_id: row.created_by,
-      created_by_name: row.owner?.name || '',
+      created_by_name: row.owner?.name || inferredOwnerMember?.user?.name || inferredOwnerMember?.name || '',
       owner: row.owner
         ? {
             id: String(row.owner.id),
@@ -586,6 +635,14 @@ export class SupabaseApiService {
             avatar: row.owner.avatar_url || row.owner.profile_image || '',
             profile_image: row.owner.profile_image || row.owner.avatar_url || '',
           }
+        : inferredOwnerMember?.user
+        ? {
+            id: String(inferredOwnerMember.user.id),
+            name: inferredOwnerMember.user.name,
+            email: inferredOwnerMember.user.email,
+            avatar: inferredOwnerMember.user.avatar_url || inferredOwnerMember.user.profile_image || '',
+            profile_image: inferredOwnerMember.user.profile_image || inferredOwnerMember.user.avatar_url || '',
+          }
         : undefined,
       members,
       member_count: members.length,
@@ -593,6 +650,78 @@ export class SupabaseApiService {
       completed_tasks: completedTasks,
     };
   };
+
+  private async seedDefaultProjectRoles(projectId: string, createdBy?: string | null) {
+    const roleRows = DEFAULT_PROJECT_ROLE_SEEDS.map((role) => ({
+      project_id: projectId,
+      name: role.name,
+      description: role.description,
+      permissions: sanitizeProjectPermissions(role.permissions),
+      created_by: createdBy || null,
+    }));
+
+    const { error } = await this.client
+      .from('project_roles')
+      .upsert(roleRows, { onConflict: 'project_id,name' as any });
+
+    if (error) {
+      console.warn('Failed to seed project roles:', error);
+    }
+  }
+
+  private mapProjectRole = (row: any) => ({
+    id: String(row.id),
+    project_id: String(row.project_id),
+    name: String(row.name || ''),
+    description: row.description || '',
+    permissions: Array.isArray(row.permissions) ? row.permissions.map((item) => String(item)) : [],
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  });
+
+  async getProjectPermissions(projectId: string) {
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects) {
+      const projectIds = await this.getAccessibleProjectIds(access.profile.id);
+      if (!projectIds.includes(String(projectId))) {
+        throw new ApiError('You do not have access to this project.', 403, 'PROJECT_ACCESS_DENIED');
+      }
+    }
+
+    const { data, error } = await this.client.rpc('get_project_permissions_secure', {
+      p_project_id: projectId,
+    });
+
+    if (!error && data) {
+      return {
+        success: true,
+        data: ensureArray(data),
+      };
+    }
+
+    if (!this.isMissingRpcFunctionError(error, 'get_project_permissions_secure')) {
+      throw formatError(error, 'Unable to load project permissions.');
+    }
+
+    const { data: fallbackData, error: fallbackError } = await this.client
+      .from('project_permissions')
+      .select('id, key, name, description, created_at')
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (fallbackError) throw formatError(fallbackError, 'Unable to load project permissions.');
+
+    return {
+      success: true,
+      data: ensureArray(fallbackData).map((permission: any) => ({
+        id: String(permission.id),
+        key: String(permission.key),
+        name: String(permission.name),
+        description: String(permission.description || ''),
+        created_at: permission.created_at,
+      })),
+    };
+  }
 
   private mapTask = (row: any) => ({
     id: String(row.id),
@@ -1514,22 +1643,224 @@ export class SupabaseApiService {
     if (!access.canViewAllProjects && !access.permissions.includes('projects.create')) {
       throw new ApiError('You do not have permission to create projects.', 403, 'PROJECT_CREATE_DENIED');
     }
-    const { data, error } = await this.client.rpc('create_project_secure', {
+    const projectPayload = {
+      name: payload.name,
+      description: payload.description || null,
+      priority: payload.priority || 'medium',
+      status: payload.status || 'planning',
+      progress: payload.progress || 0,
+      start_date: payload.start_date || null,
+      end_date: payload.end_date || null,
+    };
+
+    const { data: createdResult, error } = await this.client.rpc('create_project_secure', {
       p_project: {
-        name: payload.name,
-        description: payload.description || null,
-        priority: payload.priority || 'medium',
-        status: payload.status || 'planning',
-        progress: payload.progress || 0,
-        start_date: payload.start_date || null,
-        end_date: payload.end_date || null,
+        ...projectPayload,
       },
     });
-    if (error || !data) throw formatError(error, 'Failed to create project.');
+    const created = this.firstRpcRow<any>(createdResult);
 
-    await this.logActivity('CREATE', 'project', String(data.id), data.name);
+    if (!error && created) {
+      await this.logActivity('CREATE', 'project', String(created.id), created.name);
+      return { success: true, message: 'Project created successfully.', data: created };
+    }
 
-    return { success: true, message: 'Project created successfully.', data };
+    if (!this.isMissingRpcFunctionError(error, 'create_project_secure') && !this.isRpcResultShapeError(error)) {
+      throw formatError(error, 'Failed to create project.');
+    }
+
+    const currentUserId = await this.getCurrentUserId();
+    const { data: createdFallback, error: insertError } = await this.client
+      .from('projects')
+      .insert([{ ...projectPayload, created_by: currentUserId }])
+      .select()
+      .single();
+
+    if (insertError || !createdFallback) {
+      throw formatError(insertError, 'Failed to create project.');
+    }
+
+    await this.seedDefaultProjectRoles(String(createdFallback.id), currentUserId);
+    await this.client
+      .from('project_members')
+      .insert({
+        project_id: createdFallback.id,
+        user_id: currentUserId,
+        role: 'owner',
+      })
+      .select()
+      .single()
+      .catch(() => null);
+
+    await this.logActivity('CREATE', 'project', String(createdFallback.id), createdFallback.name);
+
+    return { success: true, message: 'Project created successfully.', data: createdFallback };
+  }
+
+  async getProjectRoles(projectId: string) {
+    const access = await this.getCurrentAccessContext();
+    if (!access.canViewAllProjects) {
+      const projectIds = await this.getAccessibleProjectIds(access.profile.id);
+      if (!projectIds.includes(String(projectId))) {
+        throw new ApiError('You do not have access to this project.', 403, 'PROJECT_ACCESS_DENIED');
+      }
+    }
+
+    const { data, error } = await this.client.rpc('get_project_roles_secure', {
+      p_project_id: projectId,
+    });
+
+    if (!error && data) {
+      return { success: true, data: ensureArray(data).map(this.mapProjectRole) };
+    }
+
+    if (!this.isMissingRpcFunctionError(error, 'get_project_roles_secure')) {
+      throw formatError(error, 'Unable to load project roles.');
+    }
+
+    const fallback = await this.client
+      .from('project_roles')
+      .select('id, project_id, name, description, permissions, created_at, updated_at')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: true });
+
+    const { data: fallbackData, error: fallbackError } = fallback;
+
+    if (fallbackError) throw formatError(fallbackError, 'Unable to load project roles.');
+
+    return { success: true, data: ensureArray(fallbackData).map(this.mapProjectRole) };
+  }
+
+  async createProjectRole(projectId: string, data: { name: string; description?: string; permissions?: string[] }) {
+    const access = await this.getCurrentAccessContext();
+    if (!(await this.canManageProjectRoles(projectId, access))) {
+      throw new ApiError('You do not have permission to create project roles.', 403, 'PROJECT_ROLE_CREATE_DENIED');
+    }
+
+    const payload = {
+      project_id: projectId,
+      name: String(data.name || '').trim(),
+      description: String(data.description || '').trim() || null,
+      permissions: sanitizeProjectPermissions(data.permissions),
+      created_by: access.profile.id,
+    };
+
+    if (!payload.name) {
+      throw new ApiError('Role name is required.', 400, 'PROJECT_ROLE_NAME_REQUIRED');
+    }
+
+    const { data: created, error } = await this.client.rpc('create_project_role_secure', {
+      p_project_id: projectId,
+      p_role: payload,
+    });
+
+    const createdRole = this.firstRpcRow<any>(created);
+    if (!error && createdRole) {
+      return { success: true, data: this.mapProjectRole(createdRole) };
+    }
+
+    if (!this.isMissingRpcFunctionError(error, 'create_project_role_secure')) {
+      throw formatError(error, 'Failed to create project role.');
+    }
+
+    const { data: fallbackCreated, error: fallbackError } = await this.client
+      .from('project_roles')
+      .insert(payload)
+      .select('id, project_id, name, description, permissions, created_at, updated_at')
+      .single();
+
+    if (fallbackError || !fallbackCreated) throw formatError(fallbackError, 'Failed to create project role.');
+
+    return { success: true, data: this.mapProjectRole(fallbackCreated) };
+  }
+
+  async updateProjectRole(roleId: string, data: { name?: string; description?: string; permissions?: string[] }) {
+    const access = await this.getCurrentAccessContext();
+    const payload: Record<string, any> = {};
+    if (data.name !== undefined) payload.name = String(data.name).trim();
+    if (data.description !== undefined) payload.description = String(data.description).trim() || null;
+    if (data.permissions !== undefined) payload.permissions = sanitizeProjectPermissions(data.permissions);
+
+    if (!Object.keys(payload).length) {
+      throw new ApiError('No project role fields to update.', 400, 'PROJECT_ROLE_UPDATE_EMPTY');
+    }
+
+    const { data: updated, error } = await this.client.rpc('update_project_role_secure', {
+      p_role_id: roleId,
+      p_patch: payload,
+    });
+
+    const updatedRole = this.firstRpcRow<any>(updated);
+    if (!error && updatedRole) {
+      return { success: true, data: this.mapProjectRole(updatedRole) };
+    }
+
+    if (!this.isMissingRpcFunctionError(error, 'update_project_role_secure')) {
+      throw formatError(error, 'Failed to update project role.');
+    }
+
+    const { data: roleRow, error: roleError } = await this.client
+      .from('project_roles')
+      .select('id, project_id')
+      .eq('id', roleId)
+      .single();
+
+    if (roleError || !roleRow) {
+      throw formatError(roleError, 'Project role not found.');
+    }
+
+    if (!(await this.canManageProjectRoles(String(roleRow.project_id), access))) {
+      throw new ApiError('You do not have permission to update project roles.', 403, 'PROJECT_ROLE_UPDATE_DENIED');
+    }
+
+    const { data: fallbackUpdated, error: fallbackError } = await this.client
+      .from('project_roles')
+      .update(payload)
+      .eq('id', roleId)
+      .select('id, project_id, name, description, permissions, created_at, updated_at')
+      .single();
+
+    if (fallbackError || !fallbackUpdated) throw formatError(fallbackError, 'Failed to update project role.');
+
+    return { success: true, data: this.mapProjectRole(fallbackUpdated) };
+  }
+
+  async deleteProjectRole(roleId: string) {
+    const access = await this.getCurrentAccessContext();
+    const { data: roleRow, error: readError } = await this.client
+      .from('project_roles')
+      .select('id, project_id, name')
+      .eq('id', roleId)
+      .single();
+
+    if (readError || !roleRow) throw formatError(readError, 'Project role not found.');
+
+    if (!(await this.canManageProjectRoles(String(roleRow.project_id), access))) {
+      throw new ApiError('You do not have permission to delete project roles.', 403, 'PROJECT_ROLE_DELETE_DENIED');
+    }
+
+    const { count, error: memberCountError } = await this.client
+      .from('project_members')
+      .select('id', { count: 'exact', head: true })
+      .eq('project_id', roleRow.project_id)
+      .eq('role', roleRow.name);
+
+    if (memberCountError) throw formatError(memberCountError, 'Unable to verify project role usage.');
+    if ((count || 0) > 0) {
+      throw new ApiError('This role is still assigned to project members.', 409, 'PROJECT_ROLE_IN_USE');
+    }
+
+    const { error } = await this.client.rpc('delete_project_role_secure', { p_role_id: roleId });
+    if (error) {
+      if (!this.isMissingRpcFunctionError(error, 'delete_project_role_secure')) {
+        throw formatError(error, 'Failed to delete project role.');
+      }
+
+      const { error: fallbackError } = await this.client.from('project_roles').delete().eq('id', roleId);
+      if (fallbackError) throw formatError(fallbackError, 'Failed to delete project role.');
+    }
+
+    return { success: true };
   }
 
   async updateProject(id: string, payload: any) {
@@ -1560,7 +1891,26 @@ export class SupabaseApiService {
         progress: payload.progress,
       },
     });
-    if (error) throw formatError(error, 'Failed to update project.');
+    if (error) {
+      if (!this.isMissingRpcFunctionError(error, 'update_project_secure')) {
+        throw formatError(error, 'Failed to update project.');
+      }
+
+      const { error: updateError } = await this.client
+        .from('projects')
+        .update({
+          name: payload.name,
+          description: payload.description,
+          priority: payload.priority,
+          status: payload.status,
+          start_date: payload.start_date || null,
+          end_date: payload.end_date || null,
+          progress: payload.progress,
+        })
+        .eq('id', id);
+
+      if (updateError) throw formatError(updateError, 'Failed to update project.');
+    }
 
     await this.logActivity('UPDATE', 'project', id, payload.name || id);
 
@@ -1583,7 +1933,14 @@ export class SupabaseApiService {
       }
     }
     const { error } = await this.client.rpc('delete_project_secure', { p_project_id: id });
-    if (error) throw formatError(error, 'Failed to delete project.');
+    if (error) {
+      if (!this.isMissingRpcFunctionError(error, 'delete_project_secure')) {
+        throw formatError(error, 'Failed to delete project.');
+      }
+
+      const { error: deleteError } = await this.client.from('projects').delete().eq('id', id);
+      if (deleteError) throw formatError(deleteError, 'Failed to delete project.');
+    }
 
     await this.logActivity('DELETE', 'project', id, project.data?.name || id);
 
@@ -2829,6 +3186,7 @@ export class SupabaseApiService {
 
   async updateLead(id: string | number, data: Partial<Lead> & { tags?: string[]; contacts?: CreateLeadPayload['contacts'] }) {
     const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to update this lead.');
     if (!access.canViewAllLeads) {
       const lead = await this.getLeadById(String(id));
       const leadData = lead.data as Lead;
@@ -3074,6 +3432,7 @@ export class SupabaseApiService {
 
   async getLeads(filters?: LeadFilters & { page?: number; pageSize?: number }) {
     const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.view', 'You do not have permission to view leads.');
     const currentUserId = String(access.profile.id);
     const page = clampPage(filters?.page);
     const pageSize = clampPageSize(filters?.pageSize);
@@ -3143,6 +3502,7 @@ export class SupabaseApiService {
 
   async getLeadById(id: string) {
     const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.view', 'You do not have permission to view this lead.');
     if (!access.canViewAllLeads) {
       const currentUserId = String(access.profile.id);
       const scopedConditions = [`created_by.eq.${currentUserId}`, `assigned_to.eq.${currentUserId}`];
@@ -3200,6 +3560,8 @@ export class SupabaseApiService {
 
   async createLead(payload: CreateLeadPayload) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.create', 'You do not have permission to create leads.');
     const { tags, contacts, notes, ...leadData } = payload;
     await this.assertLeadIsNotDuplicate(leadData);
 
@@ -3329,6 +3691,7 @@ export class SupabaseApiService {
 
   async deleteLead(id: string | number) {
     const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.delete', 'You do not have permission to delete this lead.');
     const { data: lead, error: readError } = await this.client.from('leads').select('id, name, created_by, assigned_to, project_id').eq('id', id).single();
     if (readError || !lead) throw formatError(readError, 'Lead not found.');
 
@@ -3351,6 +3714,8 @@ export class SupabaseApiService {
 
   async addActivity(leadId: string, data: AddLeadActivityPayload) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to add lead activity.');
     await this.getLeadById(leadId);
     const { data: created, error } = await this.client
       .from('lead_activities')
@@ -3375,6 +3740,8 @@ export class SupabaseApiService {
 
   async addNote(leadId: string, content: string) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to add lead notes.');
     await this.getLeadById(leadId);
     const { data: created, error } = await this.client
       .from('lead_notes')
@@ -3396,6 +3763,8 @@ export class SupabaseApiService {
 
   async scheduleFollowup(leadId: string, data: ScheduleLeadFollowupPayload) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.followups.create', 'You do not have permission to schedule follow-ups.');
     await this.getLeadById(leadId);
     const { data: created, error } = await this.client
       .from('lead_followups')
@@ -3425,6 +3794,8 @@ export class SupabaseApiService {
   }
 
   async completeFollowup(followupId: string, notes?: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.followups.update', 'You do not have permission to complete follow-ups.');
     const { data: updated, error } = await this.client
       .from('lead_followups')
       .update({
@@ -3444,6 +3815,8 @@ export class SupabaseApiService {
   }
 
   async addTag(leadId: string, tagName: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to add lead tags.');
     const normalized = tagName.trim();
     if (!normalized) throw new ApiError('Tag name is required.', 400, 'LEAD_TAG_REQUIRED');
 
@@ -3464,6 +3837,8 @@ export class SupabaseApiService {
   }
 
   async removeTag(leadId: string, tagName: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to remove lead tags.');
     const { data: tag, error: tagError } = await this.client
       .from('lead_tags')
       .select('id')
@@ -3478,11 +3853,15 @@ export class SupabaseApiService {
   }
 
   async updateLeadScore(leadId: string, score: number) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to update lead scores.');
     await this.updateLeadWithFallback(leadId, { lead_score: score }, 'Failed to update lead score.');
     return { success: true };
   }
 
   async bulkUpdateStatus(leadIds: string[], status: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to update selected leads.');
     const pipelineStage = this.normalizeLeadStage(status);
     await Promise.all(leadIds.map(async (leadId) => {
       await this.updateLeadWithFallback(leadId, { status, pipeline_stage: pipelineStage, completed: pipelineStage === 'won' || pipelineStage === 'lost' }, 'Failed to update selected leads.');
@@ -3491,6 +3870,8 @@ export class SupabaseApiService {
   }
 
   async bulkAssign(leadIds: string[], userId: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.update', 'You do not have permission to assign selected leads.');
     await Promise.all(leadIds.map(async (leadId) => {
       await this.updateLeadWithFallback(leadId, { assigned_to: userId }, 'Failed to assign selected leads.');
     }));
@@ -3498,6 +3879,8 @@ export class SupabaseApiService {
   }
 
   async bulkDelete(leadIds: string[]) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.delete', 'You do not have permission to delete selected leads.');
     await Promise.all(leadIds.map(async (leadId) => {
       const { error } = await this.client.rpc('delete_lead_secure', { p_lead_id: leadId });
       if (error) throw formatError(error, 'Failed to delete selected leads.');
@@ -3706,6 +4089,7 @@ export class SupabaseApiService {
 
   async getFlexibleFollowups(filters?: { owner_id?: string; search?: string }) {
     const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.followups.view', 'You do not have permission to view follow-up rows.');
     let query = this.client
       .from('lead_followup_records')
       .select('*, owner:profiles!lead_followup_records_owner_id_fkey(id, name, email)')
@@ -3731,6 +4115,8 @@ export class SupabaseApiService {
 
   async createFlexibleFollowup(payload: CreateFlexibleFollowupPayload) {
     const currentUser = await this.getCurrentProfileOrThrow();
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.followups.create', 'You do not have permission to create follow-up rows.');
     const { data, error } = await this.client
       .from('lead_followup_records')
       .insert({
@@ -3747,6 +4133,8 @@ export class SupabaseApiService {
   }
 
   async updateFlexibleFollowup(id: string, payload: Partial<CreateFlexibleFollowupPayload>) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.followups.update', 'You do not have permission to update follow-up rows.');
     const { data, error } = await this.client
       .from('lead_followup_records')
       .update({
@@ -3763,6 +4151,8 @@ export class SupabaseApiService {
   }
 
   async deleteFlexibleFollowup(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'leads.followups.delete', 'You do not have permission to delete follow-up rows.');
     const { error } = await this.client.from('lead_followup_records').delete().eq('id', id);
     if (error) throw formatError(error, 'Failed to delete follow-up row.');
     return { success: true };

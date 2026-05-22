@@ -158,11 +158,12 @@ export const Topbar: React.FC<TopbarProps> = ({
     const timer = setTimeout(async () => {
       try {
         setIsSearching(true);
+        const canSearchLeads = permission.canViewLeads();
         const [projectsRes, tasksRes, usersRes, leadsRes] = await Promise.allSettled([
           api.getProjects(),
           api.getTasks(),
           api.getUsers(),
-          api.get('/leads'),
+          canSearchLeads ? api.get('/leads') : Promise.resolve({ data: [] }),
         ]);
 
         const results: SearchResultItem[] = [];
@@ -212,7 +213,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           });
         }
 
-        if (leadsRes.status === 'fulfilled') {
+        if (canSearchLeads && leadsRes.status === 'fulfilled') {
           ((leadsRes.value as any)?.data || []).forEach((lead: any) => {
             if (
               String(lead.name || '').toLowerCase().includes(term) ||
