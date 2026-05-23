@@ -215,7 +215,7 @@ const App = () => (
                 </ProtectedRoute>
               } />
               <Route path="/guidance" element={
-                <ProtectedRoute>
+                <ProtectedRoute permission="dashboard.view">
                   <Guidance />
                 </ProtectedRoute>
               } />
@@ -230,17 +230,17 @@ const App = () => (
                 </ProtectedRoute>
               } />
               <Route path="/settings" element={
-                <ProtectedRoute>
+                <ProtectedRoute permission="users.view">
                   <Settings />
                 </ProtectedRoute>
               } />
               <Route path="/settings/profile" element={
-                <ProtectedRoute>
+                <ProtectedRoute permission="users.view">
                   <Settings />
                 </ProtectedRoute>
               } />
               <Route path="/notifications" element={
-                <ProtectedRoute>
+                <ProtectedRoute permission="notifications.view">
                   <Notifications />
                 </ProtectedRoute>
               } />

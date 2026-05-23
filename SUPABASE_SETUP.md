@@ -24,9 +24,17 @@ Create a new Supabase project, then open:
 
 ## 2. Run schema
 
-Copy and run:
+Use the canonical files in this order:
 
-- [supabase/schema.sql](/E:/Agnecy%20Work/Projects/Project%20Management%20Portal/PMP%20Frontend/orbit-grid-suite/supabase/schema.sql)
+- `supabase/schema.sql`
+- `supabase/migrations/202605220010_final_system_schema.sql`
+
+These files are equivalent mirrors of the same contract.
+Do not run both against the same database.
+
+- For an existing database: run only `supabase/migrations/202605220010_final_system_schema.sql`
+- Then run `supabase/migrations/202605220011_finance_access_patch.sql` once if finance rows are still getting 403s
+- For a brand-new empty database: run only `supabase/schema.sql`
 
 ## 3. Add frontend env vars
 

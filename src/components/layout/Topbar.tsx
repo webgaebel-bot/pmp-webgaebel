@@ -86,13 +86,13 @@ export const Topbar: React.FC<TopbarProps> = ({
     { id: 'calendar', label: 'Calendar', type: 'route', path: '/calendar', permission: 'calendar.view' },
     { id: 'finance', label: 'Finance', type: 'route', path: '/finance', permission: 'finance.view' },
     { id: 'leads', label: 'Leads', type: 'route', path: '/leads', permission: 'leads.view' },
-    { id: 'guidance', label: 'Guidance', type: 'route', path: '/guidance' },
+    { id: 'guidance', label: 'Guidance', type: 'route', path: '/guidance', permission: 'dashboard.view' },
     ...(permission.isAdmin() || permission.isSuperAdmin()
       ? [{ id: 'system-guide', label: 'System Guide', type: 'route', path: '/system-guide' }]
       : []),
     { id: 'users', label: 'Users', type: 'route', path: '/users', permission: 'users.view' },
     { id: 'notifications', label: 'Notifications', type: 'route', path: '/notifications', permission: 'notifications.view' },
-    { id: 'settings', label: 'Settings', type: 'route', path: '/settings/profile' },
+    { id: 'settings', label: 'Settings', type: 'route', path: '/settings/profile', permission: 'users.view' },
   ];
 
   useEffect(() => {

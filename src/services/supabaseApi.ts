@@ -84,6 +84,67 @@ const humanizeText = (value?: string | null) =>
     .replace(/\s+/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
 
+const normalizeFinancePaymentMethod = (value?: string | null) => {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const aliases: Record<string, string> = {
+    bank_transfer: 'bank_transfer',
+    bank_tranfer: 'bank_transfer',
+    credit_card: 'credit_card',
+    cash: 'cash',
+    check: 'check',
+    paypal: 'paypal',
+    other: 'other',
+  };
+
+  return aliases[normalized] || 'bank_transfer';
+};
+
+const toNullableNumber = (value: unknown): number | null => {
+  if (value === '' || value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const summarizeFinanceRows = (
+  payments: any[],
+  expenses: any[],
+  settings: Record<string, any>,
+  foundersEquityTotal: number
+) => {
+  const futureFundPercentage = Number(settings.future_fund_percentage || 20);
+  const commissionPercentage = Number(settings.commission_percentage || 15);
+  const taxRate = Number(settings.tax_rate || 30);
+  const revenue = payments
+    .filter((p: any) => p.status === 'completed')
+    .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+  const expenseTotal = expenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
+  const summary = calculateFinanceSummary({
+    revenue,
+    expenses: expenseTotal,
+    futureFundRate: futureFundPercentage,
+    salaries: Number(settings.monthly_salaries || 0),
+    taxes: Number(revenue * (taxRate / 100)),
+    commissions: Number(revenue * (commissionPercentage / 100)),
+  });
+  const outstanding = payments
+    .filter((p: any) => p.status !== 'completed')
+    .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+
+  return {
+    futureFundPercentage,
+    commissionPercentage,
+    taxRate,
+    summary,
+    outstanding,
+    distribution: [
+      { label: 'Future Fund', percentage: futureFundPercentage, amount: summary.futureFund },
+      { label: 'Commission', percentage: commissionPercentage, amount: summary.commissions },
+      { label: 'Tax Reserve', percentage: taxRate, amount: summary.taxes },
+      { label: 'Founder Equity Allocated', percentage: foundersEquityTotal, amount: 0 },
+    ],
+  };
+};
+
 const formatActivityEntityLabel = (entityType?: string | null) => {
   const key = String(entityType || '').trim().toLowerCase();
   const map: Record<string, string> = {
@@ -194,6 +255,7 @@ const DEFAULT_PROJECT_ROLE_SEEDS = [
 ] as const;
 
 export class SupabaseApiService {
+  private accessContextPromise: Promise<any> | null = null;
   private readonly modules = {
     auth: createAuthService(this),
     permission: createPermissionService(this),
@@ -320,38 +382,51 @@ export class SupabaseApiService {
   }
 
   private async getCurrentAccessContext() {
-    const profile = await this.getCurrentProfileOrThrow();
-    const role = await this.getRoleById(profile.role_id);
-    const permissions = await this.getPermissionsByRoleId(profile.role_id);
-    const canViewAllLeads = permissions.includes('leads.view.all');
-    const canViewTeamLeads = permissions.includes('leads.view.team');
-    const canViewAllProjects = permissions.includes('projects.view.all');
-    const canViewTeamProjects = permissions.includes('projects.view.team');
-    const canViewAllTime = permissions.includes('time.view.all');
-    const canViewTeamTime = permissions.includes('time.view.team');
-    const canViewAllNotifications = permissions.includes('notifications.view.all');
-    const canViewAllFinance = permissions.includes('finance.view.all');
-    const canViewTeamFinance = permissions.includes('finance.view.team');
-    const isAdminActor =
-      isSuperAdminRole(role) ||
-      permissions.includes('roles.manage') ||
-      permissions.includes('permissions.manage');
+    if (this.accessContextPromise) {
+      return this.accessContextPromise;
+    }
 
-    return {
-      profile,
-      role,
-      permissions,
-      canViewAllLeads,
-      canViewTeamLeads,
-      canViewAllProjects,
-      canViewTeamProjects,
-      canViewAllTime,
-      canViewTeamTime,
-      canViewAllNotifications,
-      canViewAllFinance,
-      canViewTeamFinance,
-      isAdminActor,
-    };
+    this.accessContextPromise = (async () => {
+      const profile = await this.getCurrentProfileOrThrow();
+      const role = await this.getRoleById(profile.role_id);
+      const permissions = await this.getPermissionsByRoleId(profile.role_id);
+      const canViewAllLeads = permissions.includes('leads.view.all');
+      const canViewTeamLeads = permissions.includes('leads.view.team');
+      const canViewAllProjects = permissions.includes('projects.view.all');
+      const canViewTeamProjects = permissions.includes('projects.view.team');
+      const canViewAllTime = permissions.includes('time.view.all');
+      const canViewTeamTime = permissions.includes('time.view.team');
+      const canViewAllNotifications = permissions.includes('notifications.view.all');
+      const canViewAllFinance = permissions.includes('finance.view.all');
+      const canViewTeamFinance = permissions.includes('finance.view.team');
+      const isAdminActor =
+        isSuperAdminRole(role) ||
+        permissions.includes('roles.manage') ||
+        permissions.includes('permissions.manage');
+
+      return {
+        profile,
+        role,
+        permissions,
+        canViewAllLeads,
+        canViewTeamLeads,
+        canViewAllProjects,
+        canViewTeamProjects,
+        canViewAllTime,
+        canViewTeamTime,
+        canViewAllNotifications,
+        canViewAllFinance,
+        canViewTeamFinance,
+        isAdminActor,
+      };
+    })();
+
+    try {
+      return await this.accessContextPromise;
+    } catch (error) {
+      this.accessContextPromise = null;
+      throw error;
+    }
   }
 
   private isMissingRpcFunctionError(error: any, functionName: string) {
@@ -386,13 +461,45 @@ export class SupabaseApiService {
     return message.includes('cannot coerce the result to a single json object');
   }
 
+  private isMissingColumnError(error: any) {
+    return String(error?.code || '').toUpperCase() === 'PGRST204';
+  }
+
+  private async attachProjectNames<T extends { project_id?: string | null; projects?: { name?: string | null } | null }>(rows: T[]) {
+    const projectIds = [...new Set(rows.map((row) => String(row.project_id || '').trim()).filter(Boolean))];
+    if (!projectIds.length) {
+      return rows;
+    }
+
+    const { data: projects, error } = await this.client
+      .from('projects')
+      .select('id, name')
+      .in('id', projectIds);
+
+    if (error) {
+      return rows;
+    }
+
+    const projectMap = new Map<string, string>();
+    ensureArray(projects).forEach((project: any) => {
+      if (project?.id) {
+        projectMap.set(String(project.id), String(project.name || 'Unknown project'));
+      }
+    });
+
+    return rows.map((row) => ({
+      ...row,
+      projects: row.project_id ? { name: projectMap.get(String(row.project_id)) || 'Unknown project' } : null,
+    }));
+  }
+
   private firstRpcRow<T = any>(value: T | T[] | null | undefined): T | null {
     if (Array.isArray(value)) return (value[0] as T) || null;
     return (value as T) || null;
   }
 
   private async updateLeadWithFallback(leadId: string, patch: Record<string, any>, fallbackMessage: string) {
-    const { data, error } = await this.client.rpc('update_lead_secure', {
+    const { data, error } = await this.client.rpc('update_lead_secure_v2', {
       p_lead_id: leadId,
       p_patch: patch,
     });
@@ -402,7 +509,7 @@ export class SupabaseApiService {
       return normalizedData;
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'update_lead_secure') && !this.isRpcResultShapeError(error)) {
+    if (!this.isMissingRpcFunctionError(error, 'update_lead_secure_v2') && !this.isRpcResultShapeError(error)) {
       throw formatError(error, fallbackMessage);
     }
 
@@ -419,7 +526,7 @@ export class SupabaseApiService {
   }
 
   private async createTimeTrackingSessionWithFallback(session: Record<string, any>, fallbackMessage: string) {
-    const { data, error } = await this.client.rpc('create_time_tracking_session_secure', {
+    const { data, error } = await this.client.rpc('create_time_tracking_session_secure_v2', {
       p_session: session,
     });
 
@@ -427,7 +534,7 @@ export class SupabaseApiService {
       return data;
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'create_time_tracking_session_secure')) {
+    if (!this.isMissingRpcFunctionError(error, 'create_time_tracking_session_secure_v2')) {
       throw formatError(error, fallbackMessage);
     }
 
@@ -688,7 +795,7 @@ export class SupabaseApiService {
       }
     }
 
-    const { data, error } = await this.client.rpc('get_project_permissions_secure', {
+    const { data, error } = await this.client.rpc('get_project_permissions_secure_v2', {
       p_project_id: projectId,
     });
 
@@ -699,7 +806,7 @@ export class SupabaseApiService {
       };
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'get_project_permissions_secure')) {
+    if (!this.isMissingRpcFunctionError(error, 'get_project_permissions_secure_v2')) {
       throw formatError(error, 'Unable to load project permissions.');
     }
 
@@ -1653,7 +1760,7 @@ export class SupabaseApiService {
       end_date: payload.end_date || null,
     };
 
-    const { data: createdResult, error } = await this.client.rpc('create_project_secure', {
+    const { data: createdResult, error } = await this.client.rpc('create_project_secure_v2', {
       p_project: {
         ...projectPayload,
       },
@@ -1665,7 +1772,7 @@ export class SupabaseApiService {
       return { success: true, message: 'Project created successfully.', data: created };
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'create_project_secure') && !this.isRpcResultShapeError(error)) {
+    if (!this.isMissingRpcFunctionError(error, 'create_project_secure_v2') && !this.isRpcResultShapeError(error)) {
       throw formatError(error, 'Failed to create project.');
     }
 
@@ -1706,7 +1813,7 @@ export class SupabaseApiService {
       }
     }
 
-    const { data, error } = await this.client.rpc('get_project_roles_secure', {
+    const { data, error } = await this.client.rpc('get_project_roles_secure_v2', {
       p_project_id: projectId,
     });
 
@@ -1714,7 +1821,7 @@ export class SupabaseApiService {
       return { success: true, data: ensureArray(data).map(this.mapProjectRole) };
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'get_project_roles_secure')) {
+    if (!this.isMissingRpcFunctionError(error, 'get_project_roles_secure_v2')) {
       throw formatError(error, 'Unable to load project roles.');
     }
 
@@ -1749,7 +1856,7 @@ export class SupabaseApiService {
       throw new ApiError('Role name is required.', 400, 'PROJECT_ROLE_NAME_REQUIRED');
     }
 
-    const { data: created, error } = await this.client.rpc('create_project_role_secure', {
+    const { data: created, error } = await this.client.rpc('create_project_role_secure_v2', {
       p_project_id: projectId,
       p_role: payload,
     });
@@ -1759,7 +1866,7 @@ export class SupabaseApiService {
       return { success: true, data: this.mapProjectRole(createdRole) };
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'create_project_role_secure')) {
+    if (!this.isMissingRpcFunctionError(error, 'create_project_role_secure_v2')) {
       throw formatError(error, 'Failed to create project role.');
     }
 
@@ -1785,7 +1892,7 @@ export class SupabaseApiService {
       throw new ApiError('No project role fields to update.', 400, 'PROJECT_ROLE_UPDATE_EMPTY');
     }
 
-    const { data: updated, error } = await this.client.rpc('update_project_role_secure', {
+    const { data: updated, error } = await this.client.rpc('update_project_role_secure_v2', {
       p_role_id: roleId,
       p_patch: payload,
     });
@@ -1795,7 +1902,7 @@ export class SupabaseApiService {
       return { success: true, data: this.mapProjectRole(updatedRole) };
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'update_project_role_secure')) {
+    if (!this.isMissingRpcFunctionError(error, 'update_project_role_secure_v2')) {
       throw formatError(error, 'Failed to update project role.');
     }
 
@@ -1850,9 +1957,9 @@ export class SupabaseApiService {
       throw new ApiError('This role is still assigned to project members.', 409, 'PROJECT_ROLE_IN_USE');
     }
 
-    const { error } = await this.client.rpc('delete_project_role_secure', { p_role_id: roleId });
+    const { error } = await this.client.rpc('delete_project_role_secure_v2', { p_role_id: roleId });
     if (error) {
-      if (!this.isMissingRpcFunctionError(error, 'delete_project_role_secure')) {
+      if (!this.isMissingRpcFunctionError(error, 'delete_project_role_secure_v2')) {
         throw formatError(error, 'Failed to delete project role.');
       }
 
@@ -1879,7 +1986,7 @@ export class SupabaseApiService {
       }
     }
 
-    const { error } = await this.client.rpc('update_project_secure', {
+    const { error } = await this.client.rpc('update_project_secure_v2', {
       p_project_id: id,
       p_patch: {
         name: payload.name,
@@ -1892,7 +1999,7 @@ export class SupabaseApiService {
       },
     });
     if (error) {
-      if (!this.isMissingRpcFunctionError(error, 'update_project_secure')) {
+      if (!this.isMissingRpcFunctionError(error, 'update_project_secure_v2')) {
         throw formatError(error, 'Failed to update project.');
       }
 
@@ -1932,9 +2039,9 @@ export class SupabaseApiService {
         throw new ApiError('You do not have permission to delete projects.', 403, 'PROJECT_DELETE_DENIED');
       }
     }
-    const { error } = await this.client.rpc('delete_project_secure', { p_project_id: id });
+    const { error } = await this.client.rpc('delete_project_secure_v2', { p_project_id: id });
     if (error) {
-      if (!this.isMissingRpcFunctionError(error, 'delete_project_secure')) {
+      if (!this.isMissingRpcFunctionError(error, 'delete_project_secure_v2')) {
         throw formatError(error, 'Failed to delete project.');
       }
 
@@ -2028,12 +2135,21 @@ export class SupabaseApiService {
     if (!access.canViewAllProjects && !access.permissions.includes('members.create')) {
       throw new ApiError('You do not have permission to add project members.', 403, 'PROJECT_MEMBER_CREATE_DENIED');
     }
-    const { data, error } = await this.client.rpc('assign_project_member_secure', {
+    let rpcResult = await this.client.rpc('assign_project_member_secure_v2', {
       p_project_id: projectId,
       p_user_id: userId,
       p_role: role || 'member',
     });
 
+    if (this.isMissingRpcFunctionError(rpcResult.error, 'assign_project_member_secure_v2')) {
+      rpcResult = await this.client.rpc('assign_project_member_secure', {
+        p_project_id: projectId,
+        p_user_id: userId,
+        p_role: role || 'member',
+      });
+    }
+
+    const { data, error } = rpcResult;
     if (error) throw formatError(error, 'Failed to add project member.');
 
     await this.logActivity('ASSIGN', 'project', projectId, `member:${userId}`);
@@ -2201,7 +2317,7 @@ export class SupabaseApiService {
       }
     }
 
-    const { data, error } = await this.client.rpc('create_task_secure', {
+    const { data, error } = await this.client.rpc('create_task_secure_v2', {
       p_task: {
         title: payload.title,
         description: payload.description || null,
@@ -2249,7 +2365,7 @@ export class SupabaseApiService {
       actual_hours: payload.actual_hours,
     };
 
-    const { error } = await this.client.rpc('update_task_secure', {
+    const { error } = await this.client.rpc('update_task_secure_v2', {
       p_task_id: id,
       p_patch: updatePayload,
     });
@@ -2268,7 +2384,7 @@ export class SupabaseApiService {
     if (!isReporter && !access.permissions.includes('tasks.delete') && !access.isAdminActor) {
       throw new ApiError('You do not have permission to delete tasks.', 403, 'TASK_DELETE_DENIED');
     }
-    const { error } = await this.client.rpc('delete_task_secure', { p_task_id: id });
+    const { error } = await this.client.rpc('delete_task_secure_v2', { p_task_id: id });
     if (error) throw formatError(error, 'Failed to delete task.');
 
     await this.logActivity('DELETE', 'task', id, task.data?.title || id);
@@ -2288,7 +2404,7 @@ export class SupabaseApiService {
     if (!canUpdate) {
       throw new ApiError('You do not have permission to update this task.', 403, 'TASK_UPDATE_DENIED');
     }
-    const { error } = await this.client.rpc('update_task_secure', {
+    const { error } = await this.client.rpc('update_task_secure_v2', {
       p_task_id: id,
       p_patch: { status },
     });
@@ -2311,7 +2427,7 @@ export class SupabaseApiService {
     if (!canUpdate) {
       throw new ApiError('You do not have permission to update this task.', 403, 'TASK_UPDATE_DENIED');
     }
-    const { error } = await this.client.rpc('update_task_secure', {
+    const { error } = await this.client.rpc('update_task_secure_v2', {
       p_task_id: id,
       p_patch: { priority },
     });
@@ -2363,7 +2479,7 @@ export class SupabaseApiService {
     if (!access.permissions.includes('tasks.assign') && !access.isAdminActor) {
       throw new ApiError('You do not have permission to assign tasks.', 403, 'TASK_ASSIGN_DENIED');
     }
-    const { error } = await this.client.rpc('update_task_secure', {
+    const { error } = await this.client.rpc('update_task_secure_v2', {
       p_task_id: taskId,
       p_patch: { assignee_id: userId },
     });
@@ -2380,7 +2496,7 @@ export class SupabaseApiService {
     if (!access.permissions.includes('tasks.assign') && !access.isAdminActor) {
       throw new ApiError('You do not have permission to unassign tasks.', 403, 'TASK_ASSIGN_DENIED');
     }
-    const { error } = await this.client.rpc('update_task_secure', {
+    const { error } = await this.client.rpc('update_task_secure_v2', {
       p_task_id: taskId,
       p_patch: { assignee_id: null },
     });
@@ -2438,7 +2554,7 @@ export class SupabaseApiService {
 
     if (error || !data) throw formatError(error, 'Failed to add comment.');
 
-    await this.client.rpc('increment_task_comments_count', { task_id_input: taskId });
+    await this.client.rpc('increment_task_comments_count_v2', { task_id_input: taskId });
     await this.logActivity('TASK_COMMENT_ADDED', 'task', taskId, content.slice(0, 60));
 
     return { success: true, data };
@@ -2465,7 +2581,7 @@ export class SupabaseApiService {
     const { error } = await this.client.from('task_comments').delete().eq('id', commentId);
     if (error) throw formatError(error, 'Failed to delete comment.');
 
-    await this.client.rpc('decrement_task_comments_count', { task_id_input: comment.task_id });
+    await this.client.rpc('decrement_task_comments_count_v2', { task_id_input: comment.task_id });
     await this.logActivity('DELETE', 'task', String(comment.task_id), comment.content.slice(0, 60));
 
     return { success: true };
@@ -2553,7 +2669,7 @@ export class SupabaseApiService {
       .select('id, name, email, avatar_url, profile_image, status, created_at, last_login_at, role_id')
       .order('created_at', { ascending: false });
 
-    if (!access.permissions.includes('users.view.all') && !access.isAdminActor) {
+    if (!access.permissions.includes('users.view.all') && !access.permissions.includes('finance.salaries.manage') && !access.isAdminActor) {
       query = query.eq('id', access.profile.id);
     }
 
@@ -3112,7 +3228,7 @@ export class SupabaseApiService {
       await this.getTask(taskId);
     }
 
-    const { data: created, error } = await this.client.rpc('create_time_log_secure', {
+    const { data: created, error } = await this.client.rpc('create_time_log_secure_v2', {
       p_time_log: {
         user_id: currentUserId,
         created_by: currentUserId,
@@ -3138,7 +3254,7 @@ export class SupabaseApiService {
     });
 
     if (error || !created) {
-      if (!this.isMissingRpcFunctionError(error, 'create_time_log_secure')) {
+      if (!this.isMissingRpcFunctionError(error, 'create_time_log_secure_v2')) {
         throw formatError(error, 'Failed to create time log.');
       }
 
@@ -3599,13 +3715,13 @@ export class SupabaseApiService {
         completed: ['won', 'lost'].includes(this.normalizeLeadStage(leadData.pipeline_stage || 'new')),
     };
 
-    const { data: leadResult, error } = await this.client.rpc('create_lead_secure', {
+    const { data: leadResult, error } = await this.client.rpc('create_lead_secure_v2', {
       p_lead: insertPayload,
     });
     const leadRow = this.firstRpcRow<any>(leadResult);
     let createdLeadId = leadRow?.id ?? leadRow ?? null;
     if (error || !createdLeadId) {
-      if (!this.isMissingRpcFunctionError(error, 'create_lead_secure') && !this.isRpcResultShapeError(error)) {
+      if (!this.isMissingRpcFunctionError(error, 'create_lead_secure_v2') && !this.isRpcResultShapeError(error)) {
         throw formatError(error, 'Failed to create lead.');
       }
 
@@ -3652,18 +3768,18 @@ export class SupabaseApiService {
 
     if (runningSession && runningSession.length > 0) {
       const activeSessionId = runningSession[0].id;
-      const { error: linkError } = await this.client.rpc('link_lead_to_time_session_secure', {
+      const { error: linkError } = await this.client.rpc('link_lead_to_time_session_secure_v2', {
         p_session_id: activeSessionId,
         p_lead_id: createdLeadId,
       });
-      if (linkError && !this.isMissingRpcFunctionError(linkError, 'link_lead_to_time_session_secure')) {
+      if (linkError && !this.isMissingRpcFunctionError(linkError, 'link_lead_to_time_session_secure_v2')) {
         throw formatError(linkError, 'Failed to link lead to active timer session.');
       }
 
-      const { error: summaryError } = await this.client.rpc('refresh_time_tracking_session_summary', {
+      const { error: summaryError } = await this.client.rpc('refresh_time_tracking_session_summary_v2', {
         p_session_id: activeSessionId,
       });
-      if (summaryError && !this.isMissingRpcFunctionError(summaryError, 'refresh_time_tracking_session_summary')) {
+      if (summaryError && !this.isMissingRpcFunctionError(summaryError, 'refresh_time_tracking_session_summary_v2')) {
         throw formatError(summaryError, 'Failed to refresh active timer session.');
       }
 
@@ -3705,7 +3821,7 @@ export class SupabaseApiService {
       }
     }
 
-    const { error } = await this.client.rpc('delete_lead_secure', { p_lead_id: id });
+    const { error } = await this.client.rpc('delete_lead_secure_v2', { p_lead_id: id });
     if (error) throw formatError(error, 'Failed to delete lead.');
 
     await this.logActivity('DELETE', 'lead', String(id), lead.name);
@@ -3882,7 +3998,7 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'leads.delete', 'You do not have permission to delete selected leads.');
     await Promise.all(leadIds.map(async (leadId) => {
-      const { error } = await this.client.rpc('delete_lead_secure', { p_lead_id: leadId });
+      const { error } = await this.client.rpc('delete_lead_secure_v2', { p_lead_id: leadId });
       if (error) throw formatError(error, 'Failed to delete selected leads.');
     }));
     return { success: true };
@@ -4208,7 +4324,7 @@ export class SupabaseApiService {
       .order('expense_date', { ascending: false })
       .limit(1000);
 
-    if (!access.canViewAllFinance) {
+    if (!access.canViewAllFinance && !access.permissions.includes('finance.salaries.manage')) {
       query = query.eq('created_by', currentUserId);
     }
 
@@ -4220,28 +4336,48 @@ export class SupabaseApiService {
   async createFinanceExpense(data: any) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.expenses.manage', 'You do not have permission to create expenses.');
-    const { data: created, error } = await this.client.rpc('create_finance_expense_secure', {
-      p_expense: {
-        category: data?.category,
-        description: data?.description,
-        amount: Number(data?.amount || 0),
-        currency: data?.currency || 'USD',
-        expense_date: data?.expense_date,
-        payment_method: data?.payment_method || 'bank_transfer',
-        payment_method_other: data?.payment_method_other || null,
-        project_id: data?.project_id || null,
-        receipt_url: data?.receipt_url || null,
-      },
+    const paymentMethod = normalizeFinancePaymentMethod(data?.payment_method);
+    const paymentMethodOther = paymentMethod === 'other' ? String(data?.payment_method_other || '').trim() || null : null;
+    const expensePayload = {
+      category: data?.category,
+      description: data?.description,
+      amount: Number(data?.amount || 0),
+      currency: data?.currency || 'USD',
+      expense_date: data?.expense_date,
+      payment_method: paymentMethod,
+      payment_method_other: paymentMethodOther,
+      project_id: data?.project_id || null,
+      receipt_url: data?.receipt_url || null,
+    };
+
+    const { data: created, error } = await this.client.rpc('create_finance_expense_secure_v2', {
+      p_expense: expensePayload,
     });
 
-    if (error || !created) throw formatError(error, 'Failed to create expense.');
-    return { success: true, data: created };
+    if (!error && created) {
+      return { success: true, data: created };
+    }
+
+    const { data: fallbackCreated, error: fallbackError } = await this.client
+      .from('expenses')
+      .insert({
+        ...expensePayload,
+        created_by: access.profile.id,
+      })
+      .select()
+      .single();
+
+    if (fallbackError || !fallbackCreated) {
+      throw formatError(error || fallbackError, 'Failed to create expense.');
+    }
+
+    return { success: true, data: fallbackCreated };
   }
 
   async deleteFinanceExpense(id: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.expenses.manage', 'You do not have permission to delete expenses.');
-    const { error } = await this.client.rpc('delete_finance_expense_secure', { p_expense_id: id });
+    const { error } = await this.client.rpc('delete_finance_expense_secure_v2', { p_expense_id: id });
     if (error) throw formatError(error, 'Failed to delete expense.');
     return { success: true };
   }
@@ -4268,32 +4404,52 @@ export class SupabaseApiService {
   async createFinancePayment(data: any) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.manage', 'You do not have permission to create payments.');
-    const { data: created, error } = await this.client.rpc('create_finance_payment_secure', {
-      p_payment: {
-        client_name: data?.client_name,
-        amount: Number(data?.amount || 0),
-        currency: data?.currency || 'USD',
-        payment_date: data?.payment_date,
-        payment_method: data?.payment_method || 'bank_transfer',
-        payment_method_other: data?.payment_method_other || null,
-        status: data?.status || 'completed',
-        description: data?.description || null,
-        project_id: data?.project_id || null,
-        received_amount: Number(data?.received_amount || 0),
-        tax_amount: Number(data?.tax_amount || 0),
-        commission_amount: Number(data?.commission_amount || 0),
-        invoice_id: data?.invoice_id || null,
-      },
+    const paymentMethod = normalizeFinancePaymentMethod(data?.payment_method);
+    const paymentMethodOther = paymentMethod === 'other' ? String(data?.payment_method_other || '').trim() || null : null;
+    const paymentPayload = {
+      client_name: data?.client_name,
+      amount: Number(data?.amount || 0),
+      currency: data?.currency || 'USD',
+      payment_date: data?.payment_date,
+      payment_method: paymentMethod,
+      payment_method_other: paymentMethodOther,
+      status: data?.status || 'completed',
+      description: data?.description || null,
+      project_id: data?.project_id || null,
+      received_amount: Number(data?.received_amount || 0),
+      tax_amount: Number(data?.tax_amount || 0),
+      commission_amount: Number(data?.commission_amount || 0),
+      invoice_id: data?.invoice_id || null,
+    };
+
+    const { data: created, error } = await this.client.rpc('create_finance_payment_secure_v2', {
+      p_payment: paymentPayload,
     });
 
-    if (error || !created) throw formatError(error, 'Failed to create payment.');
-    return { success: true, data: created };
+    if (!error && created) {
+      return { success: true, data: created };
+    }
+
+    const { data: fallbackCreated, error: fallbackError } = await this.client
+      .from('payments')
+      .insert({
+        ...paymentPayload,
+        created_by: access.profile.id,
+      })
+      .select()
+      .single();
+
+    if (fallbackError || !fallbackCreated) {
+      throw formatError(error || fallbackError, 'Failed to create payment.');
+    }
+
+    return { success: true, data: fallbackCreated };
   }
 
   async deleteFinancePayment(id: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.manage', 'You do not have permission to delete payments.');
-    const { error } = await this.client.rpc('delete_finance_payment_secure', { p_payment_id: id });
+    const { error } = await this.client.rpc('delete_finance_payment_secure_v2', { p_payment_id: id });
     if (error) throw formatError(error, 'Failed to delete payment.');
     return { success: true };
   }
@@ -4540,32 +4696,62 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.taxes.view', 'You do not have permission to view taxes.');
     const currentUserId = String(access.profile.id);
-    let query = this.client.from('project_taxes').select('*, projects(name)').order('created_at', { ascending: false });
+    let query = this.client.from('project_taxes').select('*').order('created_at', { ascending: false });
     if (!access.canViewAllFinance) {
       query = query.eq('created_by', currentUserId);
     }
     const { data, error } = await query;
     if (error) throw formatError(error, 'Failed to fetch taxes.');
-    return { success: true, data };
+    return { success: true, data: await this.attachProjectNames(ensureArray(data)) };
   }
 
   async createFinanceTax(data: any) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.taxes.manage', 'You do not have permission to add taxes.');
     const currentUserId = await this.getCurrentUserId();
-    const { data: created, error } = await this.client.from('project_taxes').insert({
+    const rate = toNullableNumber(data.rate);
+    const amount = toNullableNumber(data.amount);
+    if ((rate === null || rate <= 0) && (amount === null || amount <= 0)) {
+      throw new ApiError('Enter either a tax rate or a flat amount before saving.', 400, 'FINANCE_TAX_AMOUNT_REQUIRED');
+    }
+    const taxPayload = {
       project_id: data.project_id,
       title: data.title,
-      rate: Number(data.rate) || 0,
-      amount: Number(data.amount) || 0,
+      rate: rate !== null && rate > 0 ? rate : null,
+      amount: amount !== null && amount > 0 ? amount : null,
       currency: data.currency || 'USD',
-      status: data.status || 'active',
       effective_from: data.effective_from || null,
       effective_to: data.effective_to || null,
       created_by: currentUserId,
-    }).select().single();
-    if (error) throw formatError(error, 'Failed to add project tax.');
-    return { success: true, data: created };
+    };
+
+    const { data: created, error } = await this.client.from('project_taxes').insert(taxPayload).select().single();
+    if (!error && created) {
+      return { success: true, data: created };
+    }
+
+    if (this.isMissingColumnError(error)) {
+      const { data: fallbackCreated, error: fallbackError } = await this.client
+        .from('project_taxes')
+        .insert({
+          project_id: data.project_id,
+          title: data.title,
+          rate: rate !== null && rate > 0 ? rate : null,
+          amount: amount !== null && amount > 0 ? amount : null,
+          currency: data.currency || 'USD',
+          created_by: currentUserId,
+        })
+        .select()
+        .single();
+
+      if (!fallbackError && fallbackCreated) {
+        return { success: true, data: fallbackCreated };
+      }
+
+      throw formatError(fallbackError || error, 'Failed to add project tax.');
+    }
+
+    throw formatError(error, 'Failed to add project tax.');
   }
 
   async deleteFinanceTax(id: string) {
@@ -4580,13 +4766,13 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.commissions.view', 'You do not have permission to view commissions.');
     const currentUserId = String(access.profile.id);
-    let query = this.client.from('project_commissions').select('*, projects(name)').order('created_at', { ascending: false });
+    let query = this.client.from('project_commissions').select('*').order('created_at', { ascending: false });
     if (!access.canViewAllFinance) {
       query = query.eq('created_by', currentUserId);
     }
     const { data, error } = await query;
     if (error) throw formatError(error, 'Failed to fetch commissions.');
-    return { success: true, data };
+    return { success: true, data: await this.attachProjectNames(ensureArray(data)) };
   }
 
   async getCurrencies() {
@@ -4618,19 +4804,49 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.commissions.manage', 'You do not have permission to add commissions.');
     const currentUserId = await this.getCurrentUserId();
-    const { data: created, error } = await this.client.from('project_commissions').insert({
+    const rate = toNullableNumber(data.rate);
+    const amount = toNullableNumber(data.amount);
+    if ((rate === null || rate <= 0) && (amount === null || amount <= 0)) {
+      throw new ApiError('Enter either a commission rate or a flat amount before saving.', 400, 'FINANCE_COMMISSION_AMOUNT_REQUIRED');
+    }
+    const commissionPayload = {
       project_id: data.project_id,
       title: data.title,
-      rate: Number(data.rate) || 0,
-      amount: Number(data.amount) || 0,
+      rate: rate !== null && rate > 0 ? rate : null,
+      amount: amount !== null && amount > 0 ? amount : null,
       currency: data.currency || 'USD',
-      status: data.status || 'active',
       effective_from: data.effective_from || null,
       effective_to: data.effective_to || null,
       created_by: currentUserId,
-    }).select().single();
-    if (error) throw formatError(error, 'Failed to add project commission.');
-    return { success: true, data: created };
+    };
+
+    const { data: created, error } = await this.client.from('project_commissions').insert(commissionPayload).select().single();
+    if (!error && created) {
+      return { success: true, data: created };
+    }
+
+    if (this.isMissingColumnError(error)) {
+      const { data: fallbackCreated, error: fallbackError } = await this.client
+        .from('project_commissions')
+        .insert({
+          project_id: data.project_id,
+          title: data.title,
+          rate: rate !== null && rate > 0 ? rate : null,
+          amount: amount !== null && amount > 0 ? amount : null,
+          currency: data.currency || 'USD',
+          created_by: currentUserId,
+        })
+        .select()
+        .single();
+
+      if (!fallbackError && fallbackCreated) {
+        return { success: true, data: fallbackCreated };
+      }
+
+      throw formatError(fallbackError || error, 'Failed to add project commission.');
+    }
+
+    throw formatError(error, 'Failed to add project commission.');
   }
 
   async deleteFinanceCommission(id: string) {
@@ -4663,7 +4879,7 @@ export class SupabaseApiService {
     const foundersEquityPromise = access.permissions.includes('finance.founders.view')
       ? this.getFoundersEquityTotal()
       : Promise.resolve({ success: true, data: { data: { total: 0 } } });
-    const [paymentsRes, expensesRes, foundersEquityRes, settingsRes] = await Promise.all([
+    const [paymentsRes, expensesRes, foundersEquityRes, settingsRes, allTimePaymentsRes, allTimeExpensesRes] = await Promise.all([
       restrictToOwn
         ? this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
         : this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
@@ -4672,51 +4888,59 @@ export class SupabaseApiService {
         : this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
       foundersEquityPromise,
       this.getFinanceSettings(),
+      restrictToOwn
+        ? this.client.from('payments').select('amount, payment_date, status, created_by').eq('created_by', currentUserId).limit(1000)
+        : this.client.from('payments').select('amount, payment_date, status').limit(1000),
+      restrictToOwn
+        ? this.client.from('expenses').select('amount, expense_date, created_by').eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('amount, expense_date').limit(1000),
     ]);
 
     if (paymentsRes.error) throw formatError(paymentsRes.error, 'Unable to load payments stats.');
     if (expensesRes.error) throw formatError(expensesRes.error, 'Unable to load expenses stats.');
+    if (allTimePaymentsRes.error) throw formatError(allTimePaymentsRes.error, 'Unable to load finance records.');
+    if (allTimeExpensesRes.error) throw formatError(allTimeExpensesRes.error, 'Unable to load finance records.');
 
     const payments = ensureArray(paymentsRes.data);
     const expenses = ensureArray(expensesRes.data);
+    const allTimePayments = ensureArray(allTimePaymentsRes.data);
+    const allTimeExpenses = ensureArray(allTimeExpensesRes.data);
     const settings = (settingsRes as any)?.data?.data || {};
-    const futureFundPercentage = Number(settings.future_fund_percentage || 20);
-    const commissionPercentage = Number(settings.commission_percentage || 15);
-    const taxRate = Number(settings.tax_rate || 30);
-    const revenue = payments
-      .filter((p: any) => p.status === 'completed')
-      .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
-    const expenseTotal = expenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
-    const summary = calculateFinanceSummary({
-      revenue,
-      expenses: expenseTotal,
-      futureFundRate: futureFundPercentage,
-      salaries: Number(settings.monthly_salaries || 0),
-      taxes: Number(revenue * (taxRate / 100)),
-      commissions: Number(revenue * (commissionPercentage / 100)),
-    });
-    const outstanding = payments
-      .filter((p: any) => p.status !== 'completed')
-      .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    const selectedSummary = summarizeFinanceRows(
+      payments,
+      expenses,
+      settings,
+      Number((foundersEquityRes as any)?.data?.data?.total || 0)
+    );
+    const hasSelectedData =
+      payments.length > 0 ||
+      expenses.length > 0 ||
+      selectedSummary.summary.revenue > 0 ||
+      selectedSummary.summary.expenses > 0 ||
+      selectedSummary.outstanding > 0;
+    const effectiveSummary = hasSelectedData
+      ? selectedSummary
+      : summarizeFinanceRows(
+          allTimePayments,
+          allTimeExpenses,
+          settings,
+          Number((foundersEquityRes as any)?.data?.data?.total || 0)
+        );
 
     return {
       success: true,
       data: {
         data: {
-          revenue: summary.revenue,
-          expenses: summary.expenses,
-          netProfit: summary.netProfit,
-          grossProfit: summary.grossProfit,
-          futureFund: summary.futureFund,
-          founderProfit: summary.founderProfit,
-          liabilities: summary.liabilities,
-          outstanding,
-          distribution: [
-            { label: 'Future Fund', percentage: futureFundPercentage, amount: summary.futureFund },
-            { label: 'Commission', percentage: commissionPercentage, amount: summary.commissions },
-            { label: 'Tax Reserve', percentage: taxRate, amount: summary.taxes },
-            { label: 'Founder Equity Allocated', percentage: foundersEquityRes.data.data.total || 0, amount: 0 },
-          ],
+          revenue: effectiveSummary.summary.revenue,
+          expenses: effectiveSummary.summary.expenses,
+          netProfit: effectiveSummary.summary.netProfit,
+          grossProfit: effectiveSummary.summary.grossProfit,
+          futureFund: effectiveSummary.summary.futureFund,
+          founderProfit: effectiveSummary.summary.founderProfit,
+          liabilities: effectiveSummary.summary.liabilities,
+          outstanding: effectiveSummary.outstanding,
+          distribution: effectiveSummary.distribution,
+          rangeUsed: hasSelectedData ? range : 'all',
         },
         range,
       },
@@ -4904,7 +5128,7 @@ export class SupabaseApiService {
   async deleteTimeLog(id: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'time.delete', 'You do not have permission to delete time logs.');
-    const { error } = await this.client.rpc('delete_time_entry_secure', {
+    const { error } = await this.client.rpc('delete_time_entry_secure_v2', {
       p_time_log_id: id,
     });
     if (error) throw formatError(error, 'Failed to delete time log.');
@@ -4926,7 +5150,7 @@ export class SupabaseApiService {
       notes: data.notes || null,
     };
 
-    const { data: created, error } = await this.client.rpc('create_time_tracking_session_secure', {
+    const { data: created, error } = await this.client.rpc('create_time_tracking_session_secure_v2', {
       p_session: sessionPayload,
     });
 
@@ -4934,7 +5158,7 @@ export class SupabaseApiService {
       return { success: true, data: created };
     }
 
-    if (!this.isMissingRpcFunctionError(error, 'create_time_tracking_session_secure') && !this.isMissingTableError(error, 'time_tracking_sessions')) {
+    if (!this.isMissingRpcFunctionError(error, 'create_time_tracking_session_secure_v2') && !this.isMissingTableError(error, 'time_tracking_sessions')) {
       throw formatError(error, 'Failed to start time tracking session.');
     }
 

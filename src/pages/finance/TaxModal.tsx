@@ -27,12 +27,14 @@ export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange }) => {
   const { data: projectsResponse } = useQuery({
     queryKey: ['finance-projects'],
     queryFn: async () => api.getProjects(),
+    enabled: open,
   });
   const projects = projectsResponse?.data || [];
 
   const { data: currenciesResponse } = useQuery({
     queryKey: ['system-currencies'],
     queryFn: async () => api.get('/currencies'),
+    enabled: open,
   });
   const currencies = currenciesResponse?.data || [];
 
@@ -59,6 +61,12 @@ export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange }) => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const rate = Number(formData.rate);
+    const amount = Number(formData.amount);
+    if ((!rate || rate <= 0) && (!amount || amount <= 0)) {
+      toast.error('Enter either a tax rate or a flat amount.');
+      return;
+    }
     createMutation.mutate(formData);
   };
 

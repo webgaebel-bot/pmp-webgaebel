@@ -83,27 +83,6 @@ const FinanceTaxCommissions: React.FC = () => {
     });
   };
 
-  const isLoading = taxesLoading || commissionsLoading;
-  const isError = taxesIsError || commissionsIsError;
-  const error = taxesError || commissionsError;
-
-  if (isLoading) {
-    return <ModuleLoadingState title="Loading finance records" description="Fetching project taxes and commissions." />;
-  }
-
-  if (isError) {
-    return (
-      <ModuleErrorState
-        title="Finance records unavailable"
-        description={error instanceof Error ? error.message : 'Unable to load project tax and commission records.'}
-        onAction={() => {
-          refetchTaxes();
-          refetchCommissions();
-        }}
-      />
-    );
-  }
-
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="rounded-3xl border bg-gradient-to-r from-slate-950 via-teal-900 to-cyan-800 p-6 text-white shadow-xl">
@@ -144,7 +123,15 @@ const FinanceTaxCommissions: React.FC = () => {
             <CardTitle>Project Taxes</CardTitle>
           </CardHeader>
           <CardContent>
-            {taxes.length === 0 ? (
+            {taxesLoading ? (
+              <ModuleLoadingState title="Loading taxes" description="Fetching project tax records." />
+            ) : taxesIsError ? (
+              <ModuleErrorState
+                title="Taxes unavailable"
+                description={taxesError instanceof Error ? taxesError.message : 'Unable to load project tax records.'}
+                onAction={() => refetchTaxes()}
+              />
+            ) : taxes.length === 0 ? (
               <ModuleEmptyState
                 title="No project taxes yet"
                 description="Add a tax record for a specific project from the action button above."
@@ -185,7 +172,15 @@ const FinanceTaxCommissions: React.FC = () => {
             <CardTitle>Outsider Commissions</CardTitle>
           </CardHeader>
           <CardContent>
-            {commissions.length === 0 ? (
+            {commissionsLoading ? (
+              <ModuleLoadingState title="Loading commissions" description="Fetching outsider commission records." />
+            ) : commissionsIsError ? (
+              <ModuleErrorState
+                title="Commissions unavailable"
+                description={commissionsError instanceof Error ? commissionsError.message : 'Unable to load commission records.'}
+                onAction={() => refetchCommissions()}
+              />
+            ) : commissions.length === 0 ? (
               <ModuleEmptyState
                 title="No commissions yet"
                 description="Log a commission for an outsider resource or agent from the action button above."

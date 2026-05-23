@@ -73,6 +73,7 @@ const Payments: React.FC = () => {
   const { data: projectsResponse } = useQuery({
     queryKey: ['finance-projects'],
     queryFn: async () => api.getProjects(),
+    enabled: isDialogOpen,
   });
   const projects = projectsResponse?.data || [];
 

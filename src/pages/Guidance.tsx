@@ -37,7 +37,7 @@ const Guidance: React.FC = () => (
       <Badge variant="outline">Guidance</Badge>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">Lead and follow-up workflow</h1>
       <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-        A quick stepper for using the flexible sheet-style CRM module. This page is available to every logged-in user.
+        A quick stepper for using the flexible sheet-style CRM module. This page is available to users with dashboard access.
       </p>
     </div>
 
