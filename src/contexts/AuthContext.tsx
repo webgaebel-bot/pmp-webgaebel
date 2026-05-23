@@ -7,9 +7,10 @@ import {
   userHasAnyPermission,
   userHasPermission,
 } from '@/lib/permissions';
+import { getDataProvider } from '@/lib/supabase';
 
 interface AuthContextType extends AuthState {
-  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<User>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasAnyPermission: (permissions: string[]) => boolean;
@@ -89,6 +90,17 @@ const storeProfileImage = (imageUrl: string | null) => {
 
 const getProfileImage = (): string | null => {
   return localStorage.getItem('profile_image');
+};
+
+const canUseLegacyActivityLogs = getDataProvider() !== 'supabase' || Boolean(import.meta.env.VITE_BACKEND_API_BASE_URL);
+
+const logAuthActivity = async (action: 'Logged in' | 'Logged out') => {
+  if (!canUseLegacyActivityLogs) return;
+  try {
+    await api.post('/activity-logs', { action, entity_type: 'Session', entity_id: 'auth' });
+  } catch {
+    // Activity logging is best-effort only.
+  }
 };
 
 const storeAuthToken = (token: string | null, rememberMe: boolean) => {
@@ -206,7 +218,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = useCallback(async () => {
     try {
-      await api.post('/activity-logs', { action: 'Logged out', entity_type: 'Session', entity_id: 'auth' }).catch(() => {});
+      await logAuthActivity('Logged out');
       await api.logout();
     } catch (error) {
       // Continue with local logout even if API fails
@@ -258,7 +270,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => clearInterval(interval);
   }, [state.isAuthenticated, refreshAuth]);
 
-  const login = async (email: string, password: string, rememberMe = false) => {
+  const login = async (email: string, password: string, rememberMe = false): Promise<User> => {
     const response: any = await api.login(email, password);
     const { token, user: loginUser } = response.data || response;
     const user = normalizeUser(loginUser);
@@ -281,8 +293,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       storeUser(fullUser);
       storeProfileImage(fullUser.profile_image || fullUser.avatar);
       
-      // Log activity
-      api.post('/activity-logs', { action: 'Logged in', entity_type: 'Session', entity_id: 'auth' }).catch(() => {});
+      // Log activity when the legacy REST backend is available.
+      logAuthActivity('Logged in');
       
       setState({
         user: fullUser,
@@ -290,14 +302,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isAuthenticated: true,
         isLoading: false,
       });
+      return fullUser as User;
     } catch (error) {
       // Fallback: use user from login response
       console.error('Failed to fetch full user after login:', error);
       storeUser(user);
       storeProfileImage(user.profile_image || user.avatar);
       
-      // Log activity
-      api.post('/activity-logs', { action: 'Logged in', entity_type: 'Session', entity_id: 'auth' }).catch(() => {});
+      // Log activity when the legacy REST backend is available.
+      logAuthActivity('Logged in');
 
       setState({
         user,
@@ -305,6 +318,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isAuthenticated: true,
         isLoading: false,
       });
+      return user as User;
     }
   };
 

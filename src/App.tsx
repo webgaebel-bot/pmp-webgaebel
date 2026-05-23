@@ -6,8 +6,10 @@ import { LoadingPage } from "@/components/common/LoadingSpinner";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { getDefaultLandingPath } from "@/lib/permissions";
 
 const Login = lazy(() => import("@/pages/Login"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
@@ -54,6 +56,16 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+const DefaultRouteRedirect = () => {
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <LoadingPage text="Loading page..." />;
+  }
+
+  return <Navigate to={isAuthenticated ? getDefaultLandingPath(user) : '/login'} replace />;
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -250,7 +262,7 @@ const App = () => (
             </Route>
             
             {/* Redirects */}
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<DefaultRouteRedirect />} />
             
             {/* 404 */}
             <Route path="*" element={<NotFound />} />

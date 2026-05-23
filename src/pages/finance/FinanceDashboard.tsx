@@ -61,19 +61,21 @@ const FinanceDashboard: React.FC = () => {
   const chartData = chartDataResponse?.data?.data || [];
   const distributionData = stats?.data?.distribution || [];
   const distributionColors = ['#0f766e', '#2563eb', '#f59e0b', '#7c3aed'];
-  const currencyCode = stats?.data?.currency || 'USD';
+  const currencyCode = stats?.data?.currency || currentSettings.base_currency || 'USD';
   const financeSummary = calculateFinanceSummary({
     revenue: Number(stats?.data?.revenue || 0),
     expenses: Number(stats?.data?.expenses || 0),
     salaries: Number(stats?.data?.salaries || 0),
     taxes: Number(stats?.data?.taxes || 0),
     commissions: Number(stats?.data?.commissions || 0),
+    transactionFees: Number(stats?.data?.transactionFees || 0),
+    productCosts: Number(stats?.data?.productCosts || 0),
     futureFundRate: Number(stats?.data?.futureFundRate || 10),
   });
 
   const statCards = [
     {
-      title: 'Total Revenue',
+      title: 'Total Income',
       value: stats?.data?.revenue || 0,
       icon: DollarSign,
       color: 'text-emerald-600',
@@ -100,6 +102,20 @@ const FinanceDashboard: React.FC = () => {
       color: 'text-amber-600',
       bgColor: 'bg-amber-50',
     },
+  ];
+
+  const deductionCards = [
+    { title: 'Taxes', value: stats?.data?.taxes || 0 },
+    { title: 'Commissions', value: stats?.data?.commissions || 0 },
+    { title: 'Transaction Fees', value: stats?.data?.transactionFees || 0 },
+    { title: 'Salaries', value: stats?.data?.salaries || 0 },
+  ];
+
+  const profitCards = [
+    { title: 'Gross Profit', value: financeSummary.grossProfit },
+    { title: 'Product Costs', value: stats?.data?.productCosts || 0 },
+    { title: 'Future Fund', value: financeSummary.futureFund },
+    { title: 'Founder Profit', value: financeSummary.founderProfit },
   ];
 
   const quickActions = [
@@ -166,13 +182,16 @@ const FinanceDashboard: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="space-y-2">
-          <Button variant="ghost" size="sm" className="px-0" onClick={() => navigate('/')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
-          </Button>
-          <h1 className="text-2xl font-bold text-foreground">Finance Dashboard</h1>
-        </div>
+          <div className="space-y-2">
+            <Button variant="ghost" size="sm" className="px-0" onClick={() => navigate('/')}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Dashboard
+            </Button>
+            <h1 className="text-2xl font-bold text-foreground">Finance Dashboard</h1>
+            <p className="text-sm text-muted-foreground">
+              Base currency: {currencyCode}. All figures are computed from payments, expenses, salaries, and finance settings.
+            </p>
+          </div>
         <div className="flex flex-wrap gap-2">
           {(['month', 'quarter', 'year'] as const).map((range) => (
             <button
@@ -214,14 +233,8 @@ const FinanceDashboard: React.FC = () => {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {[
-          { title: 'Gross Profit', value: financeSummary.grossProfit },
-          { title: 'Future Fund', value: financeSummary.futureFund },
-          { title: 'Founder Profit', value: financeSummary.founderProfit },
-          { title: 'Liabilities', value: financeSummary.liabilities },
-          { title: 'Net Profit', value: financeSummary.netProfit },
-        ].map((item) => (
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {deductionCards.map((item) => (
           <Card key={item.title}>
             <CardContent className="p-5">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.title}</p>
@@ -229,6 +242,29 @@ const FinanceDashboard: React.FC = () => {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {profitCards.map((item) => (
+          <Card key={item.title}>
+            <CardContent className="p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.title}</p>
+              <p className="mt-2 text-2xl font-semibold">{formatMoney(item.value, currencyCode)}</p>
+            </CardContent>
+          </Card>
+        ))}
+        <Card>
+          <CardContent className="p-5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Liabilities</p>
+            <p className="mt-2 text-2xl font-semibold">{formatMoney(financeSummary.liabilities, currencyCode)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Net Profit</p>
+            <p className="mt-2 text-2xl font-semibold">{formatMoney(financeSummary.netProfit, currencyCode)}</p>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>

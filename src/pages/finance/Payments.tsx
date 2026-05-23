@@ -43,6 +43,11 @@ const Payments: React.FC = () => {
     status: 'completed',
     description: '',
     project_id: '',
+    received_amount: '',
+    tax_amount: '',
+    commission_amount: '',
+    transaction_fee_amount: '',
+    product_cost_amount: '',
   });
   const queryClient = useQueryClient();
 
@@ -95,6 +100,11 @@ const Payments: React.FC = () => {
         status: 'completed',
         description: '',
         project_id: '',
+        received_amount: '',
+        tax_amount: '',
+        commission_amount: '',
+        transaction_fee_amount: '',
+        product_cost_amount: '',
       });
     },
     onError: () => {
@@ -134,6 +144,11 @@ const Payments: React.FC = () => {
     createMutation.mutate({
       ...formData,
       amount: parseFloat(formData.amount),
+      received_amount: parseFloat(formData.received_amount) || 0,
+      tax_amount: parseFloat(formData.tax_amount) || 0,
+      commission_amount: parseFloat(formData.commission_amount) || 0,
+      transaction_fee_amount: parseFloat(formData.transaction_fee_amount) || 0,
+      product_cost_amount: parseFloat(formData.product_cost_amount) || 0,
     });
   };
 
@@ -183,6 +198,63 @@ const Payments: React.FC = () => {
                   onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                   required
                 />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="received_amount">Received Amount</Label>
+                  <Input
+                    id="received_amount"
+                    type="number"
+                    step="0.01"
+                    value={formData.received_amount}
+                    onChange={(e) => setFormData({ ...formData, received_amount: e.target.value })}
+                    placeholder="Defaults to amount"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="tax_amount">Tax Amount</Label>
+                  <Input
+                    id="tax_amount"
+                    type="number"
+                    step="0.01"
+                    value={formData.tax_amount}
+                    onChange={(e) => setFormData({ ...formData, tax_amount: e.target.value })}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="commission_amount">Commission Amount</Label>
+                  <Input
+                    id="commission_amount"
+                    type="number"
+                    step="0.01"
+                    value={formData.commission_amount}
+                    onChange={(e) => setFormData({ ...formData, commission_amount: e.target.value })}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="transaction_fee_amount">Transaction Fee Amount</Label>
+                  <Input
+                    id="transaction_fee_amount"
+                    type="number"
+                    step="0.01"
+                    value={formData.transaction_fee_amount}
+                    onChange={(e) => setFormData({ ...formData, transaction_fee_amount: e.target.value })}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="product_cost_amount">Product Cost Amount</Label>
+                  <Input
+                    id="product_cost_amount"
+                    type="number"
+                    step="0.01"
+                    value={formData.product_cost_amount}
+                    onChange={(e) => setFormData({ ...formData, product_cost_amount: e.target.value })}
+                    placeholder="Optional"
+                  />
+                </div>
               </div>
               <div>
                 <Label htmlFor="currency">Currency</Label>

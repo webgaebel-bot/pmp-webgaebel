@@ -2,9 +2,12 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldX, ArrowLeft, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/AuthContext';
+import { getDefaultLandingPath } from '@/lib/permissions';
 
 const Unauthorized: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -33,7 +36,7 @@ const Unauthorized: React.FC = () => {
             Go Back
           </Button>
           <Button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate(getDefaultLandingPath(user))}
             className="gap-2 bg-accent hover:bg-accent/90"
           >
             <Home className="h-4 w-4" />

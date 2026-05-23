@@ -15,11 +15,16 @@ const FinanceSettings: React.FC = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [settings, setSettings] = useState({
+    base_currency: 'USD',
     future_fund_percentage: '',
     commission_percentage: '',
-    enable_auto_calculation: true,
     tax_rate: '',
-    currency: 'USD',
+    transaction_fee_type: 'percentage',
+    transaction_fee_value: '',
+    product_cost_enabled: false,
+    product_cost_type: 'percentage',
+    product_cost_value: '',
+    enable_auto_calculation: true,
   });
 
   const [newCurrency, setNewCurrency] = useState({ code: '', symbol: '', name: '' });
@@ -43,11 +48,18 @@ const FinanceSettings: React.FC = () => {
   React.useEffect(() => {
     if (currentSettings?.data) {
       setSettings({
+        base_currency: currentSettings.data.base_currency || currentSettings.data.currency || 'USD',
         future_fund_percentage: currentSettings.data.future_fund_percentage?.toString() || '',
         commission_percentage: currentSettings.data.commission_percentage?.toString() || '',
-        enable_auto_calculation: currentSettings.data.enable_auto_calculation ?? true,
         tax_rate: currentSettings.data.tax_rate?.toString() || '',
-        currency: currentSettings.data.currency || 'USD',
+        transaction_fee_type: currentSettings.data.transaction_fee_type || 'percentage',
+        transaction_fee_value: currentSettings.data.transaction_fee_value?.toString() || '',
+        product_cost_enabled: currentSettings.data.product_cost_enabled === true || currentSettings.data.product_cost_enabled === 'true',
+        product_cost_type: currentSettings.data.product_cost_type || 'percentage',
+        product_cost_value: currentSettings.data.product_cost_value?.toString() || '',
+        enable_auto_calculation: currentSettings.data.enable_auto_calculation === undefined
+          ? true
+          : currentSettings.data.enable_auto_calculation === true || currentSettings.data.enable_auto_calculation === 'true',
       });
     }
   }, [currentSettings]);
@@ -59,6 +71,8 @@ const FinanceSettings: React.FC = () => {
         future_fund_percentage: parseFloat(data.future_fund_percentage) || 0,
         commission_percentage: parseFloat(data.commission_percentage) || 0,
         tax_rate: parseFloat(data.tax_rate) || 0,
+        transaction_fee_value: parseFloat(data.transaction_fee_value) || 0,
+        product_cost_value: parseFloat(data.product_cost_value) || 0,
       });
     },
     onSuccess: () => {
@@ -110,10 +124,24 @@ const FinanceSettings: React.FC = () => {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Percent className="h-5 w-5" />
-              Distribution Percentages
+              Automated Deductions
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div>
+              <Label htmlFor="base_currency">Base Currency</Label>
+              <select
+                id="base_currency"
+                value={settings.base_currency}
+                onChange={(e) => setSettings({ ...settings, base_currency: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md bg-background"
+              >
+                {currencies.map((c: any) => (
+                  <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">All finance dashboards are normalized to this currency.</p>
+            </div>
             <div>
               <Label htmlFor="future_fund">Future Fund Percentage (%)</Label>
               <Input
@@ -138,7 +166,7 @@ const FinanceSettings: React.FC = () => {
                 onChange={(e) => setSettings({...settings, commission_percentage: e.target.value})}
                 placeholder="e.g., 15"
               />
-              <p className="text-xs text-muted-foreground mt-1">Percentage of net profit for commission</p>
+              <p className="text-xs text-muted-foreground mt-1">Default commission used when a payment does not already store its own commission amount</p>
             </div>
             <div>
               <Label htmlFor="tax_rate">Tax Rate (%)</Label>
@@ -151,6 +179,71 @@ const FinanceSettings: React.FC = () => {
                 onChange={(e) => setSettings({...settings, tax_rate: e.target.value})}
                 placeholder="e.g., 30"
               />
+              <p className="text-xs text-muted-foreground mt-1">Used as a fallback when a payment does not store tax_amount.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label htmlFor="transaction_fee_type">Transaction Fee Type</Label>
+                <select
+                  id="transaction_fee_type"
+                  value={settings.transaction_fee_type}
+                  onChange={(e) => setSettings({ ...settings, transaction_fee_type: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md bg-background"
+                >
+                  <option value="percentage">Percentage</option>
+                  <option value="fixed">Fixed per payment</option>
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="transaction_fee_value">Transaction Fee Value</Label>
+                <Input
+                  id="transaction_fee_value"
+                  type="number"
+                  step="0.01"
+                  value={settings.transaction_fee_value}
+                  onChange={(e) => setSettings({ ...settings, transaction_fee_value: e.target.value })}
+                  placeholder={settings.transaction_fee_type === 'fixed' ? 'e.g., 5' : 'e.g., 2.5'}
+                />
+              </div>
+            </div>
+            <div className="rounded-lg border p-4 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-medium">Product Cost Deduction</p>
+                  <p className="text-xs text-muted-foreground">Optional deduction for cost of goods or project delivery expense.</p>
+                </div>
+                <Switch
+                  checked={settings.product_cost_enabled}
+                  onCheckedChange={(checked) => setSettings({ ...settings, product_cost_enabled: checked })}
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="product_cost_type">Product Cost Type</Label>
+                  <select
+                    id="product_cost_type"
+                    value={settings.product_cost_type}
+                    onChange={(e) => setSettings({ ...settings, product_cost_type: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md bg-background"
+                    disabled={!settings.product_cost_enabled}
+                  >
+                    <option value="percentage">Percentage</option>
+                    <option value="fixed">Fixed per payment</option>
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="product_cost_value">Product Cost Value</Label>
+                  <Input
+                    id="product_cost_value"
+                    type="number"
+                    step="0.01"
+                    value={settings.product_cost_value}
+                    onChange={(e) => setSettings({ ...settings, product_cost_value: e.target.value })}
+                    placeholder={settings.product_cost_type === 'fixed' ? 'e.g., 12' : 'e.g., 5'}
+                    disabled={!settings.product_cost_enabled}
+                  />
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -163,24 +256,17 @@ const FinanceSettings: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="currency">Currency</Label>
-              <select
-                id="currency"
-                value={settings.currency}
-                onChange={(e) => setSettings({...settings, currency: e.target.value})}
-                className="w-full px-3 py-2 border rounded-md bg-background"
-              >
-                {currencies.map((c: any) => (
-                  <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-                ))}
-              </select>
+            <div className="rounded-lg border p-4">
+              <p className="text-sm font-medium">Multi-currency support</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Currency conversion is handled at record level. The selected base currency is used for dashboard totals and profit reporting.
+              </p>
             </div>
             <Separator />
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium">Auto-calculate Distributions</p>
-                <p className="text-sm text-muted-foreground">Automatically calculate profit distributions</p>
+                <p className="text-sm text-muted-foreground">Automatically calculate profits, deductions, and future fund allocations</p>
               </div>
               <Switch
                 checked={settings.enable_auto_calculation}
@@ -199,7 +285,7 @@ const FinanceSettings: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-2 text-sm bg-muted/30 p-4 rounded-lg">
-              <p><strong>Net Profit</strong> = Revenue - Expenses</p>
+              <p><strong>Gross Profit</strong> = Income - Taxes - Commissions - Transaction Fees - Product Costs - Expenses - Salaries</p>
               <p><strong>Future Fund</strong> = Net Profit × {settings.future_fund_percentage || 0}%</p>
               <p><strong>Commission</strong> = Net Profit × {settings.commission_percentage || 0}%</p>
               <p><strong>Distributable</strong> = Net Profit - (Future Fund + Commission)</p>

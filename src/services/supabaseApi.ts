@@ -105,26 +105,78 @@ const toNullableNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const parseSettingNumber = (settings: Record<string, any>, key: string, fallback = 0): number => {
+  const parsed = Number(settings?.[key]);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const parseSettingBoolean = (settings: Record<string, any>, key: string, fallback = false): boolean => {
+  const value = settings?.[key];
+  if (value === true || value === 'true' || value === 1 || value === '1') return true;
+  if (value === false || value === 'false' || value === 0 || value === '0') return false;
+  return fallback;
+};
+
+const getPaymentGrossValue = (payment: any): number =>
+  Number(payment?.received_amount ?? payment?.amount ?? 0);
+
+const calculatePercentageAmount = (base: number, rate: number): number => Number(base || 0) * (Number(rate || 0) / 100);
+
+const calculateFixedPerItemAmount = (itemsCount: number, value: number): number =>
+  Math.max(0, Number(itemsCount || 0)) * Math.max(0, Number(value || 0));
+
 const summarizeFinanceRows = (
   payments: any[],
   expenses: any[],
+  salaryRuns: any[],
   settings: Record<string, any>,
   foundersEquityTotal: number
 ) => {
-  const futureFundPercentage = Number(settings.future_fund_percentage || 20);
-  const commissionPercentage = Number(settings.commission_percentage || 15);
-  const taxRate = Number(settings.tax_rate || 30);
+  const futureFundPercentage = parseSettingNumber(settings, 'future_fund_percentage', 10);
+  const commissionPercentage = parseSettingNumber(settings, 'commission_percentage', 15);
+  const taxRate = parseSettingNumber(settings, 'tax_rate', 30);
+  const transactionFeeType = String(settings.transaction_fee_type || 'percentage').toLowerCase();
+  const transactionFeeValue = parseSettingNumber(settings, 'transaction_fee_value', 0);
+  const productCostEnabled = parseSettingBoolean(settings, 'product_cost_enabled', false);
+  const productCostType = String(settings.product_cost_type || 'percentage').toLowerCase();
+  const productCostValue = parseSettingNumber(settings, 'product_cost_value', 0);
   const revenue = payments
     .filter((p: any) => p.status === 'completed')
-    .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    .reduce((sum: number, p: any) => sum + getPaymentGrossValue(p), 0);
   const expenseTotal = expenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
+  const salaryTotal = salaryRuns.reduce((sum: number, run: any) => sum + Number(run.total_salary || 0), 0);
+  const completedPayments = payments.filter((p: any) => p.status === 'completed');
+  const completedPaymentCount = completedPayments.length;
+  const taxTotal = completedPayments.reduce(
+    (sum: number, payment: any) => sum + Number(payment.tax_amount || calculatePercentageAmount(getPaymentGrossValue(payment), taxRate)),
+    0
+  );
+  const commissionTotal = completedPayments.reduce(
+    (sum: number, payment: any) => sum + Number(payment.commission_amount || calculatePercentageAmount(getPaymentGrossValue(payment), commissionPercentage)),
+    0
+  );
+  const transactionFeeTotal = completedPayments.reduce((sum: number, payment: any) => {
+    const explicit = Number(payment.transaction_fee_amount || 0);
+    if (explicit > 0) return sum + explicit;
+    if (transactionFeeType === 'fixed') return sum + transactionFeeValue;
+    return sum + calculatePercentageAmount(getPaymentGrossValue(payment), transactionFeeValue);
+  }, 0);
+  const productCostTotal = completedPayments.reduce((sum: number, payment: any) => {
+    const explicit = Number(payment.product_cost_amount || 0);
+    if (explicit > 0) return sum + explicit;
+    if (!productCostEnabled) return sum;
+    if (productCostType === 'fixed') return sum + productCostValue;
+    return sum + calculatePercentageAmount(getPaymentGrossValue(payment), productCostValue);
+  }, 0);
   const summary = calculateFinanceSummary({
     revenue,
     expenses: expenseTotal,
+    salaries: salaryTotal,
+    taxes: taxTotal,
+    commissions: commissionTotal,
+    transactionFees: transactionFeeTotal || calculateFixedPerItemAmount(completedPaymentCount, transactionFeeType === 'fixed' ? transactionFeeValue : 0),
+    productCosts: productCostTotal,
     futureFundRate: futureFundPercentage,
-    salaries: Number(settings.monthly_salaries || 0),
-    taxes: Number(revenue * (taxRate / 100)),
-    commissions: Number(revenue * (commissionPercentage / 100)),
   });
   const outstanding = payments
     .filter((p: any) => p.status !== 'completed')
@@ -140,6 +192,8 @@ const summarizeFinanceRows = (
       { label: 'Future Fund', percentage: futureFundPercentage, amount: summary.futureFund },
       { label: 'Commission', percentage: commissionPercentage, amount: summary.commissions },
       { label: 'Tax Reserve', percentage: taxRate, amount: summary.taxes },
+      { label: 'Transaction Fees', percentage: transactionFeeValue, amount: summary.transactionFees },
+      { label: 'Product Costs', percentage: productCostValue, amount: summary.productCosts },
       { label: 'Founder Equity Allocated', percentage: foundersEquityTotal, amount: 0 },
     ],
   };
@@ -4397,7 +4451,7 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     let query = this.client
       .from('payments')
-      .select('id, client_name, amount, currency, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, invoice_id, created_by, created_at, updated_at')
+      .select('id, client_name, amount, currency, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at')
       .order('payment_date', { ascending: false })
       .limit(1000);
 
@@ -4425,9 +4479,11 @@ export class SupabaseApiService {
       status: data?.status || 'completed',
       description: data?.description || null,
       project_id: data?.project_id || null,
-      received_amount: Number(data?.received_amount || 0),
+      received_amount: Number(data?.received_amount || data?.amount || 0),
       tax_amount: Number(data?.tax_amount || 0),
       commission_amount: Number(data?.commission_amount || 0),
+      transaction_fee_amount: Number(data?.transaction_fee_amount || 0),
+      product_cost_amount: Number(data?.product_cost_amount || 0),
       invoice_id: data?.invoice_id || null,
     };
 
@@ -4536,10 +4592,23 @@ export class SupabaseApiService {
       .select('id, setting_key, setting_value, created_at, updated_at')
       .limit(1000);
     if (error) throw formatError(error, 'Unable to load finance settings.');
+    const defaults: Record<string, any> = {
+      base_currency: 'USD',
+      future_fund_percentage: '10',
+      commission_percentage: '15',
+      tax_rate: '30',
+      transaction_fee_type: 'percentage',
+      transaction_fee_value: '0',
+      product_cost_enabled: 'false',
+      product_cost_type: 'percentage',
+      product_cost_value: '0',
+      enable_auto_calculation: 'true',
+    };
     const mapped = ensureArray(data).reduce((acc: Record<string, any>, item: any) => {
       acc[item.setting_key] = item.setting_value;
       return acc;
-    }, {});
+    }, defaults);
+    mapped.currency = mapped.base_currency || mapped.currency || 'USD';
     return { success: true, data: { data: mapped } };
   }
 
@@ -4549,7 +4618,7 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     let query = this.client
       .from('salary_runs')
-      .select('id, salary_month, currency, created_at, created_by, salary_entries(id, user_id, months_count, monthly_salary, total_salary, notes, profiles:user_id(id, name))')
+      .select('id, salary_month, currency, created_at, created_by, salary_entries(id, user_id, months_count, monthly_salary, total_salary, bonus_amount, notes, profiles:user_id(id, name))')
       .order('salary_month', { ascending: false });
     if (!access.canViewAllFinance) {
       query = query.eq('created_by', currentUserId);
@@ -4579,7 +4648,8 @@ export class SupabaseApiService {
           total_salary: entry.total_salary,
           currency: run.currency,
           salary_date: run.salary_month,
-          bonus: details.bonus || 0,
+          bonus: details.bonus || entry.bonus_amount || 0,
+          bonus_amount: entry.bonus_amount || 0,
           deductions: details.deductions || 0,
           payment_method: details.payment_method || 'bank_transfer',
           payment_method_other: details.payment_method_other || '',
@@ -4645,6 +4715,7 @@ export class SupabaseApiService {
         months_count: monthsCount,
         monthly_salary: baseSalary,
         total_salary: totalSalary,
+        bonus_amount: bonus,
         notes: details
       })
       .select()
@@ -4679,6 +4750,7 @@ export class SupabaseApiService {
         months_count: monthsCount,
         monthly_salary: baseSalary,
         total_salary: totalSalary,
+        bonus_amount: bonus,
         notes: details
       })
       .eq('id', id)
@@ -4885,16 +4957,24 @@ export class SupabaseApiService {
     const bounds = getRangeBounds(range);
     const currentUserId = String(access.profile.id);
     const restrictToOwn = !access.canViewAllFinance;
+    const canViewSalaryData = access.canViewAllFinance || access.permissions.includes('finance.salaries.view');
     const foundersEquityPromise = access.permissions.includes('finance.founders.view')
       ? this.getFoundersEquityTotal()
       : Promise.resolve({ success: true, data: { data: { total: 0 } } });
-    const [paymentsRes, expensesRes, foundersEquityRes, settingsRes, allTimePaymentsRes, allTimeExpensesRes] = await Promise.all([
+    const salaryQuery = restrictToOwn
+      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).limit(1000);
+    const allTimeSalaryQuery = restrictToOwn
+      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').eq('created_by', currentUserId).limit(1000)
+      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').limit(1000);
+    const [paymentsRes, expensesRes, salaryRunsRes, foundersEquityRes, settingsRes, allTimePaymentsRes, allTimeExpensesRes, allTimeSalaryRunsRes] = await Promise.all([
       restrictToOwn
         ? this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
         : this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
       restrictToOwn
         ? this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
         : this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
+      canViewSalaryData ? salaryQuery : Promise.resolve({ data: [], error: null as any }),
       foundersEquityPromise,
       this.getFinanceSettings(),
       restrictToOwn
@@ -4903,27 +4983,34 @@ export class SupabaseApiService {
       restrictToOwn
         ? this.client.from('expenses').select('amount, expense_date, created_by').eq('created_by', currentUserId).limit(1000)
         : this.client.from('expenses').select('amount, expense_date').limit(1000),
+      canViewSalaryData ? allTimeSalaryQuery : Promise.resolve({ data: [], error: null as any }),
     ]);
 
     if (paymentsRes.error) throw formatError(paymentsRes.error, 'Unable to load payments stats.');
     if (expensesRes.error) throw formatError(expensesRes.error, 'Unable to load expenses stats.');
+    if (salaryRunsRes.error) throw formatError(salaryRunsRes.error, 'Unable to load salary stats.');
     if (allTimePaymentsRes.error) throw formatError(allTimePaymentsRes.error, 'Unable to load finance records.');
     if (allTimeExpensesRes.error) throw formatError(allTimeExpensesRes.error, 'Unable to load finance records.');
+    if (allTimeSalaryRunsRes.error) throw formatError(allTimeSalaryRunsRes.error, 'Unable to load finance records.');
 
     const payments = ensureArray(paymentsRes.data);
     const expenses = ensureArray(expensesRes.data);
+    const salaryRuns = ensureArray(salaryRunsRes.data);
     const allTimePayments = ensureArray(allTimePaymentsRes.data);
     const allTimeExpenses = ensureArray(allTimeExpensesRes.data);
+    const allTimeSalaryRuns = ensureArray(allTimeSalaryRunsRes.data);
     const settings = (settingsRes as any)?.data?.data || {};
     const selectedSummary = summarizeFinanceRows(
       payments,
       expenses,
+      salaryRuns,
       settings,
       Number((foundersEquityRes as any)?.data?.data?.total || 0)
     );
     const hasSelectedData =
       payments.length > 0 ||
       expenses.length > 0 ||
+      salaryRuns.length > 0 ||
       selectedSummary.summary.revenue > 0 ||
       selectedSummary.summary.expenses > 0 ||
       selectedSummary.outstanding > 0;
@@ -4932,6 +5019,7 @@ export class SupabaseApiService {
       : summarizeFinanceRows(
           allTimePayments,
           allTimeExpenses,
+          allTimeSalaryRuns,
           settings,
           Number((foundersEquityRes as any)?.data?.data?.total || 0)
         );
@@ -4942,6 +5030,11 @@ export class SupabaseApiService {
         data: {
           revenue: effectiveSummary.summary.revenue,
           expenses: effectiveSummary.summary.expenses,
+          salaries: effectiveSummary.summary.salaries,
+          taxes: effectiveSummary.summary.taxes,
+          commissions: effectiveSummary.summary.commissions,
+          transactionFees: effectiveSummary.summary.transactionFees,
+          productCosts: effectiveSummary.summary.productCosts,
           netProfit: effectiveSummary.summary.netProfit,
           grossProfit: effectiveSummary.summary.grossProfit,
           futureFund: effectiveSummary.summary.futureFund,
@@ -4949,6 +5042,8 @@ export class SupabaseApiService {
           liabilities: effectiveSummary.summary.liabilities,
           outstanding: effectiveSummary.outstanding,
           distribution: effectiveSummary.distribution,
+          currency: settings.base_currency || settings.currency || 'USD',
+          futureFundRate: effectiveSummary.futureFundPercentage,
           rangeUsed: hasSelectedData ? range : 'all',
         },
         range,
@@ -4978,7 +5073,7 @@ export class SupabaseApiService {
     ensureArray(paymentsRes.data).forEach((payment: any) => {
       const key = monthKey(payment.payment_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
-      if (payment.status === 'completed') buckets[key].revenue += Number(payment.amount || 0);
+      if (payment.status === 'completed') buckets[key].revenue += Number(payment.received_amount || payment.amount || 0);
     });
     ensureArray(expensesRes.data).forEach((expense: any) => {
       const key = monthKey(expense.expense_date);

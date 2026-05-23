@@ -245,3 +245,29 @@ export const userHasAnyPermission = (user: Pick<User, 'role' | 'permissions'> | 
 
 export const userHasAllPermissions = (user: Pick<User, 'role' | 'permissions'> | null | undefined, permissions: string[]): boolean =>
   permissions.every((permission) => userHasPermission(user, permission));
+
+export const getDefaultLandingPath = (user: Pick<User, 'role' | 'permissions'> | null | undefined): string => {
+  if (isSuperAdminRole(user?.role)) return '/dashboard';
+
+  const routes = [
+    { path: '/dashboard', permissions: ['dashboard.view', 'sales.dashboard.view'] },
+    { path: '/sales-dashboard', permissions: ['sales.dashboard.view', 'sales.view'] },
+    { path: '/projects', permissions: ['projects.view'] },
+    { path: '/tasks', permissions: ['tasks.view'] },
+    { path: '/mails', permissions: ['mails.view', 'mail_threads.view'] },
+    { path: '/calendar', permissions: ['calendar.view'] },
+    { path: '/finance', permissions: ['finance.view'] },
+    { path: '/time-tracking', permissions: ['time.view'] },
+    { path: '/leads', permissions: ['leads.view'] },
+    { path: '/users', permissions: ['users.view'] },
+    { path: '/notifications', permissions: ['notifications.view'] },
+  ];
+
+  for (const route of routes) {
+    if (userHasAnyPermission(user, route.permissions)) {
+      return route.path;
+    }
+  }
+
+  return '/contact-admin';
+};

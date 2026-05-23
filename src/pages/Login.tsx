@@ -277,6 +277,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { getDefaultLandingPath } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -737,7 +738,7 @@ const LoadingScreen: React.FC = () => (
 // Main Component
 const Login: React.FC = () => {
   const navigate = useNavigate();
-  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { login, isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { saveCredentials } = useRememberMe();
@@ -746,8 +747,9 @@ const Login: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      await login(email, password, rememberMe);
+      const authenticatedUser = await login(email, password, rememberMe);
       saveCredentials(email, rememberMe);
+      const landingPath = getDefaultLandingPath(authenticatedUser);
       
       toast({
         title: 'Success',
@@ -757,7 +759,7 @@ const Login: React.FC = () => {
       
       // Small delay for better UX
       setTimeout(() => {
-        navigate('/dashboard', { replace: true });
+        navigate(landingPath, { replace: true });
       }, 500);
     } catch (error: any) {
       const errorMessage = error?.message || '';
@@ -781,7 +783,7 @@ const Login: React.FC = () => {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getDefaultLandingPath(user)} replace />;
   }
 
   return (
