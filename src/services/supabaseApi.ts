@@ -169,6 +169,9 @@ const formatActivityEntityLabel = (entityType?: string | null) => {
 const isLikelyIdentifier = (value?: string | null) =>
   /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)$/i.test(String(value || '').trim());
 
+const isUuid = (value?: string | null) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+
 const formatActivitySummary = (action?: string | null, entityType?: string | null) => {
   const label = formatActivityEntityLabel(entityType).toLowerCase();
   const verbMap: Record<string, string> = {
@@ -1883,6 +1886,9 @@ export class SupabaseApiService {
 
   async updateProjectRole(roleId: string, data: { name?: string; description?: string; permissions?: string[] }) {
     const access = await this.getCurrentAccessContext();
+    if (!isUuid(roleId)) {
+      throw new ApiError('This project role cannot be edited.', 400, 'PROJECT_ROLE_INVALID_ID');
+    }
     const payload: Record<string, any> = {};
     if (data.name !== undefined) payload.name = String(data.name).trim();
     if (data.description !== undefined) payload.description = String(data.description).trim() || null;
@@ -1934,6 +1940,9 @@ export class SupabaseApiService {
 
   async deleteProjectRole(roleId: string) {
     const access = await this.getCurrentAccessContext();
+    if (!isUuid(roleId)) {
+      throw new ApiError('This project role cannot be deleted.', 400, 'PROJECT_ROLE_INVALID_ID');
+    }
     const { data: roleRow, error: readError } = await this.client
       .from('project_roles')
       .select('id, project_id, name')

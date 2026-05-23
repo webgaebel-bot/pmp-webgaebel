@@ -118,6 +118,8 @@ const ProjectRoles: React.FC = () => {
       return leftIndex - rightIndex;
     });
   }, [rolesResponse?.data, id]);
+  const isFallbackRole = (role: ProjectRole) => String(role.id || '').startsWith('default-');
+  const isFallbackRoleId = (value?: string | null) => String(value || '').startsWith('default-');
   const projectPermissions = useMemo(() => {
     const fetched = projectPermissionsResponse?.data || [];
     return Array.isArray(fetched) && fetched.length ? fetched : PROJECT_PERMISSION_DEFINITIONS;
@@ -298,6 +300,10 @@ const ProjectRoles: React.FC = () => {
       toast.error('Please select at least one permission');
       return;
     }
+    if (editingRoleId && isFallbackRoleId(editingRoleId)) {
+      toast.error('Built-in fallback roles cannot be updated.');
+      return;
+    }
     await saveRoleMutation.mutateAsync();
   };
 
@@ -320,6 +326,10 @@ const ProjectRoles: React.FC = () => {
   };
 
   const openEditRoleDialog = (role: ProjectRole) => {
+    if (isFallbackRole(role)) {
+      toast.error('Built-in fallback roles can only be viewed, not edited.');
+      return;
+    }
     setEditingRoleId(role.id);
     setNewRoleName(role.name);
     setNewRoleDescription(role.description || '');
@@ -328,6 +338,10 @@ const ProjectRoles: React.FC = () => {
   };
 
   const handleDeleteRole = (role: ProjectRole) => {
+    if (isFallbackRole(role)) {
+      toast.error('Built-in fallback roles cannot be deleted.');
+      return;
+    }
     Swal.fire({
       title: 'Delete role?',
       text: `Delete "${role.name}" from this project?`,
@@ -580,10 +594,10 @@ const ProjectRoles: React.FC = () => {
                       {canManageProjectRoles && (
                         <TableCell>
                           <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => openEditRoleDialog(role)}>
+                            <Button variant="ghost" size="sm" onClick={() => openEditRoleDialog(role)} disabled={isFallbackRole(role)}>
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteRole(role)}>
+                            <Button variant="ghost" size="sm" onClick={() => handleDeleteRole(role)} disabled={isFallbackRole(role)}>
                               <Trash2 className="h-4 w-4 text-red-500" />
                             </Button>
                           </div>
