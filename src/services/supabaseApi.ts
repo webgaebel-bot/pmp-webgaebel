@@ -5216,29 +5216,9 @@ export class SupabaseApiService {
   }
 
   async getInbox() {
-    const currentUserId = await this.getCurrentUserId();
-    const { data, error } = await this.client
-      .from('mail_recipients')
-      .select(`
-        id,
-        is_read,
-        is_deleted,
-        read_at,
-        mail:mails!mail_recipients_mail_id_fkey(
-          id,
-          subject,
-          body,
-          created_at,
-          thread_id,
-          sender_id,
-          sender_deleted,
-          sender:profiles!mails_sender_id_fkey(id, name, email, avatar_url, profile_image),
-          attachments:mail_attachments(id, original_name, file_name, file_path, mime_type, file_size)
-        )
-      `)
-      .eq('recipient_id', currentUserId)
-      .eq('is_deleted', false)
-      .order('created_at', { ascending: false });
+    const { data, error } = await this.client.rpc('get_mail_inbox_secure_v2', {
+      p_limit: 100,
+    });
 
     if (error) {
       throw formatError(error, 'Unable to load inbox.');
@@ -5300,31 +5280,7 @@ export class SupabaseApiService {
       throw new ApiError('You do not have permission to view all mails.', 403, 'MAILS_VIEW_ALL_REQUIRED');
     }
 
-    const { data, error } = await this.client
-      .from('mail_threads')
-      .select(`
-        id,
-        subject,
-        created_at,
-        mails:mails(
-          id,
-          subject,
-          body,
-          created_at,
-          thread_id,
-          sender_id,
-          sender_deleted,
-          sender:profiles!mails_sender_id_fkey(id, name, email, avatar_url, profile_image),
-          attachments:mail_attachments(id, original_name, file_name, file_path, mime_type, file_size),
-          recipients:mail_recipients(
-            id,
-            is_read,
-            is_deleted,
-            recipient:profiles!mail_recipients_recipient_id_fkey(id, name, email)
-          )
-        )
-      `)
-      .order('created_at', { ascending: false });
+    const { data, error } = await this.client.rpc('get_all_mail_threads_secure_v2');
 
     if (error) {
       throw formatError(error, 'Unable to load mail threads.');
@@ -5342,27 +5298,9 @@ export class SupabaseApiService {
   }
 
   async getMailDetail(id: string) {
-    const { data, error } = await this.client
-      .from('mails')
-      .select(`
-        id,
-        subject,
-        body,
-        created_at,
-        thread_id,
-        sender_id,
-        sender_deleted,
-        sender:profiles!mails_sender_id_fkey(id, name, email, avatar_url, profile_image),
-        attachments:mail_attachments(id, original_name, file_name, file_path, mime_type, file_size),
-        recipients:mail_recipients(
-          id,
-          is_read,
-          is_deleted,
-          recipient:profiles!mail_recipients_recipient_id_fkey(id, name, email)
-        )
-      `)
-      .or(`thread_id.eq.${id},id.eq.${id}`)
-      .order('created_at', { ascending: true });
+    const { data, error } = await this.client.rpc('get_mail_detail_secure_v2', {
+      p_mail_id: id,
+    });
 
     if (error) {
       throw formatError(error, 'Unable to load mail detail.');

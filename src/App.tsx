@@ -1,48 +1,50 @@
 import { Toaster } from "@/components/ui/toaster";
+import React, { Suspense, lazy } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { LoadingPage } from "@/components/common/LoadingSpinner";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MainLayout } from "@/components/layout/MainLayout";
-import Login from "@/pages/Login";
-import Dashboard from "@/pages/Dashboard";
-import Projects from "@/pages/Projects";
-import ProjectDetail from "@/pages/ProjectDetail";
-import ProjectEdit from "@/pages/ProjectEdit";
-import Tasks from "@/pages/Tasks";
-import TaskDetail from "@/pages/TaskDetail";
-import TaskEdit from "@/pages/TaskEdit";
-import Mails from "@/pages/Mails";
-import Calendar from "@/pages/Calendar";
-import Users from "@/pages/Users";
-import UserDetail from "@/pages/UserDetail";
-import UserEdit from "@/pages/UserEdit";
-import Roles from "@/pages/Roles";
-import Reports from "@/pages/Reports";
-import Activity from "@/pages/Activity";
-import Settings from "@/pages/Settings";
-import Notifications from "@/pages/Notifications";
-import Unauthorized from "@/pages/Unauthorized";
-import NotFound from "@/pages/NotFound";
-import ContactAdmin from "@/pages/ContactAdmin";
-import ForgotPassword from "@/pages/ForgotPassword";
-import FinanceDashboard from "@/pages/finance/FinanceDashboard";
-import FinanceTaxCommissions from "@/pages/finance/FinanceTaxCommissions";
-import Payments from "@/pages/finance/Payments";
-import Expenses from "@/pages/finance/Expenses";
-import Salary from "@/pages/finance/Salary";
-import Clients from "@/pages/finance/Clients";
-import Founders from "@/pages/finance/Founders";
-import FinanceSettings from "@/pages/finance/FinanceSettings";
-import TimeTracking from "@/pages/time-tracking/TimeTracking";
-import Leads from "@/pages/leads/Leads";
-import ManageTaxonomies from "@/pages/leads/ManageTaxonomies";
 
-import Guidance from "@/pages/Guidance";
-import SystemGuide from "@/pages/SystemGuide";
-import ProjectRoles from "@/pages/ProjectRoles";
+const Login = lazy(() => import("@/pages/Login"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Projects = lazy(() => import("@/pages/Projects"));
+const ProjectDetail = lazy(() => import("@/pages/ProjectDetail"));
+const ProjectEdit = lazy(() => import("@/pages/ProjectEdit"));
+const Tasks = lazy(() => import("@/pages/Tasks"));
+const TaskDetail = lazy(() => import("@/pages/TaskDetail"));
+const TaskEdit = lazy(() => import("@/pages/TaskEdit"));
+const Mails = lazy(() => import("@/pages/Mails"));
+const Calendar = lazy(() => import("@/pages/Calendar"));
+const Users = lazy(() => import("@/pages/Users"));
+const UserDetail = lazy(() => import("@/pages/UserDetail"));
+const UserEdit = lazy(() => import("@/pages/UserEdit"));
+const Roles = lazy(() => import("@/pages/Roles"));
+const Reports = lazy(() => import("@/pages/Reports"));
+const Activity = lazy(() => import("@/pages/Activity"));
+const Settings = lazy(() => import("@/pages/Settings"));
+const Notifications = lazy(() => import("@/pages/Notifications"));
+const Unauthorized = lazy(() => import("@/pages/Unauthorized"));
+const NotFound = lazy(() => import("@/pages/NotFound"));
+const ContactAdmin = lazy(() => import("@/pages/ContactAdmin"));
+const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+const FinanceDashboard = lazy(() => import("@/pages/finance/FinanceDashboard"));
+const FinanceTaxCommissions = lazy(() => import("@/pages/finance/FinanceTaxCommissions"));
+const Payments = lazy(() => import("@/pages/finance/Payments"));
+const Expenses = lazy(() => import("@/pages/finance/Expenses"));
+const Salary = lazy(() => import("@/pages/finance/Salary"));
+const Clients = lazy(() => import("@/pages/finance/Clients"));
+const Founders = lazy(() => import("@/pages/finance/Founders"));
+const FinanceSettings = lazy(() => import("@/pages/finance/FinanceSettings"));
+const TimeTracking = lazy(() => import("@/pages/time-tracking/TimeTracking"));
+const Leads = lazy(() => import("@/pages/leads/Leads"));
+const ManageTaxonomies = lazy(() => import("@/pages/leads/ManageTaxonomies"));
+const Guidance = lazy(() => import("@/pages/Guidance"));
+const SystemGuide = lazy(() => import("@/pages/SystemGuide"));
+const ProjectRoles = lazy(() => import("@/pages/ProjectRoles"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +62,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
+          <Suspense fallback={<LoadingPage text="Loading page..." />}>
           <Routes>
             {/* Public Routes */}
             <Route path="/login" element={<Login />} />
@@ -220,7 +223,7 @@ const App = () => (
                 </ProtectedRoute>
               } />
               <Route path="/system-guide" element={
-                <ProtectedRoute>
+                <ProtectedRoute permission="dashboard.view">
                   <SystemGuide />
                 </ProtectedRoute>
               } />
@@ -252,6 +255,7 @@ const App = () => (
             {/* 404 */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
         </BrowserRouter>
       </TooltipProvider>
     </AuthProvider>

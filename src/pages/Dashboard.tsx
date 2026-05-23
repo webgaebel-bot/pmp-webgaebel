@@ -29,7 +29,6 @@ import { StatusBadge } from '@/components/common/StatusBadge';
 import { ProgressBar } from '@/components/common/ProgressBar';
 import { LoadingPage } from '@/components/common/LoadingSpinner';
 import { EmptyState } from '@/components/common/EmptyState';
-import Calendar from '@/components/common/Calendar';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -297,13 +296,6 @@ const Dashboard: React.FC = () => {
       visible: canViewAdminDashboardSections && permission.canViewTasks(),
     },
     {
-      title: 'Calendar',
-      path: '/calendar',
-      description: 'View the project calendar and schedule.',
-      icon: TrendingUp,
-      visible: canViewAdminDashboardSections && permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']),
-    },
-    {
       title: 'Finance',
       path: '/finance',
       description: 'Open the finance dashboard for revenue data.',
@@ -332,6 +324,108 @@ const Dashboard: React.FC = () => {
         title={`Welcome back, ${user?.name?.split(' ')[0] || 'User'}`}
         description="Here's what's happening with your projects today."
       />
+
+      {/* Premium Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {canViewAdminDashboardSections && permission.canViewTotalProjects() && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <FolderKanban className="h-24 w-24 text-primary" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Projects</span>
+                <div className="rounded-full bg-primary/10 p-2.5 text-primary">
+                  <FolderKanban className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_projects}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-emerald-600 bg-emerald-500/10 px-2 py-1 rounded-full">
+                    <TrendingUp className="mr-1 h-3 w-3" /> {dashboardStats.active_projects} active
+                  </span>
+                  <span className="text-xs text-muted-foreground">currently</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {canViewAdminDashboardSections && permission.canViewTotalTasks() && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <CheckSquare className="h-24 w-24 text-blue-500" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Tasks</span>
+                <div className="rounded-full bg-blue-500/10 p-2.5 text-blue-500">
+                  <CheckSquare className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_tasks}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-blue-600 bg-blue-500/10 px-2 py-1 rounded-full">
+                    +12%
+                  </span>
+                  <span className="text-xs text-muted-foreground">this month</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {canViewAdminDashboardSections && permission.canViewOverdueTasks() && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <AlertCircle className="h-24 w-24 text-rose-500" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Overdue Tasks</span>
+                <div className="rounded-full bg-rose-500/10 p-2.5 text-rose-500">
+                  <AlertCircle className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.overdue_tasks}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-rose-600 bg-rose-500/10 px-2 py-1 rounded-full">
+                    Needs Attention
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {canViewAdminDashboardSections && permission.canViewTeamMembers() && permission.canViewOnlineUsers() && (
+          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
+            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
+              <Users className="h-24 w-24 text-amber-500" />
+            </div>
+            <div className="relative z-10 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Team Members</span>
+                <div className="rounded-full bg-amber-500/10 p-2.5 text-amber-500">
+                  <Users className="h-5 w-5" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_users}</h3>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex items-center text-xs font-semibold text-amber-600 bg-amber-500/10 px-2 py-1 rounded-full">
+                    {stats.active_users} online
+                  </span>
+                  <span className="text-xs text-muted-foreground">across workspaces</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {statsUnavailable ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
@@ -625,117 +719,8 @@ const Dashboard: React.FC = () => {
         )}
       </div>
 
-      {/* Premium Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {canViewAdminDashboardSections && permission.canViewTotalProjects() && (
-          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
-            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
-              <FolderKanban className="h-24 w-24 text-primary" />
-            </div>
-            <div className="relative z-10 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Projects</span>
-                <div className="rounded-full bg-primary/10 p-2.5 text-primary">
-                  <FolderKanban className="h-5 w-5" />
-                </div>
-              </div>
-              <div>
-                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_projects}</h3>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="flex items-center text-xs font-semibold text-emerald-600 bg-emerald-500/10 px-2 py-1 rounded-full">
-                    <TrendingUp className="mr-1 h-3 w-3" /> {dashboardStats.active_projects} active
-                  </span>
-                  <span className="text-xs text-muted-foreground">currently</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {canViewAdminDashboardSections && permission.canViewTotalTasks() && (
-          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
-            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
-              <CheckSquare className="h-24 w-24 text-blue-500" />
-            </div>
-            <div className="relative z-10 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Tasks</span>
-                <div className="rounded-full bg-blue-500/10 p-2.5 text-blue-500">
-                  <CheckSquare className="h-5 w-5" />
-                </div>
-              </div>
-              <div>
-                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_tasks}</h3>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="flex items-center text-xs font-semibold text-blue-600 bg-blue-500/10 px-2 py-1 rounded-full">
-                    +12%
-                  </span>
-                  <span className="text-xs text-muted-foreground">this month</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {canViewAdminDashboardSections && permission.canViewOverdueTasks() && (
-          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
-            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
-              <AlertCircle className="h-24 w-24 text-rose-500" />
-            </div>
-            <div className="relative z-10 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Overdue Tasks</span>
-                <div className="rounded-full bg-rose-500/10 p-2.5 text-rose-500">
-                  <AlertCircle className="h-5 w-5" />
-                </div>
-              </div>
-              <div>
-                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.overdue_tasks}</h3>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="flex items-center text-xs font-semibold text-rose-600 bg-rose-500/10 px-2 py-1 rounded-full">
-                    Needs Attention
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {canViewAdminDashboardSections && permission.canViewTeamMembers() && permission.canViewOnlineUsers() && (
-          <div className="group relative overflow-hidden rounded-3xl p-6 shadow-sm border border-border bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
-            <div className="absolute top-0 right-0 p-4 opacity-10 transition-opacity duration-300 group-hover:opacity-20">
-              <Users className="h-24 w-24 text-amber-500" />
-            </div>
-            <div className="relative z-10 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Team Members</span>
-                <div className="rounded-full bg-amber-500/10 p-2.5 text-amber-500">
-                  <Users className="h-5 w-5" />
-                </div>
-              </div>
-              <div>
-                <h3 className="text-4xl font-black tracking-tight text-foreground">{dashboardStats.total_users}</h3>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="flex items-center text-xs font-semibold text-amber-600 bg-amber-500/10 px-2 py-1 rounded-full">
-                    {stats.active_users} online
-                  </span>
-                  <span className="text-xs text-muted-foreground">across workspaces</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Leads Analytics Card */}
       {canViewAdminDashboardSections && <LeadsAnalyticsCard />}
-
-      {/* Calendar Section */}
-      {permission.canAny(['calendar.view', 'calendar.view.all', 'calendar.project.view']) ? (
-      <div>
-        <Calendar />
-      </div>
-      ) : null}
 
       {/* Charts Row */}
       {canViewAdminDashboardSections ? (
