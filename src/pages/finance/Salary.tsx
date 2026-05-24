@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import Swal from 'sweetalert2';
 import { ModuleEmptyState, ModuleLoadingState } from '@/components/common/ModuleState';
 import { formatMoney } from '@/lib/financeEngine';
+import SalaryRuns from '@/components/finance/SalaryRuns';
 
 const Salary: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -365,7 +366,7 @@ const Salary: React.FC = () => {
                   placeholder="Add any notes about this salary"
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={createMutation.isPending}>
+              <Button type="submit" className="w-full" isLoading={createMutation.isPending} loadingText={editingId ? 'Updating...' : 'Adding...'}>
                 {createMutation.isPending ? 'Saving...' : editingId ? 'Update Record' : 'Add Record'}
               </Button>
             </form>
@@ -445,6 +446,10 @@ const Salary: React.FC = () => {
           )}
         </CardContent>
       </Card>
+      <div className="mt-6">
+        <h2 className="text-lg font-semibold mb-3">Salary Runs</h2>
+        <SalaryRuns />
+      </div>
     </div>
   );
 };

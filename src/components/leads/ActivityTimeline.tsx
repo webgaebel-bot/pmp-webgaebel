@@ -65,8 +65,8 @@ export function ActivityTimeline({ activities, onAdd, loading }: ActivityTimelin
           <Label>Description</Label>
           <Textarea rows={3} value={form.description} onChange={(e) => setForm((current) => ({ ...current, description: e.target.value }))} />
         </div>
-        <Button type="submit" disabled={loading}>
-          {loading ? 'Saving...' : '+ Add Activity'}
+        <Button type="submit" isLoading={loading} loadingText="Saving...">
+          + Add Activity
         </Button>
       </form>
       ) : null}

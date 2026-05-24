@@ -41,6 +41,7 @@ const Salary = lazy(() => import("@/pages/finance/Salary"));
 const Clients = lazy(() => import("@/pages/finance/Clients"));
 const Founders = lazy(() => import("@/pages/finance/Founders"));
 const FinanceSettings = lazy(() => import("@/pages/finance/FinanceSettings"));
+const FutureFund = lazy(() => import("@/pages/finance/FutureFund"));
 const TimeTracking = lazy(() => import("@/pages/time-tracking/TimeTracking"));
 const Leads = lazy(() => import("@/pages/leads/Leads"));
 const ManageTaxonomies = lazy(() => import("@/pages/leads/ManageTaxonomies"));
@@ -212,6 +213,11 @@ const App = () => (
               <Route path="/finance/settings" element={
                 <ProtectedRoute permission="finance.view">
                   <FinanceSettings />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/future-fund" element={
+                <ProtectedRoute permission="finance.view">
+                  <FutureFund />
                 </ProtectedRoute>
               } />
               <Route path="/time-tracking" element={

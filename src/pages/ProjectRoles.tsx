@@ -447,7 +447,7 @@ const ProjectRoles: React.FC = () => {
                   <Button variant="outline" onClick={() => handleCreateRoleDialogChange(false)}>
                     Cancel
                   </Button>
-                  <Button className="bg-accent hover:bg-accent/90" onClick={handleSaveRole} disabled={saveRoleMutation.isPending}>
+                  <Button className="bg-accent hover:bg-accent/90" onClick={handleSaveRole} isLoading={saveRoleMutation.isPending} loadingText={editingRoleId ? 'Saving...' : 'Creating...'}>
                     {saveRoleMutation.isPending ? (editingRoleId ? 'Saving...' : 'Creating...') : (editingRoleId ? 'Update Role' : 'Create Role')}
                   </Button>
                 </DialogFooter>

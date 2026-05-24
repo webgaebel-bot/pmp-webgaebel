@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import React, { useEffect, useState } from 'react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,10 +10,12 @@ import { toast } from 'sonner';
 interface TaxModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  editingTax?: any | null;
 }
 
-export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange }) => {
+export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange, editingTax }) => {
   const queryClient = useQueryClient();
+  const isEditing = Boolean(editingTax?.id);
   const [formData, setFormData] = useState({
     project_id: '',
     title: '',
@@ -23,6 +25,19 @@ export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange }) => {
     effective_from: '',
     effective_to: '',
   });
+
+  useEffect(() => {
+    if (!open) return;
+    setFormData({
+      project_id: editingTax?.project_id || '',
+      title: editingTax?.title || '',
+      rate: editingTax?.rate !== undefined && editingTax?.rate !== null ? String(editingTax.rate) : '',
+      amount: editingTax?.amount !== undefined && editingTax?.amount !== null ? String(editingTax.amount) : '',
+      currency: editingTax?.currency || 'USD',
+      effective_from: editingTax?.effective_from || '',
+      effective_to: editingTax?.effective_to || '',
+    });
+  }, [open, editingTax]);
 
   const { data: projectsResponse } = useQuery({
     queryKey: ['finance-projects'],
@@ -39,23 +54,19 @@ export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange }) => {
   const currencies = currenciesResponse?.data || [];
 
   const createMutation = useMutation({
-    mutationFn: async (data: any) => api.post('/finance/taxes', data),
+    mutationFn: async (data: any) => {
+      if (isEditing && editingTax?.id) return (api as any).updateFinanceTax(editingTax.id, data);
+      return api.post('/finance/taxes', data);
+    },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['finance-taxes'] });
       queryClient.invalidateQueries({ queryKey: ['finance-stats'] });
-      toast.success('Project tax added successfully');
+      toast.success(isEditing ? 'Project tax updated successfully' : 'Project tax added successfully');
       onOpenChange(false);
-      setFormData({
-        project_id: '',
-        title: '',
-        rate: '',
-        amount: '',
-        currency: 'USD',
-        effective_from: '',
-        effective_to: '',
-      });
+      setFormData({ project_id: '', title: '', rate: '', amount: '', currency: 'USD', effective_from: '', effective_to: '' });
     },
     onError: () => {
-      toast.error('Failed to add project tax');
+      toast.error(isEditing ? 'Failed to update project tax' : 'Failed to add project tax');
     },
   });
 
@@ -74,7 +85,10 @@ export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange }) => {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Project Tax</DialogTitle>
+          <DialogTitle>{isEditing ? 'Edit Project Tax' : 'Add Project Tax'}</DialogTitle>
+          <DialogDescription>
+            {isEditing ? 'Update the tax rule for this project.' : 'Create a tax rule for a project.'}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 mt-4">
           <div>
@@ -158,8 +172,8 @@ export const TaxModal: React.FC<TaxModalProps> = ({ open, onOpenChange }) => {
               />
             </div>
           </div>
-          <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-            {createMutation.isPending ? 'Saving...' : 'Add Tax'}
+          <Button type="submit" className="w-full" isLoading={createMutation.isPending} loadingText={isEditing ? 'Saving...' : 'Saving...'}>
+            {createMutation.isPending ? 'Saving...' : (isEditing ? 'Update Tax' : 'Add Tax')}
           </Button>
         </form>
       </DialogContent>

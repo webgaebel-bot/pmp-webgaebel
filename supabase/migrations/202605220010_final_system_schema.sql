@@ -74,6 +74,12 @@ create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text,
+  -- Finance-related fields
+  project_value numeric(18,4) not null default 0,
+  currency text not null default 'USD',
+  client_name text,
+  client_email text,
+  client_phone text,
   status text not null default 'planning',
   priority text not null default 'medium',
   progress numeric(5,2) not null default 0,

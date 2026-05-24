@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Receipt, Users, PlusCircle, Trash2, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, Edit, Receipt, Users, PlusCircle, Trash2, LayoutGrid } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { toast } from 'sonner';
 import { api } from '@/services/api';
@@ -21,6 +21,8 @@ const FinanceTaxCommissions: React.FC = () => {
   const permission = usePermission();
   const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
   const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
+  const [editingTax, setEditingTax] = useState<any | null>(null);
+  const [editingCommission, setEditingCommission] = useState<any | null>(null);
 
   const canManageTaxes = permission.canAny(['finance.taxes.manage', 'finance.settings.manage', 'finance.view.all']);
   const canManageCommissions = permission.canAny(['finance.commissions.manage', 'finance.settings.manage', 'finance.view.all']);
@@ -57,6 +59,16 @@ const FinanceTaxCommissions: React.FC = () => {
     onError: () => toast.error('Failed to delete commission'),
   });
 
+  const payCommissionMutation = useMutation({
+    mutationFn: async ({ id, amount }: any) => (api as any).payCommission?.(id, amount),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['finance-commissions'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-stats'] });
+      toast.success('Commission marked as paid');
+    },
+    onError: () => toast.error('Failed to mark commission paid'),
+  });
+
   const handleDeleteTax = (id: string) => {
     Swal.fire({
       title: 'Delete Tax?',
@@ -83,6 +95,26 @@ const FinanceTaxCommissions: React.FC = () => {
     });
   };
 
+  const handleEditTax = (tax: any) => {
+    setEditingTax(tax);
+    setIsTaxModalOpen(true);
+  };
+
+  const handleEditCommission = (commission: any) => {
+    setEditingCommission(commission);
+    setIsCommissionModalOpen(true);
+  };
+
+  const handleOpenTaxModal = () => {
+    setEditingTax(null);
+    setIsTaxModalOpen(true);
+  };
+
+  const handleOpenCommissionModal = () => {
+    setEditingCommission(null);
+    setIsCommissionModalOpen(true);
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="rounded-3xl border bg-gradient-to-r from-slate-950 via-teal-900 to-cyan-800 p-6 text-white shadow-xl">
@@ -101,11 +133,11 @@ const FinanceTaxCommissions: React.FC = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setIsTaxModalOpen(true)} disabled={!canManageTaxes}>
+            <Button variant="secondary" onClick={handleOpenTaxModal} disabled={!canManageTaxes}>
               <Receipt className="mr-2 h-4 w-4" />
               Add Project Tax
             </Button>
-            <Button variant="secondary" onClick={() => setIsCommissionModalOpen(true)} disabled={!canManageCommissions}>
+            <Button variant="secondary" onClick={handleOpenCommissionModal} disabled={!canManageCommissions}>
               <Users className="mr-2 h-4 w-4" />
               Add Commission
             </Button>
@@ -144,6 +176,7 @@ const FinanceTaxCommissions: React.FC = () => {
                       <TableHead>Project</TableHead>
                       <TableHead>Title</TableHead>
                       <TableHead>Rate/Amount</TableHead>
+                      <TableHead>State</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -153,10 +186,16 @@ const FinanceTaxCommissions: React.FC = () => {
                         <TableCell className="font-medium">{tax.projects?.name || 'Unknown project'}</TableCell>
                         <TableCell>{tax.title}</TableCell>
                         <TableCell>{tax.rate ? `${tax.rate}%` : formatMoney(tax.amount, tax.currency)}</TableCell>
+                        <TableCell>{tax.status || 'active'}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteTax(tax.id)} disabled={!canManageTaxes}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => handleEditTax(tax)} disabled={!canManageTaxes}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDeleteTax(tax.id)} disabled={!canManageTaxes}>
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -193,6 +232,7 @@ const FinanceTaxCommissions: React.FC = () => {
                       <TableHead>Project</TableHead>
                       <TableHead>Title</TableHead>
                       <TableHead>Rate/Amount</TableHead>
+                      <TableHead>State</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -202,10 +242,16 @@ const FinanceTaxCommissions: React.FC = () => {
                         <TableCell className="font-medium">{commission.projects?.name || 'Unknown project'}</TableCell>
                         <TableCell>{commission.title}</TableCell>
                         <TableCell>{commission.rate ? `${commission.rate}%` : formatMoney(commission.amount, commission.currency)}</TableCell>
+                        <TableCell>{commission.status || 'active'}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteCommission(commission.id)} disabled={!canManageCommissions}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
+                          <div className="flex items-center gap-2 justify-end">
+                            <Button variant="ghost" size="sm" onClick={() => handleEditCommission(commission)} disabled={!canManageCommissions}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDeleteCommission(commission.id)} disabled={!canManageCommissions}>
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -217,8 +263,8 @@ const FinanceTaxCommissions: React.FC = () => {
         </Card>
       </div>
 
-      <TaxModal open={isTaxModalOpen} onOpenChange={setIsTaxModalOpen} />
-      <CommissionModal open={isCommissionModalOpen} onOpenChange={setIsCommissionModalOpen} />
+      <TaxModal open={isTaxModalOpen} onOpenChange={setIsTaxModalOpen} editingTax={editingTax} />
+      <CommissionModal open={isCommissionModalOpen} onOpenChange={setIsCommissionModalOpen} editingCommission={editingCommission} />
     </div>
   );
 };

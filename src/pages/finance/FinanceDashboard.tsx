@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings, LayoutGrid } from 'lucide-react';
 import { api } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
+import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import { ModuleEmptyState, ModuleErrorState, ModuleLoadingState } from '@/components/common/ModuleState';
 import { calculateFinanceSummary, formatMoney } from '@/lib/financeEngine';
 import {
@@ -26,8 +27,45 @@ import {
 
 const FinanceDashboard: React.FC = () => {
   const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month');
+  const [currencyFilter, setCurrencyFilter] = useState<string>('all');
   const navigate = useNavigate();
   const permission = usePermission();
+  const queryClient = useQueryClient();
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    const supabase = getSupabaseClient();
+    const channel = (supabase as any)
+      .channel('finance-dashboard-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
+        queryClient.invalidateQueries(['finance-stats']);
+        queryClient.invalidateQueries(['finance-chart']);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => {
+        queryClient.invalidateQueries(['finance-stats']);
+        queryClient.invalidateQueries(['finance-chart']);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'salary_runs' }, () => {
+        queryClient.invalidateQueries(['finance-stats']);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'commission_records' }, () => {
+        queryClient.invalidateQueries(['finance-stats']);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'future_fund_transactions' }, () => {
+        queryClient.invalidateQueries(['finance-stats']);
+      })
+      .subscribe();
+
+    setIsLiveConnected(true);
+
+    return () => {
+      if (channel && typeof channel.unsubscribe === 'function') {
+        channel.unsubscribe();
+      }
+    };
+  }, [queryClient]);
 
   const {
     data: statsResponse,
@@ -36,11 +74,15 @@ const FinanceDashboard: React.FC = () => {
     error,
     refetch,
   } = useQuery({
-    queryKey: ['finance-stats', timeRange],
+    queryKey: ['finance-stats', timeRange, currencyFilter],
     queryFn: async () => {
-      const response = await api.get(`/finance/stats?range=${timeRange}`);
+      const currencyQuery = currencyFilter && currencyFilter !== 'all' ? `&currency=${currencyFilter}` : '';
+      const response = await api.get(`/finance/stats?range=${timeRange}${currencyQuery}`);
       return response;
     },
+    refetchInterval: 10000,
+    refetchOnWindowFocus: true,
+    keepPreviousData: true,
   });
   const stats = statsResponse?.data;
 
@@ -52,11 +94,15 @@ const FinanceDashboard: React.FC = () => {
   const currentSettings = currentSettingsResponse?.data || {};
 
   const { data: chartDataResponse } = useQuery({
-    queryKey: ['finance-chart', timeRange],
+    queryKey: ['finance-chart', timeRange, currencyFilter],
     queryFn: async () => {
-      const response = await api.get(`/finance/chart?range=${timeRange}`);
+      const currencyQuery = currencyFilter && currencyFilter !== 'all' ? `&currency=${currencyFilter}` : '';
+      const response = await api.get(`/finance/chart?range=${timeRange}${currencyQuery}`);
       return response;
     },
+    refetchInterval: 10000,
+    refetchOnWindowFocus: true,
+    keepPreviousData: true,
   });
   const chartData = chartDataResponse?.data?.data || [];
   const distributionData = stats?.data?.distribution || [];
@@ -117,6 +163,9 @@ const FinanceDashboard: React.FC = () => {
     { title: 'Future Fund', value: financeSummary.futureFund },
     { title: 'Founder Profit', value: financeSummary.founderProfit },
   ];
+  const chartDistributionData = distributionData.filter((item: any) => Number(item.amount || 0) > 0 && item.label !== 'Founder Equity Allocated');
+  const chartDistributionTotal = chartDistributionData.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
+  const getDistributionPercent = (amount: number) => (chartDistributionTotal > 0 ? (Number(amount || 0) / chartDistributionTotal) * 100 : 0);
 
   const quickActions = [
     {
@@ -191,8 +240,29 @@ const FinanceDashboard: React.FC = () => {
             <p className="text-sm text-muted-foreground">
               Base currency: {currencyCode}. All figures are computed from payments, expenses, salaries, and finance settings.
             </p>
+            <p className="text-sm text-muted-foreground">
+              Currency filter: {currencyFilter === 'all' ? 'All currencies' : currencyFilter}.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Live dashboard updates {isLiveConnected ? 'enabled' : 'pending'}{isLiveConnected ? ' — changes are pushed automatically' : ''}.
+            </p>
           </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          <label htmlFor="currency-filter" className="text-sm font-medium text-muted-foreground">
+            Currency
+          </label>
+          <select
+            id="currency-filter"
+            value={currencyFilter}
+            onChange={(e) => setCurrencyFilter(e.target.value)}
+            className="rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+          >
+            {['all', 'USD', 'PKR', 'EUR', 'GBP', 'AED'].map((currency) => (
+              <option key={currency} value={currency}>
+                {currency === 'all' ? 'All currencies' : currency}
+              </option>
+            ))}
+          </select>
           {(['month', 'quarter', 'year'] as const).map((range) => (
             <button
               key={range}
@@ -382,12 +452,21 @@ const FinanceDashboard: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {distributionData.length > 0 ? (
+              {chartDistributionData.length > 0 ? (
                 <div className="h-[250px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={distributionData} dataKey="amount" nameKey="label" innerRadius={60} outerRadius={90} paddingAngle={3} label={(entry) => `${entry.percentage}%`} labelLine={false}>
-                        {distributionData.map((_: any, index: number) => (
+                      <Pie
+                        data={chartDistributionData}
+                        dataKey="amount"
+                        nameKey="label"
+                        innerRadius={60}
+                        outerRadius={90}
+                        paddingAngle={3}
+                        label={({ value }: any) => `${getDistributionPercent(value).toFixed(1)}%`}
+                        labelLine={false}
+                      >
+                        {chartDistributionData.map((_: any, index: number) => (
                           <Cell key={index} fill={distributionColors[index % distributionColors.length]} />
                         ))}
                       </Pie>
@@ -398,16 +477,16 @@ const FinanceDashboard: React.FC = () => {
                   </ResponsiveContainer>
                 </div>
               ) : null}
-              {distributionData.map((item: any, index: number) => (
+              {chartDistributionData.map((item: any, index: number) => (
                 <div key={index} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
                   <div>
                     <p className="font-medium text-sm"><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: distributionColors[index % distributionColors.length] }} />{item.label}</p>
-                    <p className="text-xs text-muted-foreground">{item.percentage}%</p>
+                    <p className="text-xs text-muted-foreground">{getDistributionPercent(item.amount).toFixed(1)}%</p>
                   </div>
                   <p className="text-base font-semibold">{formatMoney(item.amount, currencyCode)}</p>
                 </div>
               ))}
-              {!distributionData.length && (
+              {!chartDistributionData.length && (
                 <div className="text-center py-8 text-muted-foreground">
                   No distribution data available
                 </div>

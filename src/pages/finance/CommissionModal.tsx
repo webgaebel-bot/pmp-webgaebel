@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import React, { useEffect, useState } from 'react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,10 +10,12 @@ import { toast } from 'sonner';
 interface CommissionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  editingCommission?: any | null;
 }
 
-export const CommissionModal: React.FC<CommissionModalProps> = ({ open, onOpenChange }) => {
+export const CommissionModal: React.FC<CommissionModalProps> = ({ open, onOpenChange, editingCommission }) => {
   const queryClient = useQueryClient();
+  const isEditing = Boolean(editingCommission?.id);
   const [formData, setFormData] = useState({
     project_id: '',
     title: '',
@@ -23,6 +25,19 @@ export const CommissionModal: React.FC<CommissionModalProps> = ({ open, onOpenCh
     effective_from: '',
     effective_to: '',
   });
+
+  useEffect(() => {
+    if (!open) return;
+    setFormData({
+      project_id: editingCommission?.project_id || '',
+      title: editingCommission?.title || '',
+      rate: editingCommission?.rate !== undefined && editingCommission?.rate !== null ? String(editingCommission.rate) : '',
+      amount: editingCommission?.amount !== undefined && editingCommission?.amount !== null ? String(editingCommission.amount) : '',
+      currency: editingCommission?.currency || 'USD',
+      effective_from: editingCommission?.effective_from || '',
+      effective_to: editingCommission?.effective_to || '',
+    });
+  }, [open, editingCommission]);
 
   const { data: projectsResponse } = useQuery({
     queryKey: ['finance-projects'],
@@ -39,23 +54,19 @@ export const CommissionModal: React.FC<CommissionModalProps> = ({ open, onOpenCh
   const currencies = currenciesResponse?.data || [];
 
   const createMutation = useMutation({
-    mutationFn: async (data: any) => api.post('/finance/commissions', data),
+    mutationFn: async (data: any) => {
+      if (isEditing && editingCommission?.id) return (api as any).updateFinanceCommission(editingCommission.id, data);
+      return api.post('/finance/commissions', data);
+    },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['finance-commissions'] });
       queryClient.invalidateQueries({ queryKey: ['finance-stats'] });
-      toast.success('Project commission added successfully');
+      toast.success(isEditing ? 'Project commission updated successfully' : 'Project commission added successfully');
       onOpenChange(false);
-      setFormData({
-        project_id: '',
-        title: '',
-        rate: '',
-        amount: '',
-        currency: 'USD',
-        effective_from: '',
-        effective_to: '',
-      });
+      setFormData({ project_id: '', title: '', rate: '', amount: '', currency: 'USD', effective_from: '', effective_to: '' });
     },
     onError: () => {
-      toast.error('Failed to add project commission');
+      toast.error(isEditing ? 'Failed to update project commission' : 'Failed to add project commission');
     },
   });
 
@@ -74,7 +85,10 @@ export const CommissionModal: React.FC<CommissionModalProps> = ({ open, onOpenCh
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Outsider Commission</DialogTitle>
+          <DialogTitle>{isEditing ? 'Edit Outsider Commission' : 'Add Outsider Commission'}</DialogTitle>
+          <DialogDescription>
+            {isEditing ? 'Update the commission rule for this project.' : 'Create a commission rule for a project.'}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 mt-4">
           <div>
@@ -158,8 +172,8 @@ export const CommissionModal: React.FC<CommissionModalProps> = ({ open, onOpenCh
               />
             </div>
           </div>
-          <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-            {createMutation.isPending ? 'Saving...' : 'Add Commission'}
+          <Button type="submit" className="w-full" isLoading={createMutation.isPending} loadingText="Saving...">
+            {createMutation.isPending ? 'Saving...' : (isEditing ? 'Update Commission' : 'Add Commission')}
           </Button>
         </form>
       </DialogContent>

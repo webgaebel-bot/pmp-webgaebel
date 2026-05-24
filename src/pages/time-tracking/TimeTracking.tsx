@@ -16,7 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { BarChart3, BriefcaseBusiness, Clock, Download, Eye, FolderKanban, Pause, Play, Search, Square, Target, TimerReset, Trash2, Users } from 'lucide-react';
+import { BarChart3, BriefcaseBusiness, Clock, Download, Eye, FolderKanban, Search, Target, TimerReset, Trash2, Users } from 'lucide-react';
 import { api } from '@/services/api';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -73,6 +73,10 @@ const TimeTracking: React.FC = () => {
     roleName.includes('manager');
   const [trackingMode, setTrackingMode] = useState<TrackingMode>(isSalesUser ? 'sales' : 'project');
   const [selectedUserId, setSelectedUserId] = useState('all');
+  const [dateFilter, setDateFilter] = useState('');
+  const [dayFilter, setDayFilter] = useState('all');
+  const [leadNicheFilter, setLeadNicheFilter] = useState('all');
+  const [leadServiceFilter, setLeadServiceFilter] = useState('all');
   const [formData, setFormData] = useState({
     project_id: '',
     task_id: '',
@@ -116,6 +120,30 @@ const TimeTracking: React.FC = () => {
     queryFn: async () => api.getLeads({ page: 1, pageSize: 1000 }),
   });
   const leads = leadsResponse?.data || [];
+
+  const leadFilterOptions = useMemo(() => {
+    const niches = new Set<string>();
+    const services = new Set<string>();
+
+    (leads || []).forEach((lead: any) => {
+      const niche = String(lead.designation || lead.custom_fields?.Niche || lead.custom_fields?.niche || '').trim();
+      const service = String(lead.services_offered || lead.custom_fields?.Service || lead.custom_fields?.service || '').trim();
+      if (niche) niches.add(niche);
+      if (service) services.add(service);
+    });
+
+    (timeLogs || []).forEach((log: any) => {
+      const niche = String(log.lead_niche || '').trim();
+      const service = String(log.lead_service || '').trim();
+      if (niche) niches.add(niche);
+      if (service) services.add(service);
+    });
+
+    return {
+      niches: Array.from(niches).sort((a, b) => a.localeCompare(b)),
+      services: Array.from(services).sort((a, b) => a.localeCompare(b)),
+    };
+  }, [leads, timeLogs]);
 
   const canCreateTime = permission.can('time.create');
   const canDeleteTime = permission.can('time.delete');
@@ -184,12 +212,6 @@ const TimeTracking: React.FC = () => {
     };
     writeTimerSnapshot(snapshot);
   }, [currentTime, elapsedBeforePause, formData, isPaused, isTracking, sessionStartedAt, timerStartedAtMs, trackingMode, activeSessionId]);
-
-  useEffect(() => {
-    if (isSalesUser && trackingMode === 'project' && !isTracking) {
-      setTrackingMode('sales');
-    }
-  }, [isSalesUser, isTracking, trackingMode]);
 
   const createMutation = useMutation({
     mutationFn: async (payload: any) => api.createTimeLog(payload),
@@ -312,15 +334,23 @@ const TimeTracking: React.FC = () => {
   const filteredLogs = useMemo(() => {
     const term = search.toLowerCase();
     return modeLogs.filter((log: any) =>
-      parseSalesDescription(log.description).workType.toLowerCase().includes(term) ||
-      parseSalesDescription(log.description).source.toLowerCase().includes(term) ||
-      log.user_name?.toLowerCase().includes(term) ||
-      log.project_name?.toLowerCase().includes(term) ||
-      log.task_title?.toLowerCase().includes(term) ||
-      log.lead_name?.toLowerCase().includes(term) ||
-      log.lead_company?.toLowerCase().includes(term)
+      (!dateFilter || String(log.date || '') === dateFilter) &&
+      (!dayFilter || dayFilter === 'all' || (log.date ? format(new Date(log.date), 'EEEE').toLowerCase() === dayFilter : false)) &&
+      (!leadNicheFilter || leadNicheFilter === 'all' || String(log.lead_niche || '').toLowerCase() === leadNicheFilter.toLowerCase()) &&
+      (!leadServiceFilter || leadServiceFilter === 'all' || String(log.lead_service || '').toLowerCase() === leadServiceFilter.toLowerCase()) &&
+      (
+        parseSalesDescription(log.description).workType.toLowerCase().includes(term) ||
+        parseSalesDescription(log.description).source.toLowerCase().includes(term) ||
+        log.user_name?.toLowerCase().includes(term) ||
+        log.project_name?.toLowerCase().includes(term) ||
+        log.task_title?.toLowerCase().includes(term) ||
+        log.lead_name?.toLowerCase().includes(term) ||
+        log.lead_company?.toLowerCase().includes(term) ||
+        log.lead_niche?.toLowerCase().includes(term) ||
+        log.lead_service?.toLowerCase().includes(term)
+      )
     );
-  }, [modeLogs, search]);
+  }, [dateFilter, dayFilter, leadNicheFilter, leadServiceFilter, modeLogs, search]);
 
   const visibleUsers = useMemo(() => {
     const usersById = new Map<string, string>();
@@ -367,6 +397,15 @@ const TimeTracking: React.FC = () => {
     setElapsedBeforePause(0);
     setActiveSessionId(null);
     clearTimerSnapshot();
+  };
+
+  const resetTableFilters = () => {
+    setSearch('');
+    setDateFilter('');
+    setDayFilter('all');
+    setLeadNicheFilter('all');
+    setLeadServiceFilter('all');
+    setSelectedUserId('all');
   };
 
   const handleModeChange = (value: string) => {
@@ -851,30 +890,26 @@ const TimeTracking: React.FC = () => {
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                   {!isTracking ? (
-                    <Button onClick={handleStartTracking} disabled={createMutation.isPending} className="sm:w-auto">
-                      <Play className="mr-2 h-4 w-4" />
+                    <Button onClick={handleStartTracking} isLoading={createMutation.isPending} loadingText="Starting..." className="sm:w-auto">
                       {trackingMode === 'sales' ? 'Start Lead Session' : 'Start Timer'}
                     </Button>
                   ) : (
                     <>
                       {isPaused ? (
-                        <Button onClick={handleResumeTracking} disabled={createMutation.isPending} className="sm:w-auto">
-                          <Play className="mr-2 h-4 w-4" />
+                        <Button onClick={handleResumeTracking} isLoading={createMutation.isPending} loadingText="Resuming..." className="sm:w-auto">
                           Resume
                         </Button>
                       ) : (
-                        <Button variant="outline" onClick={handlePauseTracking} disabled={createMutation.isPending} className="sm:w-auto">
-                          <Pause className="mr-2 h-4 w-4" />
+                        <Button variant="outline" onClick={handlePauseTracking} isLoading={createMutation.isPending} loadingText="Pausing..." className="sm:w-auto">
                           Pause
                         </Button>
                       )}
-                      <Button className="bg-red-500 hover:bg-red-600 sm:w-auto" onClick={handleStopTracking} disabled={createMutation.isPending}>
-                        <Square className="mr-2 h-4 w-4" />
+                      <Button className="bg-red-500 hover:bg-red-600 sm:w-auto" onClick={handleStopTracking} isLoading={createMutation.isPending} loadingText="Saving...">
                         {trackingMode === 'sales' ? 'Stop Session & Save' : 'Stop & Save'}
                       </Button>
                     </>
                   )}
-                  <Button variant="outline" onClick={handleManualSave} disabled={createMutation.isPending} className="sm:w-auto">
+                  <Button variant="outline" onClick={handleManualSave} isLoading={createMutation.isPending} loadingText="Saving..." className="sm:w-auto">
                     Save Manual Entry
                   </Button>
                 </div>
@@ -890,10 +925,73 @@ const TimeTracking: React.FC = () => {
               <CardTitle>{trackingMode === 'sales' ? 'Sales Sessions' : 'Project Time'}</CardTitle>
               <Badge variant="secondary">{filteredLogs.length} entries</Badge>
             </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <div>
+                <Label htmlFor="time-filter-date" className="text-xs text-muted-foreground">Date</Label>
+                <Input
+                  id="time-filter-date"
+                  type="date"
+                  className="mt-2"
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor="time-filter-day" className="text-xs text-muted-foreground">Day</Label>
+                <select
+                  id="time-filter-day"
+                  value={dayFilter}
+                  onChange={(e) => setDayFilter(e.target.value)}
+                  className={selectClassName}
+                >
+                  <option value="all">All days</option>
+                  <option value="monday">Monday</option>
+                  <option value="tuesday">Tuesday</option>
+                  <option value="wednesday">Wednesday</option>
+                  <option value="thursday">Thursday</option>
+                  <option value="friday">Friday</option>
+                  <option value="saturday">Saturday</option>
+                  <option value="sunday">Sunday</option>
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="time-filter-niche" className="text-xs text-muted-foreground">Lead Niche</Label>
+                <select
+                  id="time-filter-niche"
+                  value={leadNicheFilter}
+                  onChange={(e) => setLeadNicheFilter(e.target.value)}
+                  className={selectClassName}
+                >
+                  <option value="all">All niches</option>
+                  {leadFilterOptions.niches.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="time-filter-service" className="text-xs text-muted-foreground">Lead Service</Label>
+                <select
+                  id="time-filter-service"
+                  value={leadServiceFilter}
+                  onChange={(e) => setLeadServiceFilter(e.target.value)}
+                  className={selectClassName}
+                >
+                  <option value="all">All services</option>
+                  {leadFilterOptions.services.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-end">
+                <Button type="button" variant="outline" className="w-full" onClick={resetTableFilters}>
+                  Reset Filters
+                </Button>
+              </div>
+            </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder={trackingMode === 'sales' ? 'Search by user, work type, or source' : 'Search by user, project, or task'}
+                placeholder={trackingMode === 'sales' ? 'Search by user, work type, source, niche, or service' : 'Search by user, project, or task'}
                 className="pl-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -983,7 +1081,14 @@ const TimeTracking: React.FC = () => {
                                 </Button>
                               ) : null}
                               {(canDeleteTime || canManageTime) ? (
-                                <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(log.id, log.project_name || log.user_name)} aria-label="Delete time log">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive"
+                                  onClick={() => handleDelete(log.id, log.project_name || log.user_name)}
+                                  aria-label="Delete time log"
+                                  isLoading={deleteMutation.isPending}
+                                >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               ) : null}

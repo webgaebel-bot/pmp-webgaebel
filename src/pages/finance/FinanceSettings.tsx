@@ -311,7 +311,7 @@ const FinanceSettings: React.FC = () => {
                 <Label>Name</Label>
                 <Input placeholder="e.g. US Dollar" value={newCurrency.name} onChange={(e) => setNewCurrency({...newCurrency, name: e.target.value})} />
               </div>
-              <Button type="button" onClick={handleAddCurrency} disabled={createCurrencyMutation.isPending}>Add Currency</Button>
+              <Button type="button" onClick={handleAddCurrency} isLoading={createCurrencyMutation.isPending} loadingText="Adding Currency...">Add Currency</Button>
             </div>
             <Separator className="my-4" />
             <div className="space-y-2">
@@ -331,7 +331,7 @@ const FinanceSettings: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+        <Button type="submit" className="w-full" isLoading={updateMutation.isPending} loadingText="Saving Settings...">
           {updateMutation.isPending ? 'Saving...' : 'Save Settings'}
         </Button>
       </form>

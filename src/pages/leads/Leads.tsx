@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Filter, LayoutGrid, Plus, TableProperties, BarChart3, Upload, Download, ChevronLeft, ChevronRight, ListChecks, Trash2 } from 'lucide-react';
+import { Filter, LayoutGrid, Plus, TableProperties, BarChart3, Download, ChevronLeft, ChevronRight, ListChecks, Trash2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -298,6 +298,7 @@ const Leads: React.FC = () => {
     [allLeads]
   );
   const allSelected = leads.length > 0 && leads.every((lead) => selectedLeadIds.includes(lead.id));
+  const bulkActionLoading = mutations.bulkDelete.isPending || mutations.bulkAssign.isPending || mutations.bulkUpdateStatus.isPending;
   const canViewAllLeads = hasPermission('leads.view.all');
   const ownerOptions = assignedUsers.length ? assignedUsers : user ? [{ id: String(user.id), name: user.name || user.email || 'Me' }] : [];
   const nicheOptions = useMemo<DynamicOption[]>(() => {
@@ -882,9 +883,13 @@ const Leads: React.FC = () => {
               event.target.value = '';
             }} />
             {canImportLeads ? (
-              <Button variant="secondary" onClick={() => importInputRef.current?.click()} disabled={mutations.importLeads.isPending}>
-                <Upload className="mr-2 h-4 w-4" />
-                {mutations.importLeads.isPending ? 'Importing...' : 'Import CSV'}
+              <Button
+                variant="secondary"
+                onClick={() => importInputRef.current?.click()}
+                isLoading={mutations.importLeads.isPending}
+                loadingText="Importing..."
+              >
+                Import CSV
               </Button>
             ) : null}
             <Button variant="secondary" onClick={handleExportLeads}>
@@ -1041,14 +1046,21 @@ const Leads: React.FC = () => {
                     ))}
                   </select>
                 ) : null}
-                <Button onClick={handleBulkAction}>Apply</Button>
+                <Button onClick={handleBulkAction} isLoading={bulkActionLoading} loadingText="Applying...">Apply</Button>
               </div>
             </div>
           ) : null}
         </CardHeader>
         <CardContent className="space-y-6">
           {showFilters ? (
-            <LeadFilters value={filters} onChange={(next) => { setPage(1); setFilters(next); }} assignedUsers={assignedUsers} availableTags={availableTags} />
+            <LeadFilters
+              value={filters}
+              onChange={(next) => { setPage(1); setFilters(next); }}
+              assignedUsers={assignedUsers}
+              availableTags={availableTags}
+              nicheOptions={customNiches}
+              serviceOptions={customServices}
+            />
           ) : null}
 
           {view === 'table' ? (

@@ -184,6 +184,8 @@ export interface LeadFilters {
   source?: LeadSource[];
   priority?: LeadPriority[];
   assigned_to?: string[];
+  designation?: string[];
+  services_offered?: string[];
   score_min?: number;
   score_max?: number;
   budget_min?: number;

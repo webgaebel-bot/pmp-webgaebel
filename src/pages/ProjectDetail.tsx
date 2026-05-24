@@ -59,6 +59,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermission';
 import { useToast } from '@/hooks/use-toast';
 import api, { IMAGE_BASE_URL } from '@/services/api';
+import PaymentPlanModal from '@/components/finance/PaymentPlanModal';
+import InstallmentsList from '@/components/finance/InstallmentsList';
 import { initSocket, onProjectAssignment } from '@/services/socket';
 import type { Project, ProjectMember, ProjectRole, Task, FileAttachment, User } from '@/types';
 
@@ -104,6 +106,7 @@ const ProjectDetail: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isTaskSaving, setIsTaskSaving] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [isPaymentPlanOpen, setIsPaymentPlanOpen] = useState(false);
 
   const canEdit = permission.canEditProject();
   const canDelete = permission.canDeleteProject();
@@ -408,6 +411,9 @@ const ProjectDetail: React.FC = () => {
     }
   };
 
+  const openPaymentPlanModal = () => setIsPaymentPlanOpen(true);
+  const closePaymentPlanModal = () => setIsPaymentPlanOpen(false);
+
   const handleDeleteFile = async (fileId: string) => {
     try {
       await api.deleteFile(fileId);
@@ -559,7 +565,7 @@ const ProjectDetail: React.FC = () => {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="overview" className="flex items-center gap-2">
             <FolderKanban className="h-4 w-4" />
             Overview
@@ -575,6 +581,10 @@ const ProjectDetail: React.FC = () => {
           <TabsTrigger value="files" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
             Files
+          </TabsTrigger>
+          <TabsTrigger value="finance" className="flex items-center gap-2">
+            <FolderKanban className="h-4 w-4" />
+            Finance
           </TabsTrigger>
         </TabsList>
 
@@ -874,6 +884,32 @@ const ProjectDetail: React.FC = () => {
                 ))}
               </div>
             )}
+          </div>
+        </TabsContent>
+        {/* Finance Tab */}
+        <TabsContent value="finance" className="mt-6">
+          <div className="bg-card rounded-lg border border-border shadow-card p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold">Finance</h3>
+              <div className="flex gap-2">
+                <Button size="sm" className="bg-accent hover:bg-accent/90" onClick={openPaymentPlanModal}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Payment Plan
+                </Button>
+                <Button size="sm" className="bg-primary hover:bg-primary/90" onClick={() => navigate(`/finance/expenses?project_id=${id}&project_name=${encodeURIComponent(project?.name || '')}`)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Project Expenses
+                </Button>
+              </div>
+            </div>
+            {isPaymentPlanOpen ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/40" onClick={closePaymentPlanModal} />
+                <div className="relative z-10">
+                  <PaymentPlanModal projectId={id || ''} onClose={closePaymentPlanModal} onCreated={fetchProjectData} />
+                </div>
+              </div>
+            ) : null}
           </div>
         </TabsContent>
       </Tabs>

@@ -62,6 +62,52 @@ const moduleIcons: Record<string, React.ElementType> = {
   Activity: Shield,
 };
 
+const humanizePermissionKey = (key: string) => {
+  const cleaned = String(key || '')
+    .replace(/\./g, ' ')
+    .replace(/_/g, ' ')
+    .trim();
+
+  if (!cleaned) return 'Permission';
+
+  return cleaned
+    .split(/\s+/)
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (lower === 'own') return 'Own';
+      if (lower === 'all') return 'All';
+      if (lower === 'team') return 'Team';
+      if (lower === 'view') return 'View';
+      if (lower === 'create') return 'Create';
+      if (lower === 'update' || lower === 'edit') return 'Edit';
+      if (lower === 'delete' || lower === 'remove') return 'Delete';
+      if (lower === 'manage') return 'Manage';
+      if (lower === 'approve') return 'Approve';
+      if (lower === 'assign') return 'Assign';
+      if (lower === 'send') return 'Send';
+      if (lower === 'reply') return 'Reply';
+      if (lower === 'import') return 'Import';
+      if (lower === 'export') return 'Export';
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+};
+
+const formatCategoryLabel = (label: string) =>
+  String(label || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+
+const getCategorySummary = (category: string, count: number) => {
+  const normalized = String(category || '').toLowerCase();
+  if (normalized === 'finance') return `Finance access with ${count} detailed actions like payments, expenses, salaries, taxes, commissions, and settings.`;
+  if (normalized === 'projects') return `Project workspace access with ${count} granular actions for view, create, update, delete, and role control.`;
+  if (normalized === 'tasks') return `Task workspace access with ${count} detailed actions for assignment, status, priority, and management.`;
+  if (normalized === 'time') return `Time tracking access with ${count} detailed actions for logging, approving, and managing work sessions.`;
+  if (normalized === 'leads') return `CRM lead access with ${count} detailed actions for viewing, creating, updating, importing, and taxonomy control.`;
+  return `${count} detailed permissions in this section.`;
+};
+
 const Roles: React.FC = () => {
   const { hasPermission } = useAuth();
   const { toast } = useToast();
@@ -502,6 +548,7 @@ const Roles: React.FC = () => {
                   const selectedCount = categoryPermissionIds.filter(id => selectedPermissions.includes(id)).length;
                   const allSelected = selectedCount === categoryPermissionIds.length;
                   const partialSelected = selectedCount > 0 && !allSelected;
+                  const categoryTitle = formatCategoryLabel(category);
                   
                   return (
                     <AccordionItem key={category} value={category} className="border border-border rounded-lg overflow-hidden">
@@ -529,9 +576,9 @@ const Roles: React.FC = () => {
                             )}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <h4 className="font-semibold text-sm sm:text-base text-foreground truncate">{category}</h4>
+                            <h4 className="font-semibold text-sm sm:text-base text-foreground truncate">{categoryTitle}</h4>
                             <p className="text-xs text-muted-foreground">
-                              {selectedCount} of {categoryPermissionIds.length} selected
+                              {getCategorySummary(category, categoryPermissionIds.length)}
                             </p>
                           </div>
                         </div>
@@ -561,11 +608,15 @@ const Roles: React.FC = () => {
                               />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-start gap-2 flex-wrap mb-2">
-                                  <p className="font-semibold text-xs sm:text-sm text-foreground break-words">{permission.name}</p>
-                                  
+                                  <p className="font-semibold text-xs sm:text-sm text-foreground break-words">
+                                    {permission.description || humanizePermissionKey(permission.name)}
+                                  </p>
+                                  <Badge variant="outline" className="text-[10px] sm:text-xs text-muted-foreground">
+                                    {permission.name}
+                                  </Badge>
                                 </div>
                                 <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                                  {permission.description || 'No description available'}
+                                  {permission.description ? permission.description : 'This permission is part of a grouped access rule for the selected module.'}
                                 </p>
                               </div>
                             </div>

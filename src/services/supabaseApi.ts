@@ -118,9 +118,14 @@ const parseSettingBoolean = (settings: Record<string, any>, key: string, fallbac
 };
 
 const getPaymentGrossValue = (payment: any): number =>
-  Number(payment?.received_amount ?? payment?.amount ?? 0);
+  Number(payment?.base_amount ?? payment?.received_amount ?? payment?.amount ?? 0);
 
 const calculatePercentageAmount = (base: number, rate: number): number => Number(base || 0) * (Number(rate || 0) / 100);
+
+const roundTo = (value: number, digits = 2) => {
+  const factor = Math.pow(10, digits);
+  return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor;
+};
 
 const calculateFixedPerItemAmount = (itemsCount: number, value: number): number =>
   Math.max(0, Number(itemsCount || 0)) * Math.max(0, Number(value || 0));
@@ -180,7 +185,7 @@ const summarizeFinanceRows = (
   });
   const outstanding = payments
     .filter((p: any) => p.status !== 'completed')
-    .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    .reduce((sum: number, p: any) => sum + Number(p.base_amount ?? p.received_amount ?? p.amount ?? 0), 0);
 
   return {
     futureFundPercentage,
@@ -333,6 +338,50 @@ export class SupabaseApiService {
 
   private get client() {
     return getSupabaseClient();
+  }
+
+  private async loadFinanceSettingsMap(): Promise<Record<string, string>> {
+    const { data } = await this.client.from('finance_settings').select('setting_key, setting_value');
+    return (ensureArray(data) as any[]).reduce((acc: Record<string, string>, row: any) => {
+      acc[row.setting_key] = row.setting_value;
+      return acc;
+    }, {});
+  }
+
+  private async resolveBaseAmount(amount: number, currency: string, baseCurrency: string): Promise<number> {
+    const normalizedAmount = Number(amount || 0);
+    const normalizedCurrency = String(currency || 'USD').toUpperCase();
+    const normalizedBaseCurrency = String(baseCurrency || 'USD').toUpperCase();
+
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return 0;
+    }
+
+    if (normalizedCurrency === normalizedBaseCurrency) {
+      return roundTo(normalizedAmount, 4);
+    }
+
+    try {
+      const { data: fxTableCheck, error: fxTableError } = await this.client.from('fx_rates').select('rate').limit(1);
+      if (fxTableError) return roundTo(normalizedAmount, 4);
+      if (!fxTableCheck) return roundTo(normalizedAmount, 4);
+
+      const { data: fxData } = await this.client
+        .from('fx_rates')
+        .select('rate')
+        .eq('base_currency', normalizedBaseCurrency)
+        .eq('target_currency', normalizedCurrency)
+        .limit(1)
+        .single();
+
+      if (fxData?.rate) {
+        return roundTo(normalizedAmount / Number(fxData.rate || 1), 4);
+      }
+    } catch (error) {
+      console.warn('Unable to resolve base currency amount, falling back to original amount', error);
+    }
+
+    return roundTo(normalizedAmount, 4);
   }
 
   private unsupported(methodName: string): never {
@@ -1406,11 +1455,11 @@ export class SupabaseApiService {
     }
     if (endpoint.startsWith('/finance/stats')) {
       const url = new URL(`http://local${endpoint}`);
-      return (await this.getFinanceStats(url.searchParams.get('range') || 'month')) as T;
+      return (await this.getFinanceStats(url.searchParams.get('range') || 'month', url.searchParams.get('currency') || undefined)) as T;
     }
     if (endpoint.startsWith('/finance/chart')) {
       const url = new URL(`http://local${endpoint}`);
-      return (await this.getFinanceChart(url.searchParams.get('range') || 'month')) as T;
+      return (await this.getFinanceChart(url.searchParams.get('range') || 'month', url.searchParams.get('currency') || undefined)) as T;
     }
     if (endpoint === '/time-logs') {
       return (await this.getTimeLogs()) as T;
@@ -1479,6 +1528,10 @@ export class SupabaseApiService {
     const founderUpdateMatch = endpoint.match(/^\/finance\/founders\/(.+)$/);
     if (founderUpdateMatch) {
       return (await this.updateFinanceFounder(founderUpdateMatch[1], data)) as T;
+    }
+    const paymentUpdateMatch = endpoint.match(/^\/finance\/payments\/(.+)$/);
+    if (paymentUpdateMatch) {
+      return (await this.updateFinancePayment(paymentUpdateMatch[1], data)) as T;
     }
     const salaryUpdateMatch = endpoint.match(/^\/finance\/salaries\/(.+)$/);
     if (salaryUpdateMatch) {
@@ -2193,6 +2246,294 @@ export class SupabaseApiService {
     return { success: true, data: ensureArray(data) };
   }
 
+  async createCommissionRecord(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to create commission records.');
+
+    const payload = {
+      name: data?.name || null,
+      amount: Number(data?.amount || 0),
+      currency: data?.currency || 'USD',
+      user_id: data?.user_id || null,
+      project_id: data?.project_id || null,
+      payment_id: data?.payment_id || null,
+    };
+
+    const { data: created, error } = await this.client.from('commission_records').insert(payload).select().single();
+    if (error || !created) throw formatError(error, 'Failed to create commission record.');
+    return { success: true, data: created };
+  }
+
+  async getCommissionRecords(projectId?: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.view', 'You do not have permission to view commissions.');
+
+    let query = this.client.from('commission_records').select('*, profiles:user_id(id, name), projects:project_id(id, name)').order('created_at', { ascending: false }).limit(1000);
+    if (projectId) query = query.eq('project_id', projectId);
+
+    const { data, error } = await query;
+    if (error) throw formatError(error, 'Unable to load commission records.');
+    return { success: true, data: ensureArray(data) };
+  }
+
+  async payCommission(commissionId: string, paidAmount?: number) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to pay commissions.');
+
+    const payload: any = {
+      paid: true,
+      paid_at: new Date().toISOString(),
+      paid_by: access.profile.id,
+    };
+    if (paidAmount !== undefined) payload.paid_amount = Number(paidAmount || 0);
+
+    const { data: updated, error } = await this.client.from('commission_records').update(payload).eq('id', commissionId).select().single();
+    if (error || !updated) throw formatError(error, 'Failed to mark commission as paid.');
+    return { success: true, data: updated };
+  }
+
+  async recordFutureFund(source: string, sourceId: string | null, amount: number, month?: string, currency = 'USD') {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.view', 'You do not have permission to record future fund transactions.');
+
+    const payload = {
+      source,
+      source_id: sourceId,
+      amount: Number(amount || 0),
+      currency,
+      month: month || new Date().toISOString().slice(0,10),
+    };
+
+    const { data: created, error } = await this.client.from('future_fund_transactions').insert(payload).select().single();
+    if (error || !created) throw formatError(error, 'Failed to record future fund transaction.');
+    return { success: true, data: created };
+  }
+
+  async getFutureFundSummary(projectId?: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.view', 'You do not have permission to view future fund.');
+
+    let query = this.client.from('future_fund_transactions').select('month, amount, currency').order('month', { ascending: false }).limit(1000);
+    if (projectId) {
+      query = this.client.from('future_fund_transactions').select('month, amount, currency').eq('source', 'installment').in('source_id', this.client.from('payment_installments').select('id').eq('payment_plan->>project_id', projectId as any));
+    }
+
+    const { data, error } = await query;
+    if (error) throw formatError(error, 'Unable to load future fund transactions.');
+
+    // Aggregate totals per currency and month
+    const rows = ensureArray(data) as any[];
+    const totalsByCurrency: Record<string, number> = {};
+    const byMonth: Record<string, Record<string, number>> = {};
+    rows.forEach((r) => {
+      const c = r.currency || 'USD';
+      totalsByCurrency[c] = (totalsByCurrency[c] || 0) + Number(r.amount || 0);
+      const m = (r.month || '').toString();
+      byMonth[m] = byMonth[m] || {};
+      byMonth[m][c] = (byMonth[m][c] || 0) + Number(r.amount || 0);
+    });
+
+    return { success: true, data: { totalsByCurrency, byMonth, rows } };
+  }
+
+  async runSalaryRun(salaryMonth: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to run salaries.');
+
+    // Build salary run snapshot
+    const { data: entries, error: entriesError } = await this.client.from('salary_entries').select('*').eq('auto_calculated', true);
+    if (entriesError) throw formatError(entriesError, 'Unable to load salary entries.');
+
+    const totalSalary = ensureArray(entries).reduce((sum: number, e: any) => sum + Number(e.total_salary || 0), 0);
+    const { data: settingsData } = await this.client.from('finance_settings').select('setting_key, setting_value');
+    const settings = (ensureArray(settingsData) as any[]).reduce((acc: any, s: any) => ({ ...acc, [s.setting_key]: s.setting_value }), {} as Record<string,string>);
+    const futureFundPct = Number(settings.future_fund_percentage || 10);
+    const futureFundAmount = roundTo(totalSalary * (futureFundPct / 100), 4);
+
+    const { data: created, error: createError } = await this.client.from('salary_runs').insert({
+      salary_month: salaryMonth,
+      currency: 'USD',
+      total_salary: totalSalary,
+      future_fund_amount: futureFundAmount,
+      created_by: access.profile.id,
+    }).select().single();
+
+    if (createError || !created) throw formatError(createError, 'Failed to create salary run.');
+
+    // Create salary_payments records (not marking as paid)
+    await Promise.all((ensureArray(entries) as any[]).map(async (e: any) => {
+      await this.client.from('salary_entries').update({ salary_run_id: created.id }).eq('id', e.id);
+    }));
+
+    return { success: true, data: created };
+  }
+
+  async distributeFounderProfits(salaryRunId: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.founders.manage', 'You do not have permission to distribute founder profits.');
+
+    // Load salary run
+    const { data: run, error: runError } = await this.client.from('salary_runs').select('*').eq('id', salaryRunId).single();
+    if (runError || !run) throw formatError(runError, 'Unable to load salary run.');
+
+    // Load founders
+    const { data: founders, error: foundersError } = await this.client.from('founders').select('*');
+    if (foundersError) throw formatError(foundersError, 'Unable to load founders.');
+
+    const totalFounderShare = ensureArray(founders).reduce((sum: number, f: any) => sum + Number(f.equity_percentage || 0), 0) || 100;
+    const amountToDistribute = Number(run.founder_profit || 0);
+
+    const distributions = ensureArray(founders).map((f: any) => ({
+      founder_id: f.id,
+      salary_run_id: run.id,
+      amount: roundTo((Number(f.equity_percentage || 0) / totalFounderShare) * amountToDistribute, 4),
+      currency: 'USD',
+    }));
+
+    const { data: created, error: createError2 } = await this.client.from('founder_profit_distributions').insert(distributions).select();
+    if (createError2) throw formatError(createError2, 'Failed to distribute founder profits.');
+
+    return { success: true, data: ensureArray(created) };
+  }
+
+  async finalizeAndDistributeFounderProfits(salaryRunId: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.founders.manage', 'You do not have permission to finalize founder profits.');
+
+    // Load salary run
+    const { data: run, error: runError } = await this.client.from('salary_runs').select('*').eq('id', salaryRunId).single();
+    if (runError || !run) throw formatError(runError, 'Unable to load salary run.');
+
+    const month = run.salary_month; // date
+    const d = new Date(month);
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    const monthStart = new Date(Date.UTC(y, m, 1)).toISOString().slice(0,10);
+    const monthEnd = new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0,10);
+
+    // Payments in month
+    const { data: payments, error: paymentsErr } = await this.client.from('payments')
+      .select('amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount')
+      .gte('payment_date', monthStart)
+      .lte('payment_date', monthEnd)
+      .eq('status', 'completed');
+    if (paymentsErr) throw formatError(paymentsErr, 'Failed to load payments for month.');
+
+    let totalIncome = 0, totalTax = 0, totalCommission = 0, totalFees = 0, totalProduct = 0;
+    (ensureArray(payments) as any[]).forEach((p: any) => {
+      totalIncome += Number(p.amount || 0);
+      totalTax += Number(p.tax_amount || 0);
+      totalCommission += Number(p.commission_amount || 0);
+      totalFees += Number(p.transaction_fee_amount || 0);
+      totalProduct += Number(p.product_cost_amount || 0);
+    });
+
+    // Expenses in month
+    const { data: expensesRows, error: expensesErr } = await this.client.from('expenses').select('amount').gte('expense_date', monthStart).lte('expense_date', monthEnd);
+    if (expensesErr) throw formatError(expensesErr, 'Failed to load expenses for month.');
+    const totalExpenses = (ensureArray(expensesRows) as any[]).reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
+
+    // Salaries from run
+    const totalSalaries = Number(run.total_salary || 0);
+
+    // Future fund for month
+    const { data: futureRows, error: futureErr } = await this.client.from('future_fund_transactions').select('amount').gte('month', monthStart).lte('month', monthEnd);
+    if (futureErr) throw formatError(futureErr, 'Failed to load future fund transactions.');
+    const totalFuture = (ensureArray(futureRows) as any[]).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+
+    // Net profit = totalIncome - taxes - expenses - salaries - commissions - fees - future fund - product cost
+    const netProfit = totalIncome - totalTax - totalExpenses - totalSalaries - totalCommission - totalFees - totalFuture - totalProduct;
+
+    // Update salary_run with founder_profit
+    const { data: updatedRun, error: updateErr } = await this.client.from('salary_runs').update({ founder_profit: roundTo(netProfit,4) }).eq('id', salaryRunId).select().single();
+    if (updateErr || !updatedRun) throw formatError(updateErr, 'Failed to update salary run with founder profit.');
+
+    // Distribute according to existing logic
+    const dist = await this.distributeFounderProfits(salaryRunId);
+    return { success: true, data: { salary_run: updatedRun, distributions: dist.data } };
+  }
+
+  async paySalaryEntry(salaryEntryId: string, amount: number, currency = 'USD') {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.salaries.manage', 'You do not have permission to pay salaries.');
+
+    // Load salary entry
+    const { data: entry, error: entryErr } = await this.client.from('salary_entries').select('id, user_id, total_salary, monthly_salary, salary_run_id').eq('id', salaryEntryId).single();
+    if (entryErr || !entry) throw formatError(entryErr, 'Unable to load salary entry.');
+
+    const payload = {
+      salary_entry_id: salaryEntryId,
+      user_id: entry.user_id,
+      amount: Number(amount || entry.total_salary || 0),
+      currency,
+      paid_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    const { data: created, error: createErr } = await this.client.from('salary_payments').insert(payload).select().single();
+    if (createErr || !created) throw formatError(createErr, 'Failed to create salary payment.');
+
+    return { success: true, data: created };
+  }
+
+  async getFinanceDashboard(projectId?: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.view', 'You do not have permission to view finance dashboard.');
+
+    // Load settings
+    const { data: settingsData } = await this.client.from('finance_settings').select('setting_key, setting_value');
+    const settings = (ensureArray(settingsData) as any[]).reduce((acc: any, s: any) => ({ ...acc, [s.setting_key]: s.setting_value }), {} as Record<string,string>);
+
+    // Query payments
+    let paymentsQuery = this.client.from('payments').select('amount, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, status, currency, payment_date').order('payment_date', { ascending: false }).limit(1000);
+    if (projectId) paymentsQuery = paymentsQuery.eq('project_id', projectId);
+    const { data: paymentsData, error: paymentsError } = await paymentsQuery;
+    if (paymentsError) throw formatError(paymentsError, 'Unable to load payments for dashboard.');
+
+    // Query expenses
+    let expensesQuery = this.client.from('expenses').select('amount, currency').limit(1000);
+    if (projectId) expensesQuery = expensesQuery.eq('project_id', projectId);
+    const { data: expensesData, error: expensesError } = await expensesQuery;
+    if (expensesError) throw formatError(expensesError, 'Unable to load expenses for dashboard.');
+
+    // Query salary runs
+    const { data: salaryRunsData } = await this.client.from('salary_runs').select('total_salary, future_fund_amount, tax_amount, commission_amount');
+
+    // Query commissions
+    const { data: commissionsData } = await this.client.from('commission_records').select('amount');
+
+    const payments = ensureArray(paymentsData || []).map((p: any) => ({
+      amount: Number(p.base_amount ?? p.received_amount ?? p.amount ?? 0),
+      tax: Number(p.tax_amount || 0),
+      commission: Number(p.commission_amount || 0),
+      transactionFee: Number(p.transaction_fee_amount || 0),
+      productCost: Number(p.product_cost_amount || 0),
+    }));
+
+    const expenses = ensureArray(expensesData || []).map((e: any) => ({ amount: Number(e.amount || 0) }));
+
+    const revenue = payments.reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+    const taxTotal = payments.reduce((s: number, p: any) => s + Number(p.tax || 0), 0);
+    const commissionTotal = payments.reduce((s: number, p: any) => s + Number(p.commission || 0), 0) + ensureArray(commissionsData || []).reduce((s:number,c:any)=>s+Number(c.amount||0),0);
+    const transactionFeeTotal = payments.reduce((s: number, p: any) => s + Number(p.transactionFee || 0), 0);
+    const productCostTotal = payments.reduce((s: number, p: any) => s + Number(p.productCost || 0), 0);
+    const expenseTotal = expenses.reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
+    const salariesTotal = ensureArray(salaryRunsData || []).reduce((s:number, r:any)=>s + Number(r.total_salary || 0), 0);
+
+    const summary = calculateFinanceSummary({
+      revenue,
+      expenses: expenseTotal,
+      salaries: salariesTotal,
+      taxes: taxTotal,
+      commissions: commissionTotal,
+      transactionFees: transactionFeeTotal,
+      productCosts: productCostTotal,
+      futureFundRate: Number(settings.future_fund_percentage || 10),
+    });
+
+    return { success: true, data: { summary, revenue, expenseTotal, salariesTotal } };
+  }
+
   async addProjectMember(projectId: string, userId: string, role: string) {
     const access = await this.getCurrentAccessContext();
     if (!access.canViewAllProjects && !access.permissions.includes('members.create')) {
@@ -2835,11 +3176,28 @@ export class SupabaseApiService {
   }
 
   async deleteUser(id: string) {
-    throw new ApiError(
-      'Deleting auth users directly from the browser is not supported. Remove the user from Supabase Auth dashboard or add an Edge Function for admin deletion.',
-      501,
-      'SUPABASE_AUTH_ADMIN_REQUIRED'
-    );
+    const access = await this.getCurrentAccessContext();
+    const isOwnProfile = String(id) === String(access.profile.id);
+    const canAdminDelete = access.permissions.includes('users.delete') || access.isAdminActor;
+    if (!isOwnProfile && !canAdminDelete) {
+      throw new ApiError('You do not have permission to delete users.', 403, 'USER_DELETE_DENIED');
+    }
+
+    const { data: profile, error: readError } = await this.client
+      .from('profiles')
+      .select('id, name')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (readError) throw formatError(readError, 'Failed to delete user.');
+    if (!profile) throw new ApiError('User not found.', 404, 'USER_NOT_FOUND');
+
+    const { error } = await this.client.from('profiles').delete().eq('id', id);
+    if (error) throw formatError(error, 'Failed to delete user.');
+
+    await this.logActivity('DELETE', 'user', id, String(profile.name || id));
+
+    return { success: true, message: 'User deleted successfully.' };
   }
 
   async getRoles() {
@@ -3631,6 +3989,12 @@ export class SupabaseApiService {
       if (filters?.priority?.length) query = query.in('priority', filters.priority);
       if (filters?.source?.length) query = query.in('source', filters.source);
       if (filters?.assigned_to?.length) query = query.in('assigned_to', filters.assigned_to);
+      if (filters?.designation?.length) query = query.in('designation', filters.designation);
+      if (filters?.services_offered?.length) query = query.or(
+        filters.services_offered
+          .map((service) => `services_offered.ilike.%${service.replace(/[%(),]/g, '')}%`)
+          .join(',')
+      );
       if (filters?.search) {
         const term = filters.search.trim().replace(/[%(),]/g, '');
         if (includeExtendedSearch) {
@@ -4383,7 +4747,7 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     let query = this.client
       .from('expenses')
-      .select('id, category, description, amount, currency, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at')
+      .select('id, category, description, amount, currency, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at, project:projects(id,name)')
       .order('expense_date', { ascending: false })
       .limit(1000);
 
@@ -4451,7 +4815,7 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     let query = this.client
       .from('payments')
-      .select('id, client_name, amount, currency, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at')
+      .select('id, client_name, amount, currency, base_currency, base_amount, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name)')
       .order('payment_date', { ascending: false })
       .limit(1000);
 
@@ -4469,10 +4833,17 @@ export class SupabaseApiService {
     requirePermission(access, 'finance.payments.manage', 'You do not have permission to create payments.');
     const paymentMethod = normalizeFinancePaymentMethod(data?.payment_method);
     const paymentMethodOther = paymentMethod === 'other' ? String(data?.payment_method_other || '').trim() || null : null;
+    const settings = await this.loadFinanceSettingsMap();
+    const baseCurrency = String(settings.base_currency || 'USD').toUpperCase();
+    const paymentCurrency = String(data?.currency || baseCurrency).toUpperCase();
+    const grossAmount = Number(data?.received_amount || data?.amount || 0);
+    const baseAmount = await this.resolveBaseAmount(grossAmount, paymentCurrency, baseCurrency);
     const paymentPayload = {
       client_name: data?.client_name,
       amount: Number(data?.amount || 0),
-      currency: data?.currency || 'USD',
+      currency: paymentCurrency,
+      base_currency: baseCurrency,
+      base_amount: baseAmount,
       payment_date: data?.payment_date,
       payment_method: paymentMethod,
       payment_method_other: paymentMethodOther,
@@ -4495,14 +4866,39 @@ export class SupabaseApiService {
       return { success: true, data: created };
     }
 
-    const { data: fallbackCreated, error: fallbackError } = await this.client
-      .from('payments')
-      .insert({
-        ...paymentPayload,
-        created_by: access.profile.id,
-      })
-      .select()
-      .single();
+    const legacyPaymentPayload = {
+      client_name: paymentPayload.client_name,
+      amount: paymentPayload.amount,
+      currency: paymentPayload.currency,
+      payment_date: paymentPayload.payment_date,
+      payment_method: paymentPayload.payment_method,
+      payment_method_other: paymentPayload.payment_method_other,
+      status: paymentPayload.status,
+      description: paymentPayload.description,
+      project_id: paymentPayload.project_id,
+      received_amount: paymentPayload.received_amount,
+      tax_amount: paymentPayload.tax_amount,
+      commission_amount: paymentPayload.commission_amount,
+      invoice_id: paymentPayload.invoice_id,
+      created_by: access.profile.id,
+    };
+
+    const attemptInsert = async (payload: Record<string, any>) =>
+      this.client.from('payments').insert(payload).select('*, project:projects(id, name)').single();
+
+    let fallbackInserted = await attemptInsert({
+      ...legacyPaymentPayload,
+      base_currency: paymentPayload.base_currency,
+      base_amount: paymentPayload.base_amount,
+      transaction_fee_amount: paymentPayload.transaction_fee_amount,
+      product_cost_amount: paymentPayload.product_cost_amount,
+    });
+
+    if (fallbackInserted.error && this.isMissingColumnError(fallbackInserted.error)) {
+      fallbackInserted = await attemptInsert(legacyPaymentPayload);
+    }
+
+    const { data: fallbackCreated, error: fallbackError } = fallbackInserted;
 
     if (fallbackError || !fallbackCreated) {
       throw formatError(error || fallbackError, 'Failed to create payment.');
@@ -4511,12 +4907,241 @@ export class SupabaseApiService {
     return { success: true, data: fallbackCreated };
   }
 
+  async updateFinancePayment(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to update payments.');
+    const paymentMethod = normalizeFinancePaymentMethod(data?.payment_method);
+    const paymentMethodOther = paymentMethod === 'other' ? String(data?.payment_method_other || '').trim() || null : null;
+    const settings = await this.loadFinanceSettingsMap();
+    const baseCurrency = String(settings.base_currency || 'USD').toUpperCase();
+    const paymentCurrency = String(data?.currency || baseCurrency).toUpperCase();
+    const grossAmount = Number(data?.received_amount || data?.amount || 0);
+    const baseAmount = await this.resolveBaseAmount(grossAmount, paymentCurrency, baseCurrency);
+
+    const payload = {
+      client_name: data?.client_name,
+      amount: Number(data?.amount || 0),
+      currency: paymentCurrency,
+      base_currency: baseCurrency,
+      base_amount: baseAmount,
+      payment_date: data?.payment_date,
+      payment_method: paymentMethod,
+      payment_method_other: paymentMethodOther,
+      status: data?.status || 'completed',
+      description: data?.description || null,
+      project_id: data?.project_id || null,
+      received_amount: Number(data?.received_amount || data?.amount || 0),
+      tax_amount: Number(data?.tax_amount || 0),
+      commission_amount: Number(data?.commission_amount || 0),
+      transaction_fee_amount: Number(data?.transaction_fee_amount || 0),
+      product_cost_amount: Number(data?.product_cost_amount || 0),
+      invoice_id: data?.invoice_id || null,
+    };
+
+    const { data: updated, error } = await this.client.rpc('update_finance_payment_secure_v2', {
+      p_payment_id: id,
+      p_payment: payload,
+    });
+
+    if (!error && updated) {
+      return { success: true, data: updated };
+    }
+
+    const legacyPaymentPayload = {
+      client_name: payload.client_name,
+      amount: payload.amount,
+      currency: payload.currency,
+      payment_date: payload.payment_date,
+      payment_method: payload.payment_method,
+      payment_method_other: payload.payment_method_other,
+      status: payload.status,
+      description: payload.description,
+      project_id: payload.project_id,
+      received_amount: payload.received_amount,
+      tax_amount: payload.tax_amount,
+      commission_amount: payload.commission_amount,
+      invoice_id: payload.invoice_id,
+      updated_at: new Date().toISOString(),
+    };
+
+    const attemptUpdate = async (updatePayload: Record<string, any>) =>
+      this.client.from('payments').update(updatePayload).eq('id', id).select('*, project:projects(id, name)').single();
+
+    let fallbackUpdatedAttempt = await attemptUpdate({
+      ...legacyPaymentPayload,
+      base_currency: payload.base_currency,
+      base_amount: payload.base_amount,
+      transaction_fee_amount: payload.transaction_fee_amount,
+      product_cost_amount: payload.product_cost_amount,
+    });
+
+    if (fallbackUpdatedAttempt.error && this.isMissingColumnError(fallbackUpdatedAttempt.error)) {
+      fallbackUpdatedAttempt = await attemptUpdate(legacyPaymentPayload);
+    }
+
+    const { data: fallbackUpdated, error: fallbackError } = fallbackUpdatedAttempt;
+
+    if (fallbackError || !fallbackUpdated) {
+      throw formatError(error || fallbackError, 'Failed to update payment.');
+    }
+
+    return { success: true, data: fallbackUpdated };
+  }
+
   async deleteFinancePayment(id: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.manage', 'You do not have permission to delete payments.');
     const { error } = await this.client.rpc('delete_finance_payment_secure_v2', { p_payment_id: id });
     if (error) throw formatError(error, 'Failed to delete payment.');
     return { success: true };
+  }
+
+  async generatePaymentPlan(projectId: string, name: string | null, schedule: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to create payment plans.');
+
+    const { data, error } = await this.client.rpc('generate_payment_plan', {
+      p_project_id: projectId,
+      p_name: name,
+      p_schedule: schedule,
+    });
+
+    if (error) throw formatError(error, 'Failed to generate payment plan.');
+    return { success: true, data: ensureArray(data) };
+  }
+
+  async getPaymentPlansForProject(projectId: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.view', 'You do not have permission to view payment plans.');
+
+    const { data, error } = await this.client
+      .from('payment_plans')
+      .select('*, payment_installments(*)')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw formatError(error, 'Unable to load payment plans.');
+    return { success: true, data: ensureArray(data) };
+  }
+
+  async receiveInstallmentPayment(installmentId: string, payload: { received_amount: number; currency?: string; payment_method?: string; payment_method_other?: string; commission_override?: number; tax_override?: number; transaction_fee_override?: number; product_cost_override?: number; }) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to receive payments.');
+
+    // Load installment and plan
+    const { data: instData, error: instError } = await this.client
+      .from('payment_installments')
+      .select('*, payment_plans(project_id, total_amount)')
+      .eq('id', installmentId)
+      .single();
+    if (instError || !instData) throw formatError(instError, 'Unable to load installment.');
+
+    const installment = instData as any;
+    const received = Number(payload.received_amount || 0);
+
+    // Load finance settings
+    const { data: settingsData } = await this.client.from('finance_settings').select('setting_key, setting_value');
+    const settings = (ensureArray(settingsData) as any[]).reduce((acc: any, s: any) => ({ ...acc, [s.setting_key]: s.setting_value }), {} as Record<string,string>);
+
+    const defaultTax = Number(payload.tax_override ?? settings.tax_rate ?? 0);
+    const defaultCommissionPct = Number(settings.commission_percentage ?? 0);
+    const futureFundPct = Number(settings.future_fund_percentage ?? 0);
+    const transactionFeeType = String(settings.transaction_fee_type || 'percentage');
+    const transactionFeeValue = Number(payload.transaction_fee_override ?? settings.transaction_fee_value ?? 0);
+    const productCostEnabled = String(settings.product_cost_enabled || 'false') === 'true';
+    const productCostValue = Number(payload.product_cost_override ?? settings.product_cost_value ?? 0);
+
+    // Calculate deductions
+    const taxAmount = Number(payload.tax_override ?? (received * (defaultTax / 100)) ?? 0);
+    const commissionAmount = Number(payload.commission_override ?? (received * (defaultCommissionPct / 100)) ?? 0);
+    const productCostAmount = productCostEnabled ? Number(productCostValue > 0 && transactionFeeType === 'percentage' ? (received * (productCostValue / 100)) : productCostValue) : 0;
+    let transactionFeeAmount = 0;
+    if (transactionFeeType === 'percentage') transactionFeeAmount = received * (transactionFeeValue / 100);
+    else transactionFeeAmount = transactionFeeValue;
+
+    const netIncome = received - taxAmount - commissionAmount - transactionFeeAmount - productCostAmount;
+    const futureFundAmount = netIncome * (futureFundPct / 100);
+
+    // Update installment
+    const { data: updatedInst, error: updateError } = await this.client
+      .from('payment_installments')
+      .update({
+        received_amount: received,
+        received_date: new Date().toISOString(),
+        tax_amount: roundTo(taxAmount,4),
+        commission_amount: roundTo(commissionAmount,4),
+        transaction_fee_amount: roundTo(transactionFeeAmount,4),
+        product_cost_amount: roundTo(productCostAmount,4),
+        net_income: roundTo(netIncome,4),
+        status: 'paid',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', installmentId)
+      .select()
+      .single();
+
+    if (updateError || !updatedInst) throw formatError(updateError, 'Failed to update installment.');
+
+    // Create payment record referencing the project
+    // Compute base currency conversion if needed
+    let baseCurrency = (settings.base_currency as string) || 'USD';
+    let baseAmount = Number(received || 0);
+    try {
+      const installmentCurrency = installment.currency || (installment.payment_plan?.currency) || 'USD';
+      if (String(installmentCurrency) !== String(baseCurrency)) {
+        const { data: fxData } = await this.client.from('fx_rates').select('rate, base_currency, target_currency').eq('base_currency', baseCurrency).eq('target_currency', installmentCurrency).limit(1).single();
+        if (fxData && fxData.rate) {
+          // fx.rate is base->target, so to convert target->base: base = target / rate
+          baseAmount = Number(received) / Number(fxData.rate || 1);
+        }
+      }
+    } catch (e) {
+      baseAmount = Number(received || 0);
+    }
+
+    const paymentPayload = {
+      client_name: null,
+      amount: installment.due_amount || received,
+      currency: payload.currency || installment.currency || 'USD',
+      base_currency: baseCurrency,
+      base_amount: roundTo(baseAmount,4),
+      payment_date: new Date().toISOString().split('T')[0],
+      payment_method: normalizeFinancePaymentMethod(payload.payment_method),
+      payment_method_other: payload.payment_method_other || null,
+      status: 'completed',
+      description: `Installment payment for plan ${installment.payment_plan_id}`,
+      project_id: installment.payment_plan?.project_id || null,
+      received_amount: received,
+      tax_amount: roundTo(taxAmount,4),
+      commission_amount: roundTo(commissionAmount,4),
+      transaction_fee_amount: roundTo(transactionFeeAmount,4),
+      product_cost_amount: roundTo(productCostAmount,4),
+      invoice_id: null,
+      created_by: access.profile.id,
+    };
+
+    const { data: createdPayment, error: createPaymentError } = await this.client.from('payments').insert(paymentPayload).select().single();
+    if (createPaymentError || !createdPayment) throw formatError(createPaymentError, 'Failed to create payment record.');
+
+    // Record future fund transaction if applicable
+    try {
+      if (futureFundAmount > 0) {
+        const month = (new Date(paymentPayload.payment_date)).toISOString().slice(0,10);
+        const ffPayload = {
+          source: 'installment',
+          source_id: installmentId,
+          amount: roundTo(futureFundAmount,4),
+          currency: paymentPayload.currency || 'USD',
+          month: month,
+        };
+        await this.client.from('future_fund_transactions').insert(ffPayload);
+      }
+    } catch (e) {
+      // Non-fatal: log and continue
+      console.error('Failed to record future fund transaction', e);
+    }
+
+    return { success: true, data: { installment: updatedInst, payment: createdPayment, future_fund_amount: roundTo(futureFundAmount,4) } };
   }
 
   async getFinanceFounders() {
@@ -4618,7 +5243,7 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     let query = this.client
       .from('salary_runs')
-      .select('id, salary_month, currency, created_at, created_by, salary_entries(id, user_id, months_count, monthly_salary, total_salary, bonus_amount, notes, profiles:user_id(id, name))')
+      .select('id, salary_month, currency, created_at, created_by, salary_entries(id, user_id, months_count, monthly_salary, total_salary, notes, profiles:user_id(id, name))')
       .order('salary_month', { ascending: false });
     if (!access.canViewAllFinance) {
       query = query.eq('created_by', currentUserId);
@@ -4648,8 +5273,8 @@ export class SupabaseApiService {
           total_salary: entry.total_salary,
           currency: run.currency,
           salary_date: run.salary_month,
-          bonus: details.bonus || entry.bonus_amount || 0,
-          bonus_amount: entry.bonus_amount || 0,
+          bonus: details.bonus || 0,
+          bonus_amount: details.bonus || 0,
           deductions: details.deductions || 0,
           payment_method: details.payment_method || 'bank_transfer',
           payment_method_other: details.payment_method_other || '',
@@ -4715,14 +5340,32 @@ export class SupabaseApiService {
         months_count: monthsCount,
         monthly_salary: baseSalary,
         total_salary: totalSalary,
-        bonus_amount: bonus,
         notes: details
       })
       .select()
       .single();
 
-    if (entryError) throw formatError(entryError, 'Failed to create salary entry.');
-    return { success: true, data: entry };
+    if (!entryError && entry) return { success: true, data: entry };
+
+    if (this.isMissingColumnError(entryError)) {
+      const { data: fallbackEntry, error: fallbackError } = await this.client
+        .from('salary_entries')
+        .insert({
+          salary_run_id: runId,
+          user_id: data.employee_id,
+          months_count: monthsCount,
+          monthly_salary: baseSalary,
+          total_salary: totalSalary,
+          notes: details,
+        })
+        .select()
+        .single();
+
+      if (!fallbackError && fallbackEntry) return { success: true, data: fallbackEntry };
+      throw formatError(fallbackError || entryError, 'Failed to create salary entry.');
+    }
+
+    throw formatError(entryError, 'Failed to create salary entry.');
   }
 
   async updateFinanceSalary(id: string, data: any) {
@@ -4750,15 +5393,33 @@ export class SupabaseApiService {
         months_count: monthsCount,
         monthly_salary: baseSalary,
         total_salary: totalSalary,
-        bonus_amount: bonus,
         notes: details
       })
       .eq('id', id)
       .select()
       .single();
 
-    if (error) throw formatError(error, 'Failed to update salary entry.');
-    return { success: true, data: entry };
+    if (!error && entry) return { success: true, data: entry };
+
+    if (this.isMissingColumnError(error)) {
+      const { data: fallbackEntry, error: fallbackError } = await this.client
+        .from('salary_entries')
+        .update({
+          user_id: data.employee_id,
+          months_count: monthsCount,
+          monthly_salary: baseSalary,
+          total_salary: totalSalary,
+          notes: details,
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (!fallbackError && fallbackEntry) return { success: true, data: fallbackEntry };
+      throw formatError(fallbackError || error, 'Failed to update salary entry.');
+    }
+
+    throw formatError(error, 'Failed to update salary entry.');
   }
 
   async deleteFinanceSalary(id: string) {
@@ -4833,6 +5494,28 @@ export class SupabaseApiService {
     }
 
     throw formatError(error, 'Failed to add project tax.');
+  }
+
+  async updateFinanceTax(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.taxes.manage', 'You do not have permission to update taxes.');
+    const currentUserId = await this.getCurrentUserId();
+    const rate = toNullableNumber(data.rate);
+    const amount = toNullableNumber(data.amount);
+    const payload = {
+      project_id: data.project_id,
+      title: data.title,
+      rate: rate !== null && rate > 0 ? rate : null,
+      amount: amount !== null && amount > 0 ? amount : null,
+      currency: data.currency || 'USD',
+      effective_from: data.effective_from || null,
+      effective_to: data.effective_to || null,
+      created_by: currentUserId,
+    };
+
+    const { data: updated, error } = await this.client.from('project_taxes').update(payload).eq('id', id).select().single();
+    if (error || !updated) throw formatError(error, 'Failed to update project tax.');
+    return { success: true, data: updated };
   }
 
   async deleteFinanceTax(id: string) {
@@ -4930,6 +5613,28 @@ export class SupabaseApiService {
     throw formatError(error, 'Failed to add project commission.');
   }
 
+  async updateFinanceCommission(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.commissions.manage', 'You do not have permission to update commissions.');
+    const currentUserId = await this.getCurrentUserId();
+    const rate = toNullableNumber(data.rate);
+    const amount = toNullableNumber(data.amount);
+    const payload = {
+      project_id: data.project_id,
+      title: data.title,
+      rate: rate !== null && rate > 0 ? rate : null,
+      amount: amount !== null && amount > 0 ? amount : null,
+      currency: data.currency || 'USD',
+      effective_from: data.effective_from || null,
+      effective_to: data.effective_to || null,
+      created_by: currentUserId,
+    };
+
+    const { data: updated, error } = await this.client.from('project_commissions').update(payload).eq('id', id).select().single();
+    if (error || !updated) throw formatError(error, 'Failed to update project commission.');
+    return { success: true, data: updated };
+  }
+
   async deleteFinanceCommission(id: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.commissions.manage', 'You do not have permission to delete commissions.');
@@ -4951,38 +5656,42 @@ export class SupabaseApiService {
     return { success: true };
   }
 
-  async getFinanceStats(range: string) {
+  async getFinanceStats(range: string, currency?: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.view', 'You do not have permission to view finance stats.');
     const bounds = getRangeBounds(range);
     const currentUserId = String(access.profile.id);
     const restrictToOwn = !access.canViewAllFinance;
     const canViewSalaryData = access.canViewAllFinance || access.permissions.includes('finance.salaries.view');
+    const selectedCurrency = String(currency || '').trim().toUpperCase();
+    const currencyFilter = selectedCurrency && selectedCurrency !== 'ALL' ? selectedCurrency : '';
+    const applyCurrency = (query: any) => (currencyFilter ? query.eq('currency', currencyFilter) : query);
+
     const foundersEquityPromise = access.permissions.includes('finance.founders.view')
       ? this.getFoundersEquityTotal()
       : Promise.resolve({ success: true, data: { data: { total: 0 } } });
     const salaryQuery = restrictToOwn
-      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).eq('created_by', currentUserId).limit(1000)
-      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).limit(1000);
+      ? applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).eq('created_by', currentUserId).limit(1000))
+      : applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).limit(1000));
     const allTimeSalaryQuery = restrictToOwn
-      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').eq('created_by', currentUserId).limit(1000)
-      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').limit(1000);
+      ? applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').eq('created_by', currentUserId).limit(1000))
+      : applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').limit(1000));
     const [paymentsRes, expensesRes, salaryRunsRes, foundersEquityRes, settingsRes, allTimePaymentsRes, allTimeExpensesRes, allTimeSalaryRunsRes] = await Promise.all([
       restrictToOwn
-        ? this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
+        ? applyCurrency(this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000))
+        : applyCurrency(this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000)),
       restrictToOwn
-        ? this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
+        ? applyCurrency(this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000))
+        : applyCurrency(this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000)),
       canViewSalaryData ? salaryQuery : Promise.resolve({ data: [], error: null as any }),
       foundersEquityPromise,
       this.getFinanceSettings(),
       restrictToOwn
-        ? this.client.from('payments').select('amount, payment_date, status, created_by').eq('created_by', currentUserId).limit(1000)
-        : this.client.from('payments').select('amount, payment_date, status').limit(1000),
+        ? applyCurrency(this.client.from('payments').select('amount, payment_date, status, created_by').eq('created_by', currentUserId).limit(1000))
+        : applyCurrency(this.client.from('payments').select('amount, payment_date, status').limit(1000)),
       restrictToOwn
-        ? this.client.from('expenses').select('amount, expense_date, created_by').eq('created_by', currentUserId).limit(1000)
-        : this.client.from('expenses').select('amount, expense_date').limit(1000),
+        ? applyCurrency(this.client.from('expenses').select('amount, expense_date, created_by').eq('created_by', currentUserId).limit(1000))
+        : applyCurrency(this.client.from('expenses').select('amount, expense_date').limit(1000)),
       canViewSalaryData ? allTimeSalaryQuery : Promise.resolve({ data: [], error: null as any }),
     ]);
 
@@ -5042,7 +5751,7 @@ export class SupabaseApiService {
           liabilities: effectiveSummary.summary.liabilities,
           outstanding: effectiveSummary.outstanding,
           distribution: effectiveSummary.distribution,
-          currency: settings.base_currency || settings.currency || 'USD',
+          currency: currencyFilter || settings.base_currency || settings.currency || 'USD',
           futureFundRate: effectiveSummary.futureFundPercentage,
           rangeUsed: hasSelectedData ? range : 'all',
         },
@@ -5051,19 +5760,22 @@ export class SupabaseApiService {
     };
   }
 
-  async getFinanceChart(_range: string) {
+  async getFinanceChart(_range: string, currency?: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.view', 'You do not have permission to view finance charts.');
     const bounds = getRangeBounds(_range);
     const currentUserId = String(access.profile.id);
     const restrictToOwn = !access.canViewAllFinance;
+    const selectedCurrency = String(currency || '').trim().toUpperCase();
+    const currencyFilter = selectedCurrency && selectedCurrency !== 'ALL' ? selectedCurrency : '';
+    const applyCurrency = (query: any) => (currencyFilter ? query.eq('currency', currencyFilter) : query);
     const [paymentsRes, expensesRes] = await Promise.all([
       restrictToOwn
-        ? this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
+        ? applyCurrency(this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000))
+        : applyCurrency(this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000)),
       restrictToOwn
-        ? this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
+        ? applyCurrency(this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000))
+        : applyCurrency(this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000)),
     ]);
 
     if (paymentsRes.error) throw formatError(paymentsRes.error, 'Unable to load payment chart.');
@@ -5073,7 +5785,7 @@ export class SupabaseApiService {
     ensureArray(paymentsRes.data).forEach((payment: any) => {
       const key = monthKey(payment.payment_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
-      if (payment.status === 'completed') buckets[key].revenue += Number(payment.received_amount || payment.amount || 0);
+      if (payment.status === 'completed') buckets[key].revenue += Number(payment.base_amount ?? payment.received_amount ?? payment.amount ?? 0);
     });
     ensureArray(expensesRes.data).forEach((expense: any) => {
       const key = monthKey(expense.expense_date);
@@ -5099,6 +5811,7 @@ export class SupabaseApiService {
           user_id,
           project_id,
           task_id,
+          lead_id,
           log_date,
           hours,
           duration_minutes,
@@ -5117,13 +5830,15 @@ export class SupabaseApiService {
           session_id,
           user:profiles!time_logs_user_id_fkey(id, name),
           project:projects(id, name),
-          task:tasks(id, title)
+          task:tasks(id, title),
+          lead:leads(id, name, designation, services_offered, company)
         `
         : `
           id,
           user_id,
           project_id,
           task_id,
+          lead_id,
           log_date,
           hours,
           duration_minutes,
@@ -5179,6 +5894,7 @@ export class SupabaseApiService {
         user_id: log.user_id ? String(log.user_id) : '',
         project_id: log.project_id ? String(log.project_id) : '',
         task_id: log.task_id ? String(log.task_id) : '',
+        lead_id: log.lead_id ? String(log.lead_id) : '',
         date: log.log_date,
         hours: log.hours,
         duration_minutes: Number(log.duration_minutes || 0),
@@ -5198,6 +5914,10 @@ export class SupabaseApiService {
         user_name: log.user?.name || '',
         project_name: log.project?.name || '',
         task_title: log.task?.title || '',
+        lead_name: log.lead?.name || '',
+        lead_company: log.lead?.company || '',
+        lead_niche: log.lead?.designation || '',
+        lead_service: log.lead?.services_offered || '',
       })),
     };
   }

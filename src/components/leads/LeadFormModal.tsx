@@ -463,8 +463,8 @@ export function LeadFormModal({
             </div>
           </section>
 
-          <Button className="w-full" type="submit" disabled={loading}>
-            {loading ? 'Saving...' : lead ? 'Update Lead' : 'Create Lead'}
+          <Button className="w-full" type="submit" isLoading={loading} loadingText="Saving...">
+            {lead ? 'Update Lead' : 'Create Lead'}
           </Button>
         </form>
       </DialogContent>

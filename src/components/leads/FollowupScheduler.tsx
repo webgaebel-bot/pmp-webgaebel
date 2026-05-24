@@ -55,8 +55,8 @@ export function FollowupScheduler({ followups, onSchedule, onComplete, loading }
           <Label>Notes</Label>
           <Textarea rows={3} value={form.notes ?? ''} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value || undefined }))} />
         </div>
-        <Button type="submit" disabled={loading}>
-          {loading ? 'Scheduling...' : '+ Schedule Follow-up'}
+        <Button type="submit" isLoading={loading} loadingText="Scheduling...">
+          + Schedule Follow-up
         </Button>
       </form>
       ) : null}

@@ -18,6 +18,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +40,7 @@ const Clients: React.FC = () => {
     address: '',
     status: 'active',
   });
+  const [editingId, setEditingId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -49,11 +51,28 @@ const Clients: React.FC = () => {
 
   const handleDialogChange = (open: boolean) => {
     setIsDialogOpen(open);
-    if (!open && searchParams.get('create') === '1') {
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('create');
-      setSearchParams(nextParams, { replace: true });
+    if (!open) {
+      setEditingId(null);
+      setFormData({ name: '', email: '', phone: '', company: '', address: '', status: 'active' });
+      if (searchParams.get('create') === '1') {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('create');
+        setSearchParams(nextParams, { replace: true });
+      }
     }
+  };
+
+  const handleEdit = (client: any) => {
+    setEditingId(client.id);
+    setFormData({
+      name: client.name || '',
+      email: client.email || '',
+      phone: client.phone || '',
+      company: client.company || '',
+      address: client.address || '',
+      status: client.status || 'active',
+    });
+    setIsDialogOpen(true);
   };
 
   const { data: clientsResponse, isLoading } = useQuery({
@@ -67,15 +86,19 @@ const Clients: React.FC = () => {
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
+      if (editingId) {
+        return api.put(`/finance/clients/${editingId}`, data);
+      }
       return api.post('/finance/clients', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       setIsDialogOpen(false);
-      toast.success('Client added successfully');
+      toast.success(editingId ? 'Client updated successfully' : 'Client added successfully');
+      setEditingId(null);
       setFormData({ name: '', email: '', phone: '', company: '', address: '', status: 'active' });
     },
-    onError: () => toast.error('Failed to add client'),
+    onError: () => toast.error(editingId ? 'Failed to update client' : 'Failed to add client'),
   });
 
   const deleteMutation = useMutation({
@@ -133,11 +156,14 @@ const Clients: React.FC = () => {
               Add Client
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[500px]">
-            <DialogHeader>
-              <DialogTitle>Add New Client</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+              <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                  <DialogTitle>{editingId ? 'Edit Client' : 'Add New Client'}</DialogTitle>
+                  <DialogDescription>
+                    {editingId ? 'Update the client details and save the changes.' : 'Create a new client profile for finance records.'}
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleSubmit} className="space-y-4 mt-4">
               <div>
                 <Label htmlFor="name">Name *</Label>
                 <Input id="name" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} required />
@@ -158,8 +184,8 @@ const Clients: React.FC = () => {
                 <Label htmlFor="address">Address</Label>
                 <Input id="address" value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} />
               </div>
-              <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Adding...' : 'Add Client'}
+              <Button type="submit" className="w-full" isLoading={createMutation.isPending} loadingText={editingId ? 'Updating...' : 'Adding...'}>
+                {createMutation.isPending ? (editingId ? 'Updating...' : 'Adding...') : (editingId ? 'Update Client' : 'Add Client')}
               </Button>
             </form>
           </DialogContent>
@@ -207,11 +233,11 @@ const Clients: React.FC = () => {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                         <div className="flex gap-2">
-                           <Button variant="ghost" size="icon"><Edit className="h-4 w-4" /></Button>
-                           <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(client.id, client.name)}>
-                             <Trash2 className="h-4 w-4" />
-                           </Button>
+                          <div className="flex gap-2">
+                            <Button variant="ghost" size="icon" onClick={() => handleEdit(client)}><Edit className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(client.id, client.name)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                          </div>
                        </TableCell>
                     </TableRow>

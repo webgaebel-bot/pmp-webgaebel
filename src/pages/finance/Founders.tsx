@@ -173,7 +173,7 @@ const Founders: React.FC = () => {
                 <Label htmlFor="equity">Equity Percentage *</Label>
                 <Input id="equity" type="number" step="0.01" max="100" value={formData.equity_percentage} onChange={(e) => setFormData({...formData, equity_percentage: e.target.value})} required />
               </div>
-              <Button type="submit" className="w-full" disabled={createMutation.isPending || updateMutation.isPending}>
+              <Button type="submit" className="w-full" isLoading={createMutation.isPending || updateMutation.isPending} loadingText="Saving...">
                 {createMutation.isPending || updateMutation.isPending ? 'Saving...' : editingFounder ? 'Update Founder' : 'Add Founder'}
               </Button>
             </form>

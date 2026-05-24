@@ -11,6 +11,7 @@ export const createFinanceService = (
     | 'deleteFinanceExpense'
     | 'getFinancePayments'
     | 'createFinancePayment'
+    | 'updateFinancePayment'
     | 'deleteFinancePayment'
     | 'getFinanceFounders'
     | 'createFinanceFounder'
@@ -21,6 +22,14 @@ export const createFinanceService = (
     | 'saveFinanceSettings'
     | 'getFinanceStats'
     | 'getFinanceChart'
+    | 'generatePaymentPlan'
+    | 'getPaymentPlansForProject'
+    | 'receiveInstallmentPayment'
+    | 'getFinanceDashboard'
+    | 'createCommissionRecord'
+    | 'runSalaryRun'
+    | 'distributeFounderProfits'
+    | 'recordFutureFund'
   >
 ) => ({
   getFinanceClients: () => api.getFinanceClients(),
@@ -31,6 +40,7 @@ export const createFinanceService = (
   deleteFinanceExpense: (id: string) => api.deleteFinanceExpense(id),
   getFinancePayments: () => api.getFinancePayments(),
   createFinancePayment: (data: any) => api.createFinancePayment(data),
+  updateFinancePayment: (id: string, data: any) => (api as any).updateFinancePayment(id, data),
   deleteFinancePayment: (id: string) => api.deleteFinancePayment(id),
   getFinanceFounders: () => api.getFinanceFounders(),
   createFinanceFounder: (data: any) => api.createFinanceFounder(data),
@@ -41,4 +51,17 @@ export const createFinanceService = (
   saveFinanceSettings: (data: any) => api.saveFinanceSettings(data),
   getFinanceStats: (range: string) => api.getFinanceStats(range),
   getFinanceChart: (range: string) => api.getFinanceChart(range),
+  generatePaymentPlan: (projectId: string, name: string | null, schedule: any) => (api as any).generatePaymentPlan(projectId, name, schedule),
+  getPaymentPlansForProject: (projectId: string) => (api as any).getPaymentPlansForProject(projectId),
+  receiveInstallmentPayment: (installmentId: string, payload: any) => (api as any).receiveInstallmentPayment(installmentId, payload),
+  getFinanceDashboard: (projectId?: string) => (api as any).getFinanceDashboard(projectId),
+  createCommissionRecord: (data: any) => (api as any).createCommissionRecord(data),
+  getCommissionRecords: (projectId?: string) => (api as any).getCommissionRecords(projectId),
+  payCommission: (commissionId: string, amount?: number) => (api as any).payCommission(commissionId, amount),
+  runSalaryRun: (month: string) => (api as any).runSalaryRun(month),
+  distributeFounderProfits: (salaryRunId: string) => (api as any).distributeFounderProfits(salaryRunId),
+  recordFutureFund: (source: string, sourceId: string | null, amount: number, month?: string, currency?: string) => (api as any).recordFutureFund(source, sourceId, amount, month, currency),
+  getFutureFundSummary: (projectId?: string) => (api as any).getFutureFundSummary(projectId),
+  paySalaryEntry: (salaryEntryId: string, amount: number, currency?: string) => (api as any).paySalaryEntry(salaryEntryId, amount, currency),
+  finalizeAndDistributeFounderProfits: (salaryRunId: string) => (api as any).finalizeAndDistributeFounderProfits(salaryRunId),
 });

@@ -12,6 +12,8 @@ interface LeadFiltersProps {
   onChange: (next: LeadFiltersType) => void;
   assignedUsers: Array<{ id: string; name: string }>;
   availableTags: string[];
+  nicheOptions: string[];
+  serviceOptions: string[];
 }
 
 function toggleValue<T extends string>(current: T[] | undefined, value: T) {
@@ -19,7 +21,7 @@ function toggleValue<T extends string>(current: T[] | undefined, value: T) {
   return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
 }
 
-export function LeadFilters({ value, onChange, assignedUsers, availableTags }: LeadFiltersProps) {
+export function LeadFilters({ value, onChange, assignedUsers, availableTags, nicheOptions, serviceOptions }: LeadFiltersProps) {
   return (
     <Card className="border-slate-200/70">
       <CardHeader className="pb-3">
@@ -62,6 +64,36 @@ export function LeadFilters({ value, onChange, assignedUsers, availableTags }: L
                 <span className="capitalize">{source.replace('_', ' ')}</span>
               </label>
             ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Niche</Label>
+          <div className="max-h-40 space-y-2 overflow-auto text-sm">
+            {nicheOptions.length ? nicheOptions.map((niche) => (
+              <label key={niche} className="flex items-center gap-2">
+                <Checkbox
+                  checked={value.designation?.includes(niche)}
+                  onCheckedChange={() => onChange({ ...value, designation: toggleValue(value.designation, niche) })}
+                />
+                <span>{niche}</span>
+              </label>
+            )) : <p className="text-xs text-muted-foreground">No niches available.</p>}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Service</Label>
+          <div className="max-h-40 space-y-2 overflow-auto text-sm">
+            {serviceOptions.length ? serviceOptions.map((service) => (
+              <label key={service} className="flex items-center gap-2">
+                <Checkbox
+                  checked={value.services_offered?.includes(service)}
+                  onCheckedChange={() => onChange({ ...value, services_offered: toggleValue(value.services_offered, service) })}
+                />
+                <span>{service}</span>
+              </label>
+            )) : <p className="text-xs text-muted-foreground">No services available.</p>}
           </div>
         </div>
 

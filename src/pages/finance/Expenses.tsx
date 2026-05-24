@@ -38,12 +38,14 @@ const Expenses: React.FC = () => {
     description: '',
     amount: '',
     currency: 'USD',
-    expense_date: '',
+    expense_date: new Date().toISOString().slice(0, 10),
     payment_method: 'bank_transfer',
     payment_method_other: '',
     project_id: '',
   });
+  const [editingId, setEditingId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const projectQueryId = searchParams.get('project_id') || '';
 
   useEffect(() => {
     if (searchParams.get('create') === '1') {
@@ -53,12 +55,46 @@ const Expenses: React.FC = () => {
 
   const handleDialogChange = (open: boolean) => {
     setIsDialogOpen(open);
-    if (!open && searchParams.get('create') === '1') {
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('create');
-      setSearchParams(nextParams, { replace: true });
+    if (!open) {
+      setEditingId(null);
+      setFormData({
+        category: '',
+        description: '',
+        amount: '',
+        currency: 'USD',
+        expense_date: new Date().toISOString().slice(0, 10),
+        payment_method: 'bank_transfer',
+        payment_method_other: '',
+        project_id: projectQueryId || '',
+      });
+      if (searchParams.get('create') === '1') {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('create');
+        setSearchParams(nextParams, { replace: true });
+      }
     }
   };
+
+  const handleEdit = (expense: any) => {
+    setEditingId(expense.id);
+    setFormData({
+      category: expense.category || '',
+      description: expense.description || '',
+      amount: String(expense.amount || ''),
+      currency: expense.currency || 'USD',
+      expense_date: expense.expense_date || '',
+      payment_method: expense.payment_method || 'bank_transfer',
+      payment_method_other: expense.payment_method_other || '',
+      project_id: expense.project_id || projectQueryId || '',
+    });
+    setIsDialogOpen(true);
+  };
+
+  useEffect(() => {
+    if (projectQueryId && !formData.project_id) {
+      setFormData((prev) => ({ ...prev, project_id: projectQueryId }));
+    }
+  }, [projectQueryId]);
 
   const { data: expensesResponse, isLoading } = useQuery({
     queryKey: ['expenses'],
@@ -68,35 +104,40 @@ const Expenses: React.FC = () => {
     },
   });
   const expenses = expensesResponse?.data || [];
-
   const { data: projectsResponse } = useQuery({
     queryKey: ['finance-projects'],
     queryFn: async () => api.getProjects(),
-    enabled: isDialogOpen,
+    enabled: isDialogOpen || Boolean(projectQueryId),
   });
   const projects = projectsResponse?.data || [];
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
+      if (editingId) {
+        return api.put(`/finance/expenses/${editingId}`, data);
+      }
       return api.post('/finance/expenses', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-stats'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['finance-chart'], exact: false });
       setIsDialogOpen(false);
-      toast.success('Expense added successfully');
+      toast.success(editingId ? 'Expense updated successfully' : 'Expense added successfully');
+      setEditingId(null);
       setFormData({
         category: '',
         description: '',
         amount: '',
         currency: 'USD',
-        expense_date: '',
+        expense_date: new Date().toISOString().slice(0, 10),
         payment_method: 'bank_transfer',
         payment_method_other: '',
-        project_id: '',
+        project_id: projectQueryId || '',
       });
     },
     onError: () => {
-      toast.error('Failed to add expense');
+      toast.error(editingId ? 'Failed to update expense' : 'Failed to add expense');
     },
   });
 
@@ -106,6 +147,8 @@ const Expenses: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-stats'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['finance-chart'], exact: false });
       toast.success('Expense deleted successfully');
     },
     onError: () => toast.error('Failed to delete expense'),
@@ -135,10 +178,14 @@ const Expenses: React.FC = () => {
     });
   };
 
-  const filteredExpenses = expenses?.filter((e: any) =>
-    e.description?.toLowerCase().includes(search.toLowerCase()) ||
-    e.category?.toLowerCase().includes(search.toLowerCase())
-  ) || [];
+  const filteredExpenses = expenses?.filter((e: any) => {
+    const matchesSearch =
+      e.description?.toLowerCase().includes(search.toLowerCase()) ||
+      e.category?.toLowerCase().includes(search.toLowerCase()) ||
+      e.payment_method?.toLowerCase().includes(search.toLowerCase());
+    const matchesProject = projectQueryId ? e.project_id === projectQueryId : true;
+    return matchesSearch && matchesProject;
+  }) || [];
   const expenseCurrency = filteredExpenses[0]?.currency || 'USD';
 
   return (
@@ -160,7 +207,7 @@ const Expenses: React.FC = () => {
           </DialogTrigger>
           <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-3xl">
             <DialogHeader>
-              <DialogTitle>Add New Expense</DialogTitle>
+              <DialogTitle>{editingId ? 'Edit Expense' : 'Add New Expense'}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4 mt-4">
               <div>
@@ -264,8 +311,8 @@ const Expenses: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Adding...' : 'Add Expense'}
+              <Button type="submit" className="w-full" isLoading={createMutation.isPending} loadingText={editingId ? 'Updating...' : 'Adding...'}>
+                {createMutation.isPending ? (editingId ? 'Updating...' : 'Adding...') : (editingId ? 'Update Expense' : 'Add Expense')}
               </Button>
             </form>
           </DialogContent>
@@ -274,7 +321,7 @@ const Expenses: React.FC = () => {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -284,6 +331,11 @@ const Expenses: React.FC = () => {
                 className="pl-10"
               />
             </div>
+            {projectQueryId ? (
+              <div className="text-sm text-muted-foreground">
+                Viewing expenses for project <strong>{searchParams.get('project_name') || projectQueryId}</strong>
+              </div>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent>
@@ -302,6 +354,7 @@ const Expenses: React.FC = () => {
                   <TableHead>Project</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Method</TableHead>
+                  <TableHead>Receipt</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -317,17 +370,28 @@ const Expenses: React.FC = () => {
                       <TableCell>{formatMoney(expense.amount, expense.currency || expenseCurrency)}</TableCell>
                       <TableCell>{expense.project?.name || expense.project_name || '-'}</TableCell>
                       <TableCell>{new Date(expense.expense_date).toLocaleDateString()}</TableCell>
-                      <TableCell className="capitalize">{expense.payment_method?.replace('_', ' ')}</TableCell>
+                      <TableCell className="capitalize">
+                        {expense.payment_method === 'other'
+                          ? expense.payment_method_other || 'Other'
+                          : expense.payment_method?.replace('_', ' ')}
+                      </TableCell>
                       <TableCell>
-                         <div className="flex gap-2">
-                           <Button variant="ghost" size="icon">
-                             <Edit className="h-4 w-4" />
-                           </Button>
-                           <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(expense.id, expense.description)}>
-                             <Trash2 className="h-4 w-4" />
-                           </Button>
-                         </div>
-                       </TableCell>
+                        {expense.receipt_url ? (
+                          <a href={expense.receipt_url} target="_blank" rel="noreferrer" className="text-primary underline">
+                            View receipt
+                          </a>
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button variant="ghost" size="icon" onClick={() => handleEdit(expense)}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(expense.id, expense.description)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                 ))}
               </TableBody>
