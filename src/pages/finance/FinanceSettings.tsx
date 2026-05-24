@@ -7,9 +7,19 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { ArrowLeft, Settings, Calculator, Percent } from 'lucide-react';
+import { ArrowLeft, Settings, Calculator, Percent, Trash2 } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
+
+type CurrencyRow = {
+  id?: string;
+  code?: string;
+  currency_code?: string;
+  symbol?: string;
+  name?: string;
+  rate_vs_base_currency?: number;
+  updated_at?: string | null;
+};
 
 const FinanceSettings: React.FC = () => {
   const queryClient = useQueryClient();
@@ -33,7 +43,7 @@ const FinanceSettings: React.FC = () => {
     queryKey: ['system-currencies'],
     queryFn: async () => api.get('/currencies'),
   });
-  const currencies = currenciesResponse?.data || [];
+  const currencies: CurrencyRow[] = currenciesResponse?.data?.data || currenciesResponse?.data || [];
 
   const { data: currentSettingsResponse, isLoading } = useQuery({
     queryKey: ['finance-settings'],
@@ -51,7 +61,7 @@ const FinanceSettings: React.FC = () => {
     queryFn: async () => api.get(`/fx-rates?base_currency=${encodeURIComponent(baseCurrency)}`),
     enabled: Boolean(baseCurrency),
   });
-  const fxRates = fxRatesResponse?.data || [];
+  const fxRates = fxRatesResponse?.data?.data || fxRatesResponse?.data || [];
   
   React.useEffect(() => {
     if (currentSettings?.data) {
@@ -105,6 +115,7 @@ const FinanceSettings: React.FC = () => {
     mutationFn: async (id: string) => api.delete(`/currencies/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['system-currencies'] });
+      queryClient.invalidateQueries({ queryKey: ['fx-rates'] });
       toast.success('Currency deleted successfully');
     },
     onError: () => toast.error('Failed to delete currency'),
@@ -117,6 +128,45 @@ const FinanceSettings: React.FC = () => {
       return toast.error(`Enter exchange rate for ${baseCurrency}.`);
     }
     createCurrencyMutation.mutate({ ...newCurrency, base_currency: baseCurrency, rate: rateValue });
+  };
+
+  const getCurrencyCode = (currency: CurrencyRow) => String(currency.code || currency.currency_code || '').toUpperCase();
+  const getCurrencyLabel = (currency: CurrencyRow) => getCurrencyCode(currency);
+  const getCurrencyRate = (currency: CurrencyRow) => {
+    const code = getCurrencyCode(currency);
+    if (!code) return null;
+    if (code === String(baseCurrency).toUpperCase()) return 1;
+
+    const storedRate = Number(currency.rate_vs_base_currency || 0);
+    if (Number.isFinite(storedRate) && storedRate > 0) {
+      return storedRate;
+    }
+
+    const directRate = fxRates.find((rate: any) => String(rate.target_currency || '').toUpperCase() === code)?.rate;
+    if (directRate !== undefined && directRate !== null && Number(directRate) > 0) {
+      return Number(directRate);
+    }
+    const inverseRate = fxRates.find((rate: any) => String(rate.base_currency || '').toUpperCase() === code && String(rate.target_currency || '').toUpperCase() === String(baseCurrency).toUpperCase())?.rate;
+    if (inverseRate !== undefined && inverseRate !== null && Number(inverseRate) > 0) {
+      return 1 / Number(inverseRate);
+    }
+
+    return null;
+  };
+
+  const handleDeleteCurrency = (currency: CurrencyRow) => {
+    const code = getCurrencyCode(currency);
+    if (!currency.id || !code) return;
+    if (code === String(baseCurrency).toUpperCase()) {
+      toast.error('Base currency cannot be deleted.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${code}? This will remove its FX mappings and currency definition.`
+    );
+    if (!confirmed) return;
+    deleteCurrencyMutation.mutate(currency.id);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -339,23 +389,28 @@ const FinanceSettings: React.FC = () => {
             <Separator className="my-4" />
             <div className="space-y-2">
               {currencies.map((c: any) => (
-                <div key={c.id || c.code} className="flex items-center justify-between p-2 border rounded bg-card">
+                <div key={c.id || c.code || c.currency_code} className="flex items-center justify-between gap-4 p-3 border rounded bg-card">
                   <div>
-                    <div className="font-medium">{c.code}</div>
-                    <div className="text-xs text-muted-foreground">{c.symbol} - {c.name}</div>
+                    <div className="font-medium">{getCurrencyLabel(c)}</div>
                     <div className="text-xs text-muted-foreground">
-                      {baseCurrency} rate: {
-                        fxRates.find((rate: any) => rate.target_currency === c.code)?.rate
-                          ? `1 ${baseCurrency} = ${Number(fxRates.find((rate: any) => rate.target_currency === c.code)?.rate || 0).toFixed(4)} ${c.code}`
-                          : c.code === baseCurrency
-                            ? `1 ${baseCurrency} = 1 ${baseCurrency}`
-                            : 'Rate not set'
-                      }
+                      {c.symbol} - {c.name}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {baseCurrency} rate: {getCurrencyRate(c) !== null
+                        ? `1 ${baseCurrency} = ${Number(getCurrencyRate(c)).toFixed(4)} ${getCurrencyLabel(c)}`
+                        : 'Rate not set'}
                     </div>
                   </div>
-                  {c.id && (
-                    <Button type="button" variant="destructive" size="sm" onClick={() => deleteCurrencyMutation.mutate(c.id)}>
-                      Remove
+                  {c.id && getCurrencyLabel(c) !== String(baseCurrency).toUpperCase() && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => handleDeleteCurrency(c)}
+                      className="shrink-0"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
                     </Button>
                   )}
                 </div>

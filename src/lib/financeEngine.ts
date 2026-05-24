@@ -26,7 +26,19 @@ export interface FinanceSummary {
 
 const round = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
+const assertNormalizedFinanceInput = (input: FinanceSummaryInput) => {
+  const forbiddenKeys = ['amount', 'base_amount', 'received_amount', 'currency', 'exchange_rate', 'fx_rate_used', 'fx_timestamp'];
+  const presentForbiddenKeys = forbiddenKeys.filter((key) => Object.prototype.hasOwnProperty.call(input as Record<string, unknown>, key));
+
+  if (presentForbiddenKeys.length > 0) {
+    throw new Error(
+      `calculateFinanceSummary expects normalized totals only. Remove raw finance fields: ${presentForbiddenKeys.join(', ')}.`
+    );
+  }
+};
+
 export const calculateFinanceSummary = (input: FinanceSummaryInput): FinanceSummary => {
+  assertNormalizedFinanceInput(input);
   const revenue = round(input.revenue || 0);
   const expenses = round(input.expenses || 0);
   const salaries = round(input.salaries || 0);

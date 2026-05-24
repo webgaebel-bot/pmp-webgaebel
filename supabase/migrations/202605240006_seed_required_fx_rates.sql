@@ -1,4 +1,6 @@
--- Ensure FX rates table exists for currency conversion paths used by finance calculations.
+-- Ensure the finance engine always has the core FX snapshots it needs.
+-- This keeps USD, PKR, EUR, GBP, and AED conversions available for dashboard
+-- filtering and normalized calculations.
 
 create table if not exists public.fx_rates (
   id uuid primary key default gen_random_uuid(),
@@ -28,13 +30,13 @@ $$;
 insert into public.fx_rates (base_currency, target_currency, rate)
 values
   ('USD', 'PKR', 285.00000000),
-  ('USD', 'AED', 3.67250000),
-  ('USD', 'EUR', 0.92000000),
-  ('USD', 'GBP', 0.80000000),
   ('PKR', 'USD', 0.00350877),
-  ('AED', 'USD', 0.27229400),
+  ('USD', 'EUR', 0.92000000),
   ('EUR', 'USD', 1.08695652),
-  ('GBP', 'USD', 1.25000000)
+  ('USD', 'GBP', 0.80000000),
+  ('GBP', 'USD', 1.25000000),
+  ('USD', 'AED', 3.67250000),
+  ('AED', 'USD', 0.27229400)
 on conflict (base_currency, target_currency) do update
 set rate = excluded.rate,
     updated_at = now();

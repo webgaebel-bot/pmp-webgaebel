@@ -6,6 +6,7 @@ import { createAuthService } from '@/services/authService';
 import { createCalendarService } from '@/services/calendarService';
 import { createFileService } from '@/services/fileService';
 import { createFinanceService } from '@/services/financeService';
+import { createCurrencyService } from '@/services/currencyService';
 import { createLeadService } from '@/services/leadService';
 import { createNotificationService } from '@/services/notificationService';
 import { createPayrollService } from '@/services/payrollService';
@@ -117,8 +118,90 @@ const parseSettingBoolean = (settings: Record<string, any>, key: string, fallbac
   return fallback;
 };
 
-const getPaymentGrossValue = (payment: any): number =>
-  Number(payment?.base_amount ?? payment?.received_amount ?? payment?.amount ?? 0);
+const getPositiveNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+const getRecordFxRate = (record: any): number => {
+  const rate = Number(record?.fx_rate_used || record?.exchange_rate || 1);
+  return Number.isFinite(rate) && rate > 0 ? rate : 1;
+};
+
+const getNormalizedConvertedAmount = (record: any, entityName: string): number => {
+  const convertedAmount = Number(record?.converted_amount);
+  if (Number.isFinite(convertedAmount) && convertedAmount >= 0) {
+    return roundTo(convertedAmount, 4);
+  }
+
+  throw new ApiError(
+    `Missing normalized amount for ${entityName}. Finance calculations require converted_amount.`,
+    422,
+    'FINANCE_NORMALIZATION_REQUIRED'
+  );
+};
+
+const normalizeStoredAmount = (value: unknown, fxRate: number): number => {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+
+  return roundTo(parsed * fxRate, 4);
+};
+
+const getPaymentGrossValue = (payment: any): number => {
+  return getNormalizedConvertedAmount(payment, 'payment');
+};
+
+const getPaymentDeductionValue = (payment: any, normalizedField: string, fallbackField: string): number => {
+  const normalizedValue = Number(payment?.[normalizedField]);
+  if (Number.isFinite(normalizedValue) && normalizedValue >= 0) {
+    return roundTo(normalizedValue, 4);
+  }
+
+  const legacyValue = Number(payment?.[fallbackField]);
+  if (Number.isFinite(legacyValue) && legacyValue >= 0) {
+    return roundTo(legacyValue, 4);
+  }
+
+  return 0;
+};
+
+const getSalaryRunTotalFromEntries = (run: any): number => {
+  const explicitTotal = getPositiveNumber(run?.total_salary);
+  if (explicitTotal > 0) return explicitTotal;
+
+  const entriesTotal: number = ensureArray<any>(run.salary_entries).reduce((sum: number, entry: any) => {
+    const entryTotal = getPositiveNumber(entry?.total_salary);
+    if (entryTotal > 0) return sum + entryTotal;
+    const monthlySalary = getPositiveNumber(entry?.monthly_salary);
+    const monthsCount = Number(entry?.months_count || 1);
+    return sum + monthlySalary * monthsCount;
+  }, 0);
+
+  return entriesTotal;
+};
+
+const getSalaryRunConvertedTotalFromEntries = (run: any): number =>
+  ensureArray<any>(run.salary_entries).reduce((sum: number, entry: any) => sum + getPositiveNumber(entry?.converted_amount), 0);
+
+const DEFAULT_FX_RATE_ROWS = [
+  { base_currency: 'USD', target_currency: 'PKR', rate: 278.14 },
+  { base_currency: 'PKR', target_currency: 'USD', rate: 0.00359592 },
+  { base_currency: 'USD', target_currency: 'EUR', rate: 0.86206897 },
+  { base_currency: 'EUR', target_currency: 'USD', rate: 1.16 },
+  { base_currency: 'USD', target_currency: 'GBP', rate: 0.74626866 },
+  { base_currency: 'GBP', target_currency: 'USD', rate: 1.34 },
+  { base_currency: 'USD', target_currency: 'AED', rate: 3.7037037 },
+  { base_currency: 'AED', target_currency: 'USD', rate: 0.27 },
+  { base_currency: 'EUR', target_currency: 'PKR', rate: 322.9 },
+  { base_currency: 'PKR', target_currency: 'EUR', rate: 0.00309663 },
+  { base_currency: 'GBP', target_currency: 'PKR', rate: 374.36 },
+  { base_currency: 'PKR', target_currency: 'GBP', rate: 0.00267056 },
+  { base_currency: 'AED', target_currency: 'PKR', rate: 75.86 },
+  { base_currency: 'PKR', target_currency: 'AED', rate: 0.01318194 },
+] as const;
 
 const calculatePercentageAmount = (base: number, rate: number): number => Number(base || 0) * (Number(rate || 0) / 100);
 
@@ -142,7 +225,49 @@ const buildFxRateLookup = (rates: any[]) => {
     lookup.set(`${baseCurrency}->${targetCurrency}`, normalizedRate);
     lookup.set(`${targetCurrency}->${baseCurrency}`, 1 / normalizedRate);
   });
+
+  DEFAULT_FX_RATE_ROWS.forEach((rate) => {
+    const baseCurrency = String(rate.base_currency || '').toUpperCase();
+    const targetCurrency = String(rate.target_currency || '').toUpperCase();
+    const normalizedRate = Number(rate.rate || 0);
+    if (!baseCurrency || !targetCurrency || !Number.isFinite(normalizedRate) || normalizedRate <= 0) {
+      return;
+    }
+    const directKey = `${baseCurrency}->${targetCurrency}`;
+    const inverseKey = `${targetCurrency}->${baseCurrency}`;
+    if (!lookup.has(directKey)) lookup.set(directKey, normalizedRate);
+    if (!lookup.has(inverseKey)) lookup.set(inverseKey, 1 / normalizedRate);
+  });
   return lookup;
+};
+
+const resolveLookupRate = (fxRates: Map<string, number>, fromCurrency: string, toCurrency: string): number => {
+  const normalizedFrom = String(fromCurrency || '').toUpperCase();
+  const normalizedTo = String(toCurrency || '').toUpperCase();
+  if (!normalizedFrom || !normalizedTo || normalizedFrom === normalizedTo) return 1;
+
+  const directRate = fxRates.get(`${normalizedFrom}->${normalizedTo}`);
+  if (Number.isFinite(directRate) && Number(directRate) > 0) return Number(directRate);
+
+  const inverseRate = fxRates.get(`${normalizedTo}->${normalizedFrom}`);
+  if (Number.isFinite(inverseRate) && Number(inverseRate) > 0) return 1 / Number(inverseRate);
+
+  for (const key of fxRates.keys()) {
+    const [source, intermediate] = key.split('->');
+    if (source !== normalizedFrom) continue;
+    const sourceToIntermediate = fxRates.get(`${normalizedFrom}->${intermediate}`);
+    if (!sourceToIntermediate || sourceToIntermediate <= 0) continue;
+    const intermediateToTarget = fxRates.get(`${intermediate}->${normalizedTo}`);
+    if (intermediateToTarget && intermediateToTarget > 0) {
+      return Number(sourceToIntermediate) * Number(intermediateToTarget);
+    }
+    const targetToIntermediate = fxRates.get(`${normalizedTo}->${intermediate}`);
+    if (targetToIntermediate && targetToIntermediate > 0) {
+      return Number(sourceToIntermediate) / Number(targetToIntermediate);
+    }
+  }
+
+  return 0;
 };
 
 const convertCurrencyAmount = (
@@ -161,17 +286,16 @@ const convertCurrencyAmount = (
     return roundTo(normalizedAmount, 4);
   }
 
-  const directRate = fxRates.get(`${normalizedFrom}->${normalizedTo}`);
-  if (directRate) {
-    return roundTo(normalizedAmount * directRate, 4);
+  const resolvedRate = resolveLookupRate(fxRates, normalizedFrom, normalizedTo);
+  if (resolvedRate > 0) {
+    return roundTo(normalizedAmount * resolvedRate, 4);
   }
 
-  const inverseRate = fxRates.get(`${normalizedTo}->${normalizedFrom}`);
-  if (inverseRate) {
-    return roundTo(normalizedAmount / inverseRate, 4);
-  }
-
-  return roundTo(normalizedAmount, 4);
+  throw new ApiError(
+    `Missing FX rate for ${normalizedFrom} -> ${normalizedTo}. Finance totals must not fall back to unconverted amounts.`,
+    422,
+    'FINANCE_FX_RATE_MISSING'
+  );
 };
 
 const summarizeFinanceRows = (
@@ -192,30 +316,25 @@ const summarizeFinanceRows = (
   const revenue = payments
     .filter((p: any) => p.status === 'completed')
     .reduce((sum: number, p: any) => sum + getPaymentGrossValue(p), 0);
-  const expenseTotal = expenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
-  const salaryTotal = salaryRuns.reduce((sum: number, run: any) => sum + Number(run.total_salary || 0), 0);
+  const expenseTotal = expenses.reduce((sum: number, e: any) => sum + getPositiveNumber(e.converted_amount), 0);
+  const salaryTotal = salaryRuns.reduce((sum: number, run: any) => sum + getPositiveNumber(run.converted_amount), 0);
   const completedPayments = payments.filter((p: any) => p.status === 'completed');
   const completedPaymentCount = completedPayments.length;
   const taxTotal = completedPayments.reduce(
-    (sum: number, payment: any) => sum + Number(payment.tax_amount || calculatePercentageAmount(getPaymentGrossValue(payment), taxRate)),
+    (sum: number, payment: any) =>
+      sum + getPaymentDeductionValue(payment, 'tax_converted_amount', 'tax_amount'),
     0
   );
   const commissionTotal = completedPayments.reduce(
-    (sum: number, payment: any) => sum + Number(payment.commission_amount || calculatePercentageAmount(getPaymentGrossValue(payment), commissionPercentage)),
+    (sum: number, payment: any) =>
+      sum + getPaymentDeductionValue(payment, 'commission_converted_amount', 'commission_amount'),
     0
   );
   const transactionFeeTotal = completedPayments.reduce((sum: number, payment: any) => {
-    const explicit = Number(payment.transaction_fee_amount || 0);
-    if (explicit > 0) return sum + explicit;
-    if (transactionFeeType === 'fixed') return sum + transactionFeeValue;
-    return sum + calculatePercentageAmount(getPaymentGrossValue(payment), transactionFeeValue);
+    return sum + getPaymentDeductionValue(payment, 'transaction_fee_converted_amount', 'transaction_fee_amount');
   }, 0);
   const productCostTotal = completedPayments.reduce((sum: number, payment: any) => {
-    const explicit = Number(payment.product_cost_amount || 0);
-    if (explicit > 0) return sum + explicit;
-    if (!productCostEnabled) return sum;
-    if (productCostType === 'fixed') return sum + productCostValue;
-    return sum + calculatePercentageAmount(getPaymentGrossValue(payment), productCostValue);
+    return sum + getPaymentDeductionValue(payment, 'product_cost_converted_amount', 'product_cost_amount');
   }, 0);
   const summary = calculateFinanceSummary({
     revenue,
@@ -229,7 +348,9 @@ const summarizeFinanceRows = (
   });
   const outstanding = payments
     .filter((p: any) => p.status !== 'completed')
-    .reduce((sum: number, p: any) => sum + Math.max(Number(p.base_amount ?? p.amount ?? 0) - Number(p.received_amount || 0), 0), 0);
+    .reduce((sum: number, p: any) => {
+      return sum + getPaymentGrossValue(p);
+    }, 0);
 
   return {
     futureFundPercentage,
@@ -392,6 +513,74 @@ export class SupabaseApiService {
     }, {});
   }
 
+  private getCurrencyService() {
+    return createCurrencyService({
+      getBaseCurrency: async () => {
+        const settings = await this.loadFinanceSettingsMap();
+        return String(settings.base_currency || 'USD').toUpperCase();
+      },
+      getFxRates: async () => {
+        const { data } = await this.client.from('fx_rates').select('base_currency, target_currency, rate, updated_at');
+        return ensureArray(data) as any[];
+      },
+    });
+  }
+
+  private async resolveFxMetadata(fromCurrency: string, toCurrency: string) {
+    const normalizedFrom = String(fromCurrency || 'USD').toUpperCase();
+    const normalizedTo = String(toCurrency || 'USD').toUpperCase();
+    const timestamp = new Date().toISOString();
+
+    if (normalizedFrom === normalizedTo) {
+      return { rate: 1, timestamp };
+    }
+
+    try {
+      const { data: directFx, error: directError } = await this.client
+        .from('fx_rates')
+        .select('rate, updated_at, base_currency, target_currency')
+        .eq('base_currency', normalizedFrom)
+        .eq('target_currency', normalizedTo)
+        .limit(1)
+        .single();
+
+      if (!directError && directFx?.rate && Number(directFx.rate) > 0) {
+        return { rate: Number(directFx.rate), timestamp: directFx.updated_at || timestamp };
+      }
+
+      const { data: inverseFx, error: inverseError } = await this.client
+        .from('fx_rates')
+        .select('rate, updated_at, base_currency, target_currency')
+        .eq('base_currency', normalizedTo)
+        .eq('target_currency', normalizedFrom)
+        .limit(1)
+        .single();
+
+      if (!inverseError && inverseFx?.rate && Number(inverseFx.rate) > 0) {
+        return { rate: 1 / Number(inverseFx.rate), timestamp: inverseFx.updated_at || timestamp };
+      }
+
+      const fallbackRates = buildFxRateLookup([]);
+      const fallbackRate = resolveLookupRate(fallbackRates, normalizedFrom, normalizedTo);
+      if (fallbackRate > 0) {
+        return { rate: fallbackRate, timestamp };
+      }
+    } catch (error) {
+      console.warn('Unable to resolve FX metadata', error);
+      throw new ApiError(
+        `Missing FX rate for ${normalizedFrom} -> ${normalizedTo}. Cannot continue with a synthetic rate.`,
+        422,
+        'FINANCE_FX_RATE_MISSING'
+      );
+    }
+
+    throw new ApiError(
+      `Missing FX rate for ${normalizedFrom} -> ${normalizedTo}. Cannot continue with a synthetic rate.`,
+      422,
+      'FINANCE_FX_RATE_MISSING'
+    );
+  }
+
   private async resolveBaseAmount(amount: number, currency: string, baseCurrency: string): Promise<number> {
     const normalizedAmount = Number(amount || 0);
     const normalizedCurrency = String(currency || 'USD').toUpperCase();
@@ -401,31 +590,8 @@ export class SupabaseApiService {
       return 0;
     }
 
-    if (normalizedCurrency === normalizedBaseCurrency) {
-      return roundTo(normalizedAmount, 4);
-    }
-
-    try {
-      const { data: fxTableCheck, error: fxTableError } = await this.client.from('fx_rates').select('rate').limit(1);
-      if (fxTableError) return roundTo(normalizedAmount, 4);
-      if (!fxTableCheck) return roundTo(normalizedAmount, 4);
-
-      const { data: fxData } = await this.client
-        .from('fx_rates')
-        .select('rate')
-        .eq('base_currency', normalizedBaseCurrency)
-        .eq('target_currency', normalizedCurrency)
-        .limit(1)
-        .single();
-
-      if (fxData?.rate) {
-        return roundTo(normalizedAmount / Number(fxData.rate || 1), 4);
-      }
-    } catch (error) {
-      console.warn('Unable to resolve base currency amount, falling back to original amount', error);
-    }
-
-    return roundTo(normalizedAmount, 4);
+    const { rate } = await this.resolveFxMetadata(normalizedCurrency, normalizedBaseCurrency);
+    return roundTo(normalizedAmount * rate, 4);
   }
 
   private unsupported(methodName: string): never {
@@ -613,6 +779,14 @@ export class SupabaseApiService {
 
   private isMissingColumnError(error: any) {
     return String(error?.code || '').toUpperCase() === 'PGRST204';
+  }
+
+  private async executePaymentQueryWithMissingColumnFallback(query: any, fallbackQuery: any) {
+    const result = await query;
+    if (!result.error || !this.isMissingColumnError(result.error)) {
+      return result;
+    }
+    return await fallbackQuery;
   }
 
   private async attachProjectNames<T extends { project_id?: string | null; projects?: { name?: string | null } | null }>(rows: T[]) {
@@ -1577,6 +1751,10 @@ export class SupabaseApiService {
     if (founderUpdateMatch) {
       return (await this.updateFinanceFounder(founderUpdateMatch[1], data)) as T;
     }
+    const expenseUpdateMatch = endpoint.match(/^\/finance\/expenses\/(.+)$/);
+    if (expenseUpdateMatch) {
+      return (await this.updateFinanceExpense(expenseUpdateMatch[1], data)) as T;
+    }
     const paymentUpdateMatch = endpoint.match(/^\/finance\/payments\/(.+)$/);
     if (paymentUpdateMatch) {
       return (await this.updateFinancePayment(paymentUpdateMatch[1], data)) as T;
@@ -2343,12 +2521,24 @@ export class SupabaseApiService {
   async recordFutureFund(source: string, sourceId: string | null, amount: number, month?: string, currency = 'USD') {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.view', 'You do not have permission to record future fund transactions.');
+    const settings = await this.loadFinanceSettingsMap();
+    const baseCurrency = String(settings.base_currency || 'USD').toUpperCase();
+    const normalizedCurrency = String(currency || baseCurrency).toUpperCase();
+    const { rate: fxRateUsed, timestamp: fxTimestamp } = await this.resolveFxMetadata(normalizedCurrency, baseCurrency);
+    const convertedAmount = roundTo(Number(amount || 0) * fxRateUsed, 4);
 
     const payload = {
       source,
       source_id: sourceId,
+      original_amount: Number(amount || 0),
+      original_currency: normalizedCurrency,
       amount: Number(amount || 0),
-      currency,
+      currency: normalizedCurrency,
+      base_currency: baseCurrency,
+      exchange_rate: fxRateUsed,
+      converted_amount: convertedAmount,
+      fx_rate_used: fxRateUsed,
+      fx_timestamp: fxTimestamp,
       month: month || new Date().toISOString().slice(0,10),
     };
 
@@ -2361,9 +2551,9 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.view', 'You do not have permission to view future fund.');
 
-    let query = this.client.from('future_fund_transactions').select('month, amount, currency').order('month', { ascending: false }).limit(1000);
+    let query = this.client.from('future_fund_transactions').select('month, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency').order('month', { ascending: false }).limit(1000);
     if (projectId) {
-      query = this.client.from('future_fund_transactions').select('month, amount, currency').eq('source', 'installment').in('source_id', this.client.from('payment_installments').select('id').eq('payment_plan->>project_id', projectId as any));
+      query = this.client.from('future_fund_transactions').select('month, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency').eq('source', 'installment').in('source_id', this.client.from('payment_installments').select('id').eq('payment_plan->>project_id', projectId as any));
     }
 
     const { data, error } = await query;
@@ -2374,11 +2564,11 @@ export class SupabaseApiService {
     const totalsByCurrency: Record<string, number> = {};
     const byMonth: Record<string, Record<string, number>> = {};
     rows.forEach((r) => {
-      const c = r.currency || 'USD';
-      totalsByCurrency[c] = (totalsByCurrency[c] || 0) + Number(r.amount || 0);
+      const c = String(r.base_currency || 'USD').toUpperCase();
+      totalsByCurrency[c] = (totalsByCurrency[c] || 0) + getPositiveNumber(r.converted_amount);
       const m = (r.month || '').toString();
       byMonth[m] = byMonth[m] || {};
-      byMonth[m][c] = (byMonth[m][c] || 0) + Number(r.amount || 0);
+      byMonth[m][c] = (byMonth[m][c] || 0) + getPositiveNumber(r.converted_amount);
     });
 
     return { success: true, data: { totalsByCurrency, byMonth, rows } };
@@ -2397,10 +2587,19 @@ export class SupabaseApiService {
     const settings = (ensureArray(settingsData) as any[]).reduce((acc: any, s: any) => ({ ...acc, [s.setting_key]: s.setting_value }), {} as Record<string,string>);
     const futureFundPct = Number(settings.future_fund_percentage || 10);
     const futureFundAmount = roundTo(totalSalary * (futureFundPct / 100), 4);
+    const currencyService = this.getCurrencyService();
+    const snapshot = await currencyService.resolveSnapshot(totalSalary, 'USD');
 
     const { data: created, error: createError } = await this.client.from('salary_runs').insert({
       salary_month: salaryMonth,
       currency: 'USD',
+      original_amount: totalSalary,
+      original_currency: 'USD',
+      base_currency: snapshot.base_currency,
+      exchange_rate: snapshot.exchange_rate,
+      converted_amount: snapshot.converted_amount,
+      fx_rate_used: snapshot.fx_rate_used,
+      fx_timestamp: snapshot.fx_timestamp,
       total_salary: totalSalary,
       future_fund_amount: futureFundAmount,
       created_by: access.profile.id,
@@ -2435,7 +2634,7 @@ export class SupabaseApiService {
       founder_id: f.id,
       salary_run_id: run.id,
       amount: roundTo((Number(f.equity_percentage || 0) / totalFounderShare) * amountToDistribute, 4),
-      currency: 'USD',
+      currency: String(run.base_currency || 'USD').toUpperCase(),
     }));
 
     const { data: created, error: createError2 } = await this.client.from('founder_profit_distributions').insert(distributions).select();
@@ -2451,6 +2650,7 @@ export class SupabaseApiService {
     // Load salary run
     const { data: run, error: runError } = await this.client.from('salary_runs').select('*').eq('id', salaryRunId).single();
     if (runError || !run) throw formatError(runError, 'Unable to load salary run.');
+    const baseCurrency = String(run.base_currency || 'USD').toUpperCase();
 
     const month = run.salary_month; // date
     const d = new Date(month);
@@ -2460,40 +2660,51 @@ export class SupabaseApiService {
     const monthEnd = new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0,10);
 
     // Payments in month
-    const { data: payments, error: paymentsErr } = await this.client.from('payments')
-      .select('amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount')
+    const paymentsQuery = this.client.from('payments')
+      .select('converted_amount, fx_rate_used, exchange_rate, tax_converted_amount, commission_converted_amount, transaction_fee_converted_amount, product_cost_converted_amount')
       .gte('payment_date', monthStart)
       .lte('payment_date', monthEnd)
       .eq('status', 'completed');
+    const legacyPaymentsQuery = this.client.from('payments')
+      .select('converted_amount, fx_rate_used, exchange_rate, tax_amount, commission_amount')
+      .gte('payment_date', monthStart)
+      .lte('payment_date', monthEnd)
+      .eq('status', 'completed');
+    let { data: payments, error: paymentsErr } = await paymentsQuery;
+    if (paymentsErr && this.isMissingColumnError(paymentsErr)) {
+      const legacyResult = await legacyPaymentsQuery;
+      payments = legacyResult.data;
+      paymentsErr = legacyResult.error;
+    }
     if (paymentsErr) throw formatError(paymentsErr, 'Failed to load payments for month.');
 
     let totalIncome = 0, totalTax = 0, totalCommission = 0, totalFees = 0, totalProduct = 0;
     (ensureArray(payments) as any[]).forEach((p: any) => {
-      totalIncome += Number(p.amount || 0);
-      totalTax += Number(p.tax_amount || 0);
-      totalCommission += Number(p.commission_amount || 0);
-      totalFees += Number(p.transaction_fee_amount || 0);
-      totalProduct += Number(p.product_cost_amount || 0);
+      totalIncome += getPaymentGrossValue(p);
+      totalTax += getPaymentDeductionValue(p, 'tax_converted_amount', 'tax_amount');
+      totalCommission += getPaymentDeductionValue(p, 'commission_converted_amount', 'commission_amount');
+      totalFees += getPaymentDeductionValue(p, 'transaction_fee_converted_amount', 'transaction_fee_amount');
+      totalProduct += getPaymentDeductionValue(p, 'product_cost_converted_amount', 'product_cost_amount');
     });
 
     // Expenses in month
-    const { data: expensesRows, error: expensesErr } = await this.client.from('expenses').select('amount').gte('expense_date', monthStart).lte('expense_date', monthEnd);
+    const { data: expensesRows, error: expensesErr } = await this.client.from('expenses').select('converted_amount').gte('expense_date', monthStart).lte('expense_date', monthEnd);
     if (expensesErr) throw formatError(expensesErr, 'Failed to load expenses for month.');
-    const totalExpenses = (ensureArray(expensesRows) as any[]).reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
+    const totalExpenses = (ensureArray(expensesRows) as any[]).reduce((s: number, e: any) => s + getPositiveNumber(e.converted_amount), 0);
 
     // Salaries from run
-    const totalSalaries = Number(run.total_salary || 0);
+    const totalSalaries = getPositiveNumber(run.converted_amount || run.total_salary);
 
     // Future fund for month
-    const { data: futureRows, error: futureErr } = await this.client.from('future_fund_transactions').select('amount').gte('month', monthStart).lte('month', monthEnd);
+    const { data: futureRows, error: futureErr } = await this.client.from('future_fund_transactions').select('converted_amount').gte('month', monthStart).lte('month', monthEnd);
     if (futureErr) throw formatError(futureErr, 'Failed to load future fund transactions.');
-    const totalFuture = (ensureArray(futureRows) as any[]).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+    const totalFuture = (ensureArray(futureRows) as any[]).reduce((s: number, r: any) => s + getPositiveNumber(r.converted_amount), 0);
 
     // Net profit = totalIncome - taxes - expenses - salaries - commissions - fees - future fund - product cost
     const netProfit = totalIncome - totalTax - totalExpenses - totalSalaries - totalCommission - totalFees - totalFuture - totalProduct;
 
     // Update salary_run with founder_profit
-    const { data: updatedRun, error: updateErr } = await this.client.from('salary_runs').update({ founder_profit: roundTo(netProfit,4) }).eq('id', salaryRunId).select().single();
+    const { data: updatedRun, error: updateErr } = await this.client.from('salary_runs').update({ founder_profit: roundTo(netProfit,4), base_currency: baseCurrency }).eq('id', salaryRunId).select().single();
     if (updateErr || !updatedRun) throw formatError(updateErr, 'Failed to update salary run with founder profit.');
 
     // Distribute according to existing logic
@@ -2524,62 +2735,12 @@ export class SupabaseApiService {
     return { success: true, data: created };
   }
 
-  async getFinanceDashboard(projectId?: string) {
-    const access = await this.getCurrentAccessContext();
-    requirePermission(access, 'finance.view', 'You do not have permission to view finance dashboard.');
-
-    // Load settings
-    const { data: settingsData } = await this.client.from('finance_settings').select('setting_key, setting_value');
-    const settings = (ensureArray(settingsData) as any[]).reduce((acc: any, s: any) => ({ ...acc, [s.setting_key]: s.setting_value }), {} as Record<string,string>);
-
-    // Query payments
-    let paymentsQuery = this.client.from('payments').select('amount, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, status, currency, payment_date').order('payment_date', { ascending: false }).limit(1000);
-    if (projectId) paymentsQuery = paymentsQuery.eq('project_id', projectId);
-    const { data: paymentsData, error: paymentsError } = await paymentsQuery;
-    if (paymentsError) throw formatError(paymentsError, 'Unable to load payments for dashboard.');
-
-    // Query expenses
-    let expensesQuery = this.client.from('expenses').select('amount, currency').limit(1000);
-    if (projectId) expensesQuery = expensesQuery.eq('project_id', projectId);
-    const { data: expensesData, error: expensesError } = await expensesQuery;
-    if (expensesError) throw formatError(expensesError, 'Unable to load expenses for dashboard.');
-
-    // Query salary runs
-    const { data: salaryRunsData } = await this.client.from('salary_runs').select('total_salary, future_fund_amount, tax_amount, commission_amount');
-
-    // Query commissions
-    const { data: commissionsData } = await this.client.from('commission_records').select('amount');
-
-    const payments = ensureArray(paymentsData || []).map((p: any) => ({
-      amount: Number(p.base_amount ?? p.received_amount ?? p.amount ?? 0),
-      tax: Number(p.tax_amount || 0),
-      commission: Number(p.commission_amount || 0),
-      transactionFee: Number(p.transaction_fee_amount || 0),
-      productCost: Number(p.product_cost_amount || 0),
-    }));
-
-    const expenses = ensureArray(expensesData || []).map((e: any) => ({ amount: Number(e.amount || 0) }));
-
-    const revenue = payments.reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
-    const taxTotal = payments.reduce((s: number, p: any) => s + Number(p.tax || 0), 0);
-    const commissionTotal = payments.reduce((s: number, p: any) => s + Number(p.commission || 0), 0) + ensureArray(commissionsData || []).reduce((s:number,c:any)=>s+Number(c.amount||0),0);
-    const transactionFeeTotal = payments.reduce((s: number, p: any) => s + Number(p.transactionFee || 0), 0);
-    const productCostTotal = payments.reduce((s: number, p: any) => s + Number(p.productCost || 0), 0);
-    const expenseTotal = expenses.reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
-    const salariesTotal = ensureArray(salaryRunsData || []).reduce((s:number, r:any)=>s + Number(r.total_salary || 0), 0);
-
-    const summary = calculateFinanceSummary({
-      revenue,
-      expenses: expenseTotal,
-      salaries: salariesTotal,
-      taxes: taxTotal,
-      commissions: commissionTotal,
-      transactionFees: transactionFeeTotal,
-      productCosts: productCostTotal,
-      futureFundRate: Number(settings.future_fund_percentage || 10),
-    });
-
-    return { success: true, data: { summary, revenue, expenseTotal, salariesTotal } };
+  async getFinanceDashboard(_projectId?: string) {
+    throw new ApiError(
+      'getFinanceDashboard is disabled. Use getFinanceStats for all finance calculations.',
+      410,
+      'FINANCE_DASHBOARD_DEPRECATED'
+    );
   }
 
   async addProjectMember(projectId: string, userId: string, role: string) {
@@ -4795,7 +4956,7 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     let query = this.client
       .from('expenses')
-      .select('id, category, description, amount, currency, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at, project:projects(id,name)')
+      .select('id, category, description, amount, currency, base_currency, exchange_rate, converted_amount, fx_rate_used, fx_timestamp, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at, project:projects(id,name)')
       .order('expense_date', { ascending: false })
       .limit(1000);
 
@@ -4813,6 +4974,7 @@ export class SupabaseApiService {
     requirePermission(access, 'finance.expenses.manage', 'You do not have permission to create expenses.');
     const paymentMethod = normalizeFinancePaymentMethod(data?.payment_method);
     const paymentMethodOther = paymentMethod === 'other' ? String(data?.payment_method_other || '').trim() || null : null;
+    const currencyService = this.getCurrencyService();
     const expensePayload = {
       category: data?.category,
       description: data?.description,
@@ -4824,9 +4986,23 @@ export class SupabaseApiService {
       project_id: data?.project_id || null,
       receipt_url: data?.receipt_url || null,
     };
+    const snapshot = await currencyService.resolveSnapshot(Number(expensePayload.amount || 0), String(expensePayload.currency || 'USD'));
+
+    const expenseInsertPayload = {
+      ...expensePayload,
+      created_by: access.profile.id,
+      original_amount: snapshot.original_amount,
+      original_currency: snapshot.original_currency,
+      base_currency: snapshot.base_currency,
+      exchange_rate: snapshot.exchange_rate,
+      base_amount: snapshot.converted_amount,
+      converted_amount: snapshot.converted_amount,
+      fx_rate_used: snapshot.fx_rate_used,
+      fx_timestamp: snapshot.fx_timestamp,
+    };
 
     const { data: created, error } = await this.client.rpc('create_finance_expense_secure_v2', {
-      p_expense: expensePayload,
+      p_expense: expenseInsertPayload,
     });
 
     if (!error && created) {
@@ -4835,10 +5011,7 @@ export class SupabaseApiService {
 
     const { data: fallbackCreated, error: fallbackError } = await this.client
       .from('expenses')
-      .insert({
-        ...expensePayload,
-        created_by: access.profile.id,
-      })
+      .insert(expenseInsertPayload)
       .select()
       .single();
 
@@ -4847,6 +5020,48 @@ export class SupabaseApiService {
     }
 
     return { success: true, data: fallbackCreated };
+  }
+
+  async updateFinanceExpense(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.expenses.manage', 'You do not have permission to update expenses.');
+    const paymentMethod = normalizeFinancePaymentMethod(data?.payment_method);
+    const paymentMethodOther = paymentMethod === 'other' ? String(data?.payment_method_other || '').trim() || null : null;
+    const currencyService = this.getCurrencyService();
+    const expensePayload = {
+      category: data?.category,
+      description: data?.description,
+      amount: Number(data?.amount || 0),
+      currency: data?.currency || 'USD',
+      expense_date: data?.expense_date,
+      payment_method: paymentMethod,
+      payment_method_other: paymentMethodOther,
+      project_id: data?.project_id || null,
+      receipt_url: data?.receipt_url || null,
+    };
+    const snapshot = await currencyService.resolveSnapshot(Number(expensePayload.amount || 0), String(expensePayload.currency || 'USD'));
+
+    const payload = {
+      ...expensePayload,
+      original_amount: snapshot.original_amount,
+      original_currency: snapshot.original_currency,
+      base_currency: snapshot.base_currency,
+      exchange_rate: snapshot.exchange_rate,
+      base_amount: snapshot.converted_amount,
+      converted_amount: snapshot.converted_amount,
+      fx_rate_used: snapshot.fx_rate_used,
+      fx_timestamp: snapshot.fx_timestamp,
+    };
+
+    const { data: updated, error } = await this.client
+      .from('expenses')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !updated) throw formatError(error, 'Failed to update expense.');
+    return { success: true, data: updated };
   }
 
   async deleteFinanceExpense(id: string) {
@@ -4861,8 +5076,8 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.view', 'You do not have permission to view payments.');
     const currentUserId = String(access.profile.id);
-    const selectClause = 'id, client_name, amount, currency, base_currency, base_amount, payment_date, payment_method, payment_method_other, status, description, project_id, commission_assignee_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name), commission_assignee:profiles!payments_commission_assignee_id_fkey(id, name, email)';
-    const legacySelectClause = 'id, client_name, amount, currency, base_currency, base_amount, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name)';
+    const selectClause = 'id, client_name, original_amount, original_currency, amount, currency, base_currency, exchange_rate, base_amount, converted_amount, fx_rate_used, fx_timestamp, payment_date, payment_method, payment_method_other, status, description, project_id, commission_assignee_id, received_amount, tax_amount, tax_converted_amount, commission_amount, commission_converted_amount, transaction_fee_amount, transaction_fee_converted_amount, product_cost_amount, product_cost_converted_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name), commission_assignee:profiles!payments_commission_assignee_id_fkey(id, name, email)';
+    const legacySelectClause = 'id, client_name, amount, currency, base_currency, exchange_rate, base_amount, converted_amount, fx_rate_used, fx_timestamp, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name)';
     let query = this.client.from('payments').select(selectClause).order('payment_date', { ascending: false }).limit(1000);
 
     if (!access.canViewAllFinance) {
@@ -4892,13 +5107,24 @@ export class SupabaseApiService {
     const baseCurrency = String(settings.base_currency || 'USD').toUpperCase();
     const paymentCurrency = String(data?.currency || baseCurrency).toUpperCase();
     const grossAmount = Number(data?.received_amount || data?.amount || 0);
-    const baseAmount = await this.resolveBaseAmount(grossAmount, paymentCurrency, baseCurrency);
+    const { rate: fxRateUsed, timestamp: fxTimestamp } = await this.resolveFxMetadata(paymentCurrency, baseCurrency);
+    const baseAmount = roundTo(grossAmount * fxRateUsed, 4);
+    const taxConvertedAmount = roundTo(Number(data?.tax_amount || 0) * fxRateUsed, 4);
+    const commissionConvertedAmount = roundTo(Number(data?.commission_amount || 0) * fxRateUsed, 4);
+    const transactionFeeConvertedAmount = roundTo(Number(data?.transaction_fee_amount || 0) * fxRateUsed, 4);
+    const productCostConvertedAmount = roundTo(Number(data?.product_cost_amount || 0) * fxRateUsed, 4);
     const paymentPayload = {
+      original_amount: grossAmount,
+      original_currency: paymentCurrency,
       client_name: data?.client_name,
       amount: Number(data?.amount || 0),
       currency: paymentCurrency,
       base_currency: baseCurrency,
+      exchange_rate: fxRateUsed,
       base_amount: baseAmount,
+      converted_amount: baseAmount,
+      fx_rate_used: fxRateUsed,
+      fx_timestamp: fxTimestamp,
       payment_date: data?.payment_date,
       payment_method: paymentMethod,
       payment_method_other: paymentMethodOther,
@@ -4908,9 +5134,13 @@ export class SupabaseApiService {
       commission_assignee_id: data?.commission_assignee_id || null,
       received_amount: Number(data?.received_amount || data?.amount || 0),
       tax_amount: Number(data?.tax_amount || 0),
+      tax_converted_amount: taxConvertedAmount,
       commission_amount: Number(data?.commission_amount || 0),
+      commission_converted_amount: commissionConvertedAmount,
       transaction_fee_amount: Number(data?.transaction_fee_amount || 0),
+      transaction_fee_converted_amount: transactionFeeConvertedAmount,
       product_cost_amount: Number(data?.product_cost_amount || 0),
+      product_cost_converted_amount: productCostConvertedAmount,
       invoice_id: data?.invoice_id || null,
     };
 
@@ -4934,7 +5164,9 @@ export class SupabaseApiService {
       project_id: paymentPayload.project_id,
       received_amount: paymentPayload.received_amount,
       tax_amount: paymentPayload.tax_amount,
+      tax_converted_amount: paymentPayload.tax_converted_amount,
       commission_amount: paymentPayload.commission_amount,
+      commission_converted_amount: paymentPayload.commission_converted_amount,
       invoice_id: paymentPayload.invoice_id,
       created_by: access.profile.id,
     };
@@ -4945,9 +5177,17 @@ export class SupabaseApiService {
     let fallbackInserted = await attemptInsert({
       ...legacyPaymentPayload,
       base_currency: paymentPayload.base_currency,
+      exchange_rate: paymentPayload.exchange_rate,
       base_amount: paymentPayload.base_amount,
+      converted_amount: paymentPayload.converted_amount,
+      tax_converted_amount: paymentPayload.tax_converted_amount,
+      commission_converted_amount: paymentPayload.commission_converted_amount,
       transaction_fee_amount: paymentPayload.transaction_fee_amount,
       product_cost_amount: paymentPayload.product_cost_amount,
+      transaction_fee_converted_amount: paymentPayload.transaction_fee_converted_amount,
+      product_cost_converted_amount: paymentPayload.product_cost_converted_amount,
+      fx_rate_used: paymentPayload.fx_rate_used,
+      fx_timestamp: paymentPayload.fx_timestamp,
     });
 
     if (fallbackInserted.error && this.isMissingColumnError(fallbackInserted.error)) {
@@ -4972,14 +5212,25 @@ export class SupabaseApiService {
     const baseCurrency = String(settings.base_currency || 'USD').toUpperCase();
     const paymentCurrency = String(data?.currency || baseCurrency).toUpperCase();
     const grossAmount = Number(data?.received_amount || data?.amount || 0);
-    const baseAmount = await this.resolveBaseAmount(grossAmount, paymentCurrency, baseCurrency);
+    const { rate: fxRateUsed, timestamp: fxTimestamp } = await this.resolveFxMetadata(paymentCurrency, baseCurrency);
+    const baseAmount = roundTo(grossAmount * fxRateUsed, 4);
+    const taxConvertedAmount = roundTo(Number(data?.tax_amount || 0) * fxRateUsed, 4);
+    const commissionConvertedAmount = roundTo(Number(data?.commission_amount || 0) * fxRateUsed, 4);
+    const transactionFeeConvertedAmount = roundTo(Number(data?.transaction_fee_amount || 0) * fxRateUsed, 4);
+    const productCostConvertedAmount = roundTo(Number(data?.product_cost_amount || 0) * fxRateUsed, 4);
 
     const payload = {
+      original_amount: grossAmount,
+      original_currency: paymentCurrency,
       client_name: data?.client_name,
       amount: Number(data?.amount || 0),
       currency: paymentCurrency,
       base_currency: baseCurrency,
+      exchange_rate: fxRateUsed,
       base_amount: baseAmount,
+      converted_amount: baseAmount,
+      fx_rate_used: fxRateUsed,
+      fx_timestamp: fxTimestamp,
       payment_date: data?.payment_date,
       payment_method: paymentMethod,
       payment_method_other: paymentMethodOther,
@@ -4989,9 +5240,13 @@ export class SupabaseApiService {
       commission_assignee_id: data?.commission_assignee_id || null,
       received_amount: Number(data?.received_amount || data?.amount || 0),
       tax_amount: Number(data?.tax_amount || 0),
+      tax_converted_amount: taxConvertedAmount,
       commission_amount: Number(data?.commission_amount || 0),
+      commission_converted_amount: commissionConvertedAmount,
       transaction_fee_amount: Number(data?.transaction_fee_amount || 0),
+      transaction_fee_converted_amount: transactionFeeConvertedAmount,
       product_cost_amount: Number(data?.product_cost_amount || 0),
+      product_cost_converted_amount: productCostConvertedAmount,
       invoice_id: data?.invoice_id || null,
     };
 
@@ -5016,7 +5271,9 @@ export class SupabaseApiService {
       project_id: payload.project_id,
       received_amount: payload.received_amount,
       tax_amount: payload.tax_amount,
+      tax_converted_amount: payload.tax_converted_amount,
       commission_amount: payload.commission_amount,
+      commission_converted_amount: payload.commission_converted_amount,
       invoice_id: payload.invoice_id,
       updated_at: new Date().toISOString(),
     };
@@ -5027,10 +5284,18 @@ export class SupabaseApiService {
     let fallbackUpdatedAttempt = await attemptUpdate({
       ...legacyPaymentPayload,
       base_currency: payload.base_currency,
+      exchange_rate: payload.exchange_rate,
       base_amount: payload.base_amount,
+      converted_amount: payload.converted_amount,
+      tax_converted_amount: payload.tax_converted_amount,
+      commission_converted_amount: payload.commission_converted_amount,
       transaction_fee_amount: payload.transaction_fee_amount,
       product_cost_amount: payload.product_cost_amount,
+      transaction_fee_converted_amount: payload.transaction_fee_converted_amount,
+      product_cost_converted_amount: payload.product_cost_converted_amount,
       commission_assignee_id: payload.commission_assignee_id,
+      fx_rate_used: payload.fx_rate_used,
+      fx_timestamp: payload.fx_timestamp,
     });
 
     if (fallbackUpdatedAttempt.error && this.isMissingColumnError(fallbackUpdatedAttempt.error)) {
@@ -5143,26 +5408,37 @@ export class SupabaseApiService {
     // Create payment record referencing the project
     // Compute base currency conversion if needed
     let baseCurrency = (settings.base_currency as string) || 'USD';
+    const paymentCurrency = String(payload.currency || installment.currency || 'USD').toUpperCase();
     let baseAmount = Number(received || 0);
+    let fxRateUsed = 1;
+    let fxTimestamp = new Date().toISOString();
     try {
-      const installmentCurrency = installment.currency || (installment.payment_plan?.currency) || 'USD';
-      if (String(installmentCurrency) !== String(baseCurrency)) {
-        const { data: fxData } = await this.client.from('fx_rates').select('rate, base_currency, target_currency').eq('base_currency', baseCurrency).eq('target_currency', installmentCurrency).limit(1).single();
-        if (fxData && fxData.rate) {
-          // fx.rate is base->target, so to convert target->base: base = target / rate
-          baseAmount = Number(received) / Number(fxData.rate || 1);
-        }
-      }
+      const currencyService = this.getCurrencyService();
+      const snapshot = await currencyService.resolveSnapshot(received, paymentCurrency, baseCurrency);
+      baseAmount = snapshot.converted_amount;
+      fxRateUsed = snapshot.fx_rate_used;
+      fxTimestamp = snapshot.fx_timestamp;
     } catch (e) {
       baseAmount = Number(received || 0);
     }
 
+    const taxConvertedAmount = roundTo(Number(taxAmount || 0) * fxRateUsed, 4);
+    const commissionConvertedAmount = roundTo(Number(commissionAmount || 0) * fxRateUsed, 4);
+    const transactionFeeConvertedAmount = roundTo(Number(transactionFeeAmount || 0) * fxRateUsed, 4);
+    const productCostConvertedAmount = roundTo(Number(productCostAmount || 0) * fxRateUsed, 4);
+
     const paymentPayload = {
       client_name: null,
       amount: installment.due_amount || received,
-      currency: payload.currency || installment.currency || 'USD',
+      original_amount: received,
+      original_currency: paymentCurrency,
+      currency: paymentCurrency,
       base_currency: baseCurrency,
+      exchange_rate: fxRateUsed,
       base_amount: roundTo(baseAmount,4),
+      converted_amount: roundTo(baseAmount,4),
+      fx_rate_used: fxRateUsed,
+      fx_timestamp: fxTimestamp,
       payment_date: new Date().toISOString().split('T')[0],
       payment_method: normalizeFinancePaymentMethod(payload.payment_method),
       payment_method_other: payload.payment_method_other || null,
@@ -5171,9 +5447,13 @@ export class SupabaseApiService {
       project_id: installment.payment_plan?.project_id || null,
       received_amount: received,
       tax_amount: roundTo(taxAmount,4),
+      tax_converted_amount: taxConvertedAmount,
       commission_amount: roundTo(commissionAmount,4),
+      commission_converted_amount: commissionConvertedAmount,
       transaction_fee_amount: roundTo(transactionFeeAmount,4),
+      transaction_fee_converted_amount: transactionFeeConvertedAmount,
       product_cost_amount: roundTo(productCostAmount,4),
+      product_cost_converted_amount: productCostConvertedAmount,
       invoice_id: null,
       created_by: access.profile.id,
     };
@@ -5188,8 +5468,15 @@ export class SupabaseApiService {
         const ffPayload = {
           source: 'installment',
           source_id: installmentId,
+          original_amount: roundTo(futureFundAmount,4),
+          original_currency: paymentCurrency,
           amount: roundTo(futureFundAmount,4),
-          currency: paymentPayload.currency || 'USD',
+          currency: paymentCurrency,
+          base_currency: baseCurrency,
+          exchange_rate: fxRateUsed,
+          converted_amount: roundTo(futureFundAmount * fxRateUsed, 4),
+          fx_rate_used: fxRateUsed,
+          fx_timestamp: fxTimestamp,
           month: month,
         };
         await this.client.from('future_fund_transactions').insert(ffPayload);
@@ -5301,7 +5588,7 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     let query = this.client
       .from('salary_runs')
-      .select('id, salary_month, currency, created_at, created_by, salary_entries(id, user_id, months_count, monthly_salary, total_salary, notes, profiles:user_id(id, name))')
+      .select('id, salary_month, currency, base_currency, exchange_rate, converted_amount, fx_rate_used, fx_timestamp, created_at, created_by, salary_entries(id, user_id, months_count, monthly_salary, total_salary, notes, profiles:user_id(id, name))')
       .order('salary_month', { ascending: false });
     if (!access.canViewAllFinance) {
       query = query.eq('created_by', currentUserId);
@@ -5361,11 +5648,20 @@ export class SupabaseApiService {
     let runId = runSearch?.id;
 
     if (!runId) {
+      const currencyService = this.getCurrencyService();
+      const snapshot = await currencyService.resolveSnapshot(0, String(data.currency || 'USD'));
       const { data: newRun, error: createError } = await this.client
         .from('salary_runs')
         .insert({
           salary_month: salaryDate,
           currency: data.currency || 'USD',
+          original_amount: 0,
+          original_currency: String(data.currency || 'USD').toUpperCase(),
+          base_currency: snapshot.base_currency,
+          exchange_rate: snapshot.exchange_rate,
+          converted_amount: 0,
+          fx_rate_used: snapshot.fx_rate_used,
+          fx_timestamp: snapshot.fx_timestamp,
           total_salary: 0,
           created_by: currentUserId
         })
@@ -5381,6 +5677,8 @@ export class SupabaseApiService {
     const bonus = Number(data.bonus) || 0;
     const deductions = Number(data.deductions) || 0;
     const totalSalary = (baseSalary * monthsCount) + bonus - deductions;
+    const currencyService = this.getCurrencyService();
+    const salarySnapshot = await currencyService.resolveSnapshot(totalSalary, String(data.currency || 'USD'));
 
     const details = JSON.stringify({
       bonus,
@@ -5398,12 +5696,22 @@ export class SupabaseApiService {
         months_count: monthsCount,
         monthly_salary: baseSalary,
         total_salary: totalSalary,
+        original_amount: totalSalary,
+        original_currency: String(data.currency || 'USD').toUpperCase(),
+        base_currency: salarySnapshot.base_currency,
+        exchange_rate: salarySnapshot.exchange_rate,
+        converted_amount: salarySnapshot.converted_amount,
+        fx_rate_used: salarySnapshot.fx_rate_used,
+        fx_timestamp: salarySnapshot.fx_timestamp,
         notes: details
       })
       .select()
       .single();
 
-    if (!entryError && entry) return { success: true, data: entry };
+    if (!entryError && entry) {
+      await this.recalculateSalaryRunTotal(runId);
+      return { success: true, data: entry };
+    }
 
     if (this.isMissingColumnError(entryError)) {
       const { data: fallbackEntry, error: fallbackError } = await this.client
@@ -5414,34 +5722,119 @@ export class SupabaseApiService {
           months_count: monthsCount,
           monthly_salary: baseSalary,
           total_salary: totalSalary,
+          original_amount: totalSalary,
+          original_currency: String(data.currency || 'USD').toUpperCase(),
+          base_currency: salarySnapshot.base_currency,
+          exchange_rate: salarySnapshot.exchange_rate,
+          converted_amount: salarySnapshot.converted_amount,
+          fx_rate_used: salarySnapshot.fx_rate_used,
+          fx_timestamp: salarySnapshot.fx_timestamp,
           notes: details,
         })
         .select()
         .single();
 
-      if (!fallbackError && fallbackEntry) return { success: true, data: fallbackEntry };
+      if (!fallbackError && fallbackEntry) {
+        await this.recalculateSalaryRunTotal(runId);
+        return { success: true, data: fallbackEntry };
+      }
       throw formatError(fallbackError || entryError, 'Failed to create salary entry.');
     }
 
     throw formatError(entryError, 'Failed to create salary entry.');
   }
 
+  private async recalculateSalaryRunTotal(salaryRunId: string): Promise<number> {
+    const { data: entries, error } = await this.client
+      .from('salary_entries')
+      .select('total_salary, monthly_salary, months_count, converted_amount')
+      .eq('salary_run_id', salaryRunId);
+
+    if (error) throw formatError(error, 'Failed to recalculate salary run total.');
+
+    const totalSalary = ensureArray(entries).reduce((sum: number, entry: any) => {
+      const entryTotal = getPositiveNumber(entry?.total_salary);
+      if (entryTotal > 0) return sum + entryTotal;
+      const monthlySalary = getPositiveNumber(entry?.monthly_salary);
+      const monthsCount = Number(entry?.months_count || 1);
+      return sum + monthlySalary * monthsCount;
+    }, 0);
+    const totalConvertedSalary = ensureArray(entries).reduce((sum: number, entry: any) => {
+      const entryConverted = getPositiveNumber(entry?.converted_amount);
+      if (entryConverted > 0) return sum + entryConverted;
+      const entryTotal = getPositiveNumber(entry?.total_salary);
+      if (entryTotal > 0) return sum + entryTotal;
+      const monthlySalary = getPositiveNumber(entry?.monthly_salary);
+      const monthsCount = Number(entry?.months_count || 1);
+      return sum + monthlySalary * monthsCount;
+    }, 0);
+
+    const { data: salaryRun, error: runError } = await this.client
+      .from('salary_runs')
+      .select('currency, base_currency, exchange_rate, fx_rate_used, fx_timestamp')
+      .eq('id', salaryRunId)
+      .single();
+
+    if (runError || !salaryRun) throw formatError(runError, 'Failed to load salary run normalization metadata.');
+
+    const baseCurrency = String(salaryRun.base_currency || 'USD').toUpperCase();
+    let exchangeRate = Number(salaryRun.exchange_rate || salaryRun.fx_rate_used || 0);
+    let fxRateUsed = Number(salaryRun.fx_rate_used || salaryRun.exchange_rate || 0);
+    let fxTimestamp = String(salaryRun.fx_timestamp || '').trim();
+
+    if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+      const resolved = await this.resolveFxMetadata(String(salaryRun.currency || 'USD'), baseCurrency);
+      exchangeRate = resolved.rate;
+      fxRateUsed = resolved.rate;
+      fxTimestamp = resolved.timestamp;
+    }
+
+    const convertedAmount = totalConvertedSalary > 0 ? roundTo(totalConvertedSalary, 4) : roundTo(totalSalary * exchangeRate, 4);
+
+    const { error: updateError } = await this.client
+      .from('salary_runs')
+      .update({
+        original_amount: totalSalary,
+        original_currency: String(salaryRun.currency || 'USD').toUpperCase(),
+        total_salary: totalSalary,
+        converted_amount: convertedAmount,
+        base_currency: baseCurrency,
+        exchange_rate: exchangeRate,
+        fx_rate_used: fxRateUsed,
+        fx_timestamp: fxTimestamp || new Date().toISOString(),
+      })
+      .eq('id', salaryRunId);
+    if (updateError) throw formatError(updateError, 'Failed to update salary run total.');
+    return totalSalary;
+  }
+
   async updateFinanceSalary(id: string, data: any) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.salaries.manage', 'You do not have permission to update salary records.');
+
+    const { data: existingEntry, error: existingError } = await this.client
+      .from('salary_entries')
+      .select('salary_run_id')
+      .eq('id', id)
+      .single();
+    if (existingError || !existingEntry) throw formatError(existingError, 'Unable to find salary entry to update.');
+    const salaryRunId = existingEntry.salary_run_id;
+
     // Basic update for the entry
     const monthsCount = Number(data.salary_months) || 1;
     const baseSalary = Number(data.base_salary) || 0;
     const bonus = Number(data.bonus) || 0;
     const deductions = Number(data.deductions) || 0;
     const totalSalary = (baseSalary * monthsCount) + bonus - deductions;
+    const currencyService = this.getCurrencyService();
+    const salarySnapshot = await currencyService.resolveSnapshot(totalSalary, String(data.currency || 'USD'));
 
     const details = JSON.stringify({
       bonus,
       deductions,
       payment_method: data.payment_method,
       payment_method_other: data.payment_method_other,
-      notes: data.notes
+      notes: data.notes,
     });
 
     const { data: entry, error } = await this.client
@@ -5451,13 +5844,23 @@ export class SupabaseApiService {
         months_count: monthsCount,
         monthly_salary: baseSalary,
         total_salary: totalSalary,
-        notes: details
+        original_amount: totalSalary,
+        original_currency: String(data.currency || 'USD').toUpperCase(),
+        base_currency: salarySnapshot.base_currency,
+        exchange_rate: salarySnapshot.exchange_rate,
+        converted_amount: salarySnapshot.converted_amount,
+        fx_rate_used: salarySnapshot.fx_rate_used,
+        fx_timestamp: salarySnapshot.fx_timestamp,
+        notes: details,
       })
       .eq('id', id)
       .select()
       .single();
 
-    if (!error && entry) return { success: true, data: entry };
+    if (!error && entry) {
+      await this.recalculateSalaryRunTotal(salaryRunId);
+      return { success: true, data: entry };
+    }
 
     if (this.isMissingColumnError(error)) {
       const { data: fallbackEntry, error: fallbackError } = await this.client
@@ -5467,13 +5870,23 @@ export class SupabaseApiService {
           months_count: monthsCount,
           monthly_salary: baseSalary,
           total_salary: totalSalary,
+          original_amount: totalSalary,
+          original_currency: String(data.currency || 'USD').toUpperCase(),
+          base_currency: salarySnapshot.base_currency,
+          exchange_rate: salarySnapshot.exchange_rate,
+          converted_amount: salarySnapshot.converted_amount,
+          fx_rate_used: salarySnapshot.fx_rate_used,
+          fx_timestamp: salarySnapshot.fx_timestamp,
           notes: details,
         })
         .eq('id', id)
         .select()
         .single();
 
-      if (!fallbackError && fallbackEntry) return { success: true, data: fallbackEntry };
+      if (!fallbackError && fallbackEntry) {
+        await this.recalculateSalaryRunTotal(salaryRunId);
+        return { success: true, data: fallbackEntry };
+      }
       throw formatError(fallbackError || error, 'Failed to update salary entry.');
     }
 
@@ -5483,12 +5896,23 @@ export class SupabaseApiService {
   async deleteFinanceSalary(id: string) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.salaries.manage', 'You do not have permission to delete salary records.');
+
+    const { data: existingEntry, error: existingError } = await this.client
+      .from('salary_entries')
+      .select('salary_run_id')
+      .eq('id', id)
+      .single();
+    if (existingError || !existingEntry) throw formatError(existingError, 'Unable to find salary entry to delete.');
+    const salaryRunId = existingEntry.salary_run_id;
+
     const { error } = await this.client
       .from('salary_entries')
       .delete()
       .eq('id', id);
 
     if (error) throw formatError(error, 'Failed to delete salary entry.');
+
+    await this.recalculateSalaryRunTotal(salaryRunId);
     return { success: true };
   }
 
@@ -5598,12 +6022,40 @@ export class SupabaseApiService {
   }
 
   async getCurrencies() {
-    const { data, error } = await this.client.from('system_currencies').select('*').order('code', { ascending: true });
-    // If table doesn't exist yet, return defaults
+    const [currenciesRes, fxRatesRes] = await Promise.all([
+      this.client.from('system_currencies').select('*').order('code', { ascending: true }),
+      this.client.from('fx_rates').select('base_currency, target_currency, rate, updated_at'),
+    ]);
+    const { data, error } = currenciesRes;
     if (error) {
-      return { success: true, data: [{ code: 'USD', symbol: '$', name: 'US Dollar' }, { code: 'EUR', symbol: '€', name: 'Euro' }, { code: 'GBP', symbol: '£', name: 'British Pound' }, { code: 'PKR', symbol: 'Rs', name: 'Pakistani Rupee' }] };
+      return {
+        success: true,
+        data: [
+          { currency_code: 'USD', symbol: '$', name: 'US Dollar', rate_vs_base_currency: 1, updated_at: new Date().toISOString() },
+          { currency_code: 'EUR', symbol: 'EUR', name: 'Euro', rate_vs_base_currency: 1, updated_at: new Date().toISOString() },
+          { currency_code: 'GBP', symbol: 'GBP', name: 'British Pound', rate_vs_base_currency: 1, updated_at: new Date().toISOString() },
+          { currency_code: 'PKR', symbol: 'Rs', name: 'Pakistani Rupee', rate_vs_base_currency: 1, updated_at: new Date().toISOString() },
+        ],
+      };
     }
-    return { success: true, data };
+
+    const baseCurrency = String((await this.loadFinanceSettingsMap()).base_currency || 'USD').toUpperCase();
+    const fxLookup = buildFxRateLookup(ensureArray((fxRatesRes as any)?.data));
+
+    return {
+      success: true,
+      data: ensureArray(data).map((row: any) => {
+        const code = String(row.code || '').toUpperCase();
+        const resolvedRate = code === baseCurrency ? 1 : resolveLookupRate(fxLookup, baseCurrency, code);
+        return {
+          currency_code: code,
+          symbol: row.symbol,
+          name: row.name,
+          rate_vs_base_currency: resolvedRate > 0 ? resolvedRate : 0,
+          updated_at: row.created_at || null,
+        };
+      }),
+    };
   }
 
   async getFxRates(baseCurrency?: string) {
@@ -5649,6 +6101,11 @@ export class SupabaseApiService {
       }
 
       await this.client.from('fx_rates').upsert(rows, { onConflict: 'base_currency,target_currency' });
+    } else if (currencyCode === baseCurrency) {
+      await this.client.from('fx_rates').upsert(
+        [{ base_currency: baseCurrency, target_currency: currencyCode, rate: 1 }],
+        { onConflict: 'base_currency,target_currency' }
+      );
     }
 
     return { success: true, data: created };
@@ -5656,9 +6113,13 @@ export class SupabaseApiService {
 
   async deleteCurrency(id: string) {
     const { data: currencyRow } = await this.client.from('system_currencies').select('code').eq('id', id).single();
+    const baseCurrency = String((await this.loadFinanceSettingsMap()).base_currency || 'USD').toUpperCase();
+    const currencyCode = String((currencyRow as any)?.code || '').toUpperCase();
+    if (currencyCode && currencyCode === baseCurrency) {
+      throw new ApiError('The base currency cannot be deleted.', 400, 'FINANCE_BASE_CURRENCY_DELETE_BLOCKED');
+    }
     const { error } = await this.client.from('system_currencies').delete().eq('id', id);
     if (error) throw formatError(error, 'Failed to delete currency.');
-    const currencyCode = String((currencyRow as any)?.code || '').toUpperCase();
     if (currencyCode) {
       await this.client.from('fx_rates').delete().or(`base_currency.eq.${currencyCode},target_currency.eq.${currencyCode}`);
     }
@@ -5774,27 +6235,37 @@ export class SupabaseApiService {
       ? this.getFoundersEquityTotal()
       : Promise.resolve({ success: true, data: { data: { total: 0 } } });
     const salaryQuery = restrictToOwn
-      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).eq('created_by', currentUserId).limit(1000)
-      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).limit(1000);
+      ? this.client.from('salary_runs').select('total_salary, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, salary_month, currency, created_by, salary_entries(total_salary, monthly_salary, months_count, converted_amount)').gte('salary_month', bounds.start).lte('salary_month', bounds.end).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('salary_runs').select('total_salary, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, salary_month, currency, created_by, salary_entries(total_salary, monthly_salary, months_count, converted_amount)').gte('salary_month', bounds.start).lte('salary_month', bounds.end).limit(1000);
     const allTimeSalaryQuery = restrictToOwn
-      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').eq('created_by', currentUserId).limit(1000)
-      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').limit(1000);
+      ? this.client.from('salary_runs').select('total_salary, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, salary_month, currency, created_by, salary_entries(total_salary, monthly_salary, months_count, converted_amount)').eq('created_by', currentUserId).limit(1000)
+      : this.client.from('salary_runs').select('total_salary, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, salary_month, currency, created_by, salary_entries(total_salary, monthly_salary, months_count, converted_amount)').limit(1000);
+    const paymentFields = 'original_amount, original_currency, amount, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, payment_date, status, received_amount, tax_amount, tax_converted_amount, commission_amount, commission_converted_amount, transaction_fee_amount, transaction_fee_converted_amount, product_cost_amount, product_cost_converted_amount, created_by';
+    const legacyPaymentFields = 'amount, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, payment_date, status, received_amount, tax_amount, commission_amount, created_by';
+    const paymentsQuery = restrictToOwn
+      ? this.client.from('payments').select(paymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('payments').select(paymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000);
+    const legacyPaymentsQuery = restrictToOwn
+      ? this.client.from('payments').select(legacyPaymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('payments').select(legacyPaymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000);
+    const allTimePaymentsQuery = restrictToOwn
+      ? this.client.from('payments').select(paymentFields).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('payments').select(paymentFields).limit(1000);
+    const allTimePaymentsLegacyQuery = restrictToOwn
+      ? this.client.from('payments').select(legacyPaymentFields).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('payments').select(legacyPaymentFields).limit(1000);
     const [paymentsRes, expensesRes, salaryRunsRes, foundersEquityRes, settingsRes, allTimePaymentsRes, allTimeExpensesRes, allTimeSalaryRunsRes] = await Promise.all([
+      this.executePaymentQueryWithMissingColumnFallback(paymentsQuery, legacyPaymentsQuery),
       restrictToOwn
-        ? this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
-      restrictToOwn
-        ? this.client.from('expenses').select('amount, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('expenses').select('amount, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
+        ? this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
       canViewSalaryData ? salaryQuery : Promise.resolve({ data: [], error: null as any }),
       foundersEquityPromise,
       this.getFinanceSettings(),
+      this.executePaymentQueryWithMissingColumnFallback(allTimePaymentsQuery, allTimePaymentsLegacyQuery),
       restrictToOwn
-        ? this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by').eq('created_by', currentUserId).limit(1000)
-        : this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount').limit(1000),
-      restrictToOwn
-        ? this.client.from('expenses').select('amount, currency, expense_date, created_by').eq('created_by', currentUserId).limit(1000)
-        : this.client.from('expenses').select('amount, currency, expense_date').limit(1000),
+        ? this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date, created_by').eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date').limit(1000),
       canViewSalaryData ? allTimeSalaryQuery : Promise.resolve({ data: [], error: null as any }),
     ]);
 
@@ -5817,27 +6288,26 @@ export class SupabaseApiService {
       targetCurrency = baseCurrency;
     }
     const normalizePayment = (payment: any) => {
-      const sourceCurrency = String(payment.base_amount ? payment.base_currency || baseCurrency : payment.currency || baseCurrency).toUpperCase();
-      const fallbackCurrency = String(payment.currency || sourceCurrency || baseCurrency).toUpperCase();
-      const amountCurrency = payment.base_amount ? sourceCurrency : fallbackCurrency;
-      const totalBaseAmount = convertCurrencyAmount(Number(payment.base_amount ?? payment.amount ?? 0), amountCurrency, targetCurrency, fxRates);
-      const receivedBaseAmount = convertCurrencyAmount(Number(payment.received_amount || 0), fallbackCurrency, targetCurrency, fxRates);
+      const convertedAmount = getNormalizedConvertedAmount(payment, 'payment');
       return {
         status: payment.status,
-        amount: totalBaseAmount,
-        base_amount: totalBaseAmount,
-        received_amount: receivedBaseAmount,
-        tax_amount: convertCurrencyAmount(Number(payment.tax_amount || 0), fallbackCurrency, targetCurrency, fxRates),
-        commission_amount: convertCurrencyAmount(Number(payment.commission_amount || 0), fallbackCurrency, targetCurrency, fxRates),
-        transaction_fee_amount: convertCurrencyAmount(Number(payment.transaction_fee_amount || 0), fallbackCurrency, targetCurrency, fxRates),
-        product_cost_amount: convertCurrencyAmount(Number(payment.product_cost_amount || 0), fallbackCurrency, targetCurrency, fxRates),
+        converted_amount: convertedAmount,
+        original_amount: getPositiveNumber(payment.original_amount),
+        received_amount: getPositiveNumber(payment.received_amount),
+        tax_amount: getPaymentDeductionValue(payment, 'tax_converted_amount', 'tax_amount'),
+        commission_amount: getPaymentDeductionValue(payment, 'commission_converted_amount', 'commission_amount'),
+        transaction_fee_amount: getPaymentDeductionValue(payment, 'transaction_fee_converted_amount', 'transaction_fee_amount'),
+        product_cost_amount: getPaymentDeductionValue(payment, 'product_cost_converted_amount', 'product_cost_amount'),
       };
     };
     const normalizeExpense = (expense: any) => ({
-      amount: convertCurrencyAmount(Number(expense.amount || 0), String(expense.currency || baseCurrency), targetCurrency, fxRates),
+      converted_amount: getNormalizedConvertedAmount(expense, 'expense'),
     });
     const normalizeSalary = (run: any) => ({
-      total_salary: convertCurrencyAmount(Number(run.total_salary || 0), String(run.currency || baseCurrency), targetCurrency, fxRates),
+      converted_amount:
+        getPositiveNumber(run.converted_amount) ||
+        getSalaryRunConvertedTotalFromEntries(run) ||
+        getSalaryRunTotalFromEntries(run),
     });
     const selectedSummary = summarizeFinanceRows(
       payments.map(normalizePayment),
@@ -5846,6 +6316,7 @@ export class SupabaseApiService {
       settings,
       Number((foundersEquityRes as any)?.data?.data?.total || 0)
     );
+    const convertSummaryAmount = (value: number) => convertCurrencyAmount(value, baseCurrency, targetCurrency, fxRates);
     const hasSelectedData =
       payments.length > 0 ||
       expenses.length > 0 ||
@@ -5862,25 +6333,44 @@ export class SupabaseApiService {
           settings,
           Number((foundersEquityRes as any)?.data?.data?.total || 0)
         );
+    const effectiveSummaryConverted = {
+      ...effectiveSummary.summary,
+      revenue: convertSummaryAmount(effectiveSummary.summary.revenue),
+      expenses: convertSummaryAmount(effectiveSummary.summary.expenses),
+      salaries: convertSummaryAmount(effectiveSummary.summary.salaries),
+      taxes: convertSummaryAmount(effectiveSummary.summary.taxes),
+      commissions: convertSummaryAmount(effectiveSummary.summary.commissions),
+      transactionFees: convertSummaryAmount(effectiveSummary.summary.transactionFees),
+      productCosts: convertSummaryAmount(effectiveSummary.summary.productCosts),
+      grossProfit: convertSummaryAmount(effectiveSummary.summary.grossProfit),
+      futureFund: convertSummaryAmount(effectiveSummary.summary.futureFund),
+      founderProfit: convertSummaryAmount(effectiveSummary.summary.founderProfit),
+      liabilities: convertSummaryAmount(effectiveSummary.summary.liabilities),
+      netProfit: convertSummaryAmount(effectiveSummary.summary.netProfit),
+    };
+    const effectiveDistributionConverted = effectiveSummary.distribution.map((item) => ({
+      ...item,
+      amount: convertSummaryAmount(item.amount),
+    }));
 
     return {
       success: true,
       data: {
         data: {
-          revenue: effectiveSummary.summary.revenue,
-          expenses: effectiveSummary.summary.expenses,
-          salaries: effectiveSummary.summary.salaries,
-          taxes: effectiveSummary.summary.taxes,
-          commissions: effectiveSummary.summary.commissions,
-          transactionFees: effectiveSummary.summary.transactionFees,
-          productCosts: effectiveSummary.summary.productCosts,
-          netProfit: effectiveSummary.summary.netProfit,
-          grossProfit: effectiveSummary.summary.grossProfit,
-          futureFund: effectiveSummary.summary.futureFund,
-          founderProfit: effectiveSummary.summary.founderProfit,
-          liabilities: effectiveSummary.summary.liabilities,
-          outstanding: effectiveSummary.outstanding,
-          distribution: effectiveSummary.distribution,
+          revenue: effectiveSummaryConverted.revenue,
+          expenses: effectiveSummaryConverted.expenses,
+          salaries: effectiveSummaryConverted.salaries,
+          taxes: effectiveSummaryConverted.taxes,
+          commissions: effectiveSummaryConverted.commissions,
+          transactionFees: effectiveSummaryConverted.transactionFees,
+          productCosts: effectiveSummaryConverted.productCosts,
+          netProfit: effectiveSummaryConverted.netProfit,
+          grossProfit: effectiveSummaryConverted.grossProfit,
+          futureFund: effectiveSummaryConverted.futureFund,
+          founderProfit: effectiveSummaryConverted.founderProfit,
+          liabilities: effectiveSummaryConverted.liabilities,
+          outstanding: convertSummaryAmount(effectiveSummary.outstanding),
+          distribution: effectiveDistributionConverted,
           currency: targetCurrency,
           futureFundRate: effectiveSummary.futureFundPercentage,
           rangeUsed: hasSelectedData ? range : 'all',
@@ -5899,21 +6389,27 @@ export class SupabaseApiService {
     const selectedCurrency = String(currency || '').trim().toUpperCase();
     let baseCurrency = 'USD';
     let targetCurrency = selectedCurrency && selectedCurrency !== 'ALL' ? selectedCurrency : 'USD';
-    const { data: fxRatesData } = await this.client.from('fx_rates').select('base_currency, target_currency, rate');
-    const fxRates = buildFxRateLookup(ensureArray(fxRatesData));
     const settingsRes = await this.getFinanceSettings();
     const settings = (settingsRes as any)?.data?.data || {};
     baseCurrency = String(settings.base_currency || settings.currency || baseCurrency).toUpperCase();
     if (!selectedCurrency || selectedCurrency === 'ALL') {
       targetCurrency = baseCurrency;
     }
+    const { data: fxRatesData } = await this.client.from('fx_rates').select('base_currency, target_currency, rate');
+    const fxRates = buildFxRateLookup(ensureArray(fxRatesData));
+    const paymentFields = 'amount, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by';
+    const legacyPaymentFields = 'amount, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, payment_date, status, received_amount, tax_amount, commission_amount, created_by';
+    const paymentsQuery = restrictToOwn
+      ? this.client.from('payments').select(paymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('payments').select(paymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000);
+    const legacyPaymentsQuery = restrictToOwn
+      ? this.client.from('payments').select(legacyPaymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('payments').select(legacyPaymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000);
     const [paymentsRes, expensesRes] = await Promise.all([
+      this.executePaymentQueryWithMissingColumnFallback(paymentsQuery, legacyPaymentsQuery),
       restrictToOwn
-        ? this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
-      restrictToOwn
-        ? this.client.from('expenses').select('amount, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('expenses').select('amount, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
+        ? this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
     ]);
 
     if (paymentsRes.error) throw formatError(paymentsRes.error, 'Unable to load payment chart.');
@@ -5924,21 +6420,25 @@ export class SupabaseApiService {
       const key = monthKey(payment.payment_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
       if (payment.status === 'completed') {
-        const paymentCurrency = String(payment.base_amount ? payment.base_currency || baseCurrency : payment.currency || baseCurrency).toUpperCase();
-        const amountCurrency = payment.base_amount ? paymentCurrency : String(payment.currency || paymentCurrency || baseCurrency).toUpperCase();
-        buckets[key].revenue += convertCurrencyAmount(Number(payment.base_amount ?? payment.amount ?? 0), amountCurrency, targetCurrency, fxRates);
+        buckets[key].revenue += getNormalizedConvertedAmount(payment, 'payment');
       }
     });
     ensureArray(expensesRes.data).forEach((expense: any) => {
       const key = monthKey(expense.expense_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
-      buckets[key].expenses += convertCurrencyAmount(Number(expense.amount || 0), String(expense.currency || baseCurrency), targetCurrency, fxRates);
+      buckets[key].expenses += getNormalizedConvertedAmount(expense, 'expense');
     });
+
+    const convertedBuckets = Object.values(buckets).map((bucket) => ({
+      ...bucket,
+      revenue: convertCurrencyAmount(bucket.revenue, baseCurrency, targetCurrency, fxRates),
+      expenses: convertCurrencyAmount(bucket.expenses, baseCurrency, targetCurrency, fxRates),
+    }));
 
     return {
       success: true,
       data: {
-        data: Object.values(buckets),
+        data: convertedBuckets,
       },
     };
   }

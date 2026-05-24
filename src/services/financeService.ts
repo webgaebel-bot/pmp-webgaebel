@@ -25,7 +25,6 @@ export const createFinanceService = (
     | 'generatePaymentPlan'
     | 'getPaymentPlansForProject'
     | 'receiveInstallmentPayment'
-    | 'getFinanceDashboard'
     | 'createCommissionRecord'
     | 'runSalaryRun'
     | 'distributeFounderProfits'
@@ -54,7 +53,6 @@ export const createFinanceService = (
   generatePaymentPlan: (projectId: string, name: string | null, schedule: any) => (api as any).generatePaymentPlan(projectId, name, schedule),
   getPaymentPlansForProject: (projectId: string) => (api as any).getPaymentPlansForProject(projectId),
   receiveInstallmentPayment: (installmentId: string, payload: any) => (api as any).receiveInstallmentPayment(installmentId, payload),
-  getFinanceDashboard: (projectId?: string) => (api as any).getFinanceDashboard(projectId),
   createCommissionRecord: (data: any) => (api as any).createCommissionRecord(data),
   getCommissionRecords: (projectId?: string) => (api as any).getCommissionRecords(projectId),
   payCommission: (commissionId: string, amount?: number) => (api as any).payCommission(commissionId, amount),

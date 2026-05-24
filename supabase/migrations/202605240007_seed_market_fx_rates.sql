@@ -1,4 +1,6 @@
--- Ensure FX rates table exists for currency conversion paths used by finance calculations.
+-- Replace placeholder FX values with the market rates provided by the user.
+-- These values are used by the dashboard, currency settings, and historical
+-- normalization helpers.
 
 create table if not exists public.fx_rates (
   id uuid primary key default gen_random_uuid(),
@@ -27,14 +29,20 @@ $$;
 
 insert into public.fx_rates (base_currency, target_currency, rate)
 values
-  ('USD', 'PKR', 285.00000000),
-  ('USD', 'AED', 3.67250000),
-  ('USD', 'EUR', 0.92000000),
-  ('USD', 'GBP', 0.80000000),
-  ('PKR', 'USD', 0.00350877),
-  ('AED', 'USD', 0.27229400),
-  ('EUR', 'USD', 1.08695652),
-  ('GBP', 'USD', 1.25000000)
+  ('USD', 'PKR', 278.14000000),
+  ('PKR', 'USD', 0.00359592),
+  ('USD', 'EUR', 0.86206897),
+  ('EUR', 'USD', 1.16000000),
+  ('USD', 'GBP', 0.74626866),
+  ('GBP', 'USD', 1.34000000),
+  ('USD', 'AED', 3.70370370),
+  ('AED', 'USD', 0.27000000),
+  ('EUR', 'PKR', 322.90000000),
+  ('PKR', 'EUR', 0.00309663),
+  ('GBP', 'PKR', 374.36000000),
+  ('PKR', 'GBP', 0.00267056),
+  ('AED', 'PKR', 75.86000000),
+  ('PKR', 'AED', 0.01318194)
 on conflict (base_currency, target_currency) do update
 set rate = excluded.rate,
     updated_at = now();

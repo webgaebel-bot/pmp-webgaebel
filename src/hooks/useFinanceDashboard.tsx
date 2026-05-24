@@ -10,7 +10,8 @@ export const useFinanceDashboard = (projectId?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res: any = await api.getFinanceDashboard(projectId ? `?projectId=${projectId}` : '');
+      void projectId;
+      const res: any = await api.getFinanceStats('month');
       setData(res.data);
     } catch (err) {
       setError(err);

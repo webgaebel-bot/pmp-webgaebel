@@ -8,7 +8,7 @@ import { api } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import { ModuleEmptyState, ModuleErrorState, ModuleLoadingState } from '@/components/common/ModuleState';
-import { calculateFinanceSummary, formatMoney } from '@/lib/financeEngine';
+import { formatMoney } from '@/lib/financeEngine';
 import {
   AreaChart,
   Area,
@@ -108,16 +108,6 @@ const FinanceDashboard: React.FC = () => {
   const distributionData = stats?.data?.distribution || [];
   const distributionColors = ['#0f766e', '#2563eb', '#f59e0b', '#7c3aed'];
   const currencyCode = stats?.data?.currency || currentSettings.base_currency || 'USD';
-  const financeSummary = calculateFinanceSummary({
-    revenue: Number(stats?.data?.revenue || 0),
-    expenses: Number(stats?.data?.expenses || 0),
-    salaries: Number(stats?.data?.salaries || 0),
-    taxes: Number(stats?.data?.taxes || 0),
-    commissions: Number(stats?.data?.commissions || 0),
-    transactionFees: Number(stats?.data?.transactionFees || 0),
-    productCosts: Number(stats?.data?.productCosts || 0),
-    futureFundRate: Number(stats?.data?.futureFundRate || 10),
-  });
 
   const statCards = [
     {
@@ -158,10 +148,10 @@ const FinanceDashboard: React.FC = () => {
   ];
 
   const profitCards = [
-    { title: 'Gross Profit', value: financeSummary.grossProfit },
+    { title: 'Gross Profit', value: stats?.data?.grossProfit || 0 },
     { title: 'Product Costs', value: stats?.data?.productCosts || 0 },
-    { title: 'Future Fund', value: financeSummary.futureFund },
-    { title: 'Founder Profit', value: financeSummary.founderProfit },
+    { title: 'Future Fund', value: stats?.data?.futureFund || 0 },
+    { title: 'Founder Profit', value: stats?.data?.founderProfit || 0 },
   ];
   const chartDistributionData = distributionData.filter((item: any) => Number(item.amount || 0) > 0 && item.label !== 'Founder Equity Allocated');
   const chartDistributionTotal = chartDistributionData.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
@@ -326,13 +316,13 @@ const FinanceDashboard: React.FC = () => {
         <Card>
           <CardContent className="p-5">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Liabilities</p>
-            <p className="mt-2 text-2xl font-semibold">{formatMoney(financeSummary.liabilities, currencyCode)}</p>
+            <p className="mt-2 text-2xl font-semibold">{formatMoney(stats?.data?.liabilities || 0, currencyCode)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-5">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Net Profit</p>
-            <p className="mt-2 text-2xl font-semibold">{formatMoney(financeSummary.netProfit, currencyCode)}</p>
+            <p className="mt-2 text-2xl font-semibold">{formatMoney(stats?.data?.netProfit || 0, currencyCode)}</p>
           </CardContent>
         </Card>
       </div>

@@ -545,6 +545,8 @@ create table if not exists public.payments (
   client_name text not null,
   amount numeric(14,2) not null default 0,
   currency text not null default 'USD',
+  base_currency text not null default 'USD',
+  base_amount numeric(18,4) not null default 0,
   payment_date date not null default current_date,
   payment_method text not null default 'bank_transfer',
   payment_method_other text,
@@ -555,6 +557,8 @@ create table if not exists public.payments (
   received_amount numeric(14,2) not null default 0,
   tax_amount numeric(14,2) not null default 0,
   commission_amount numeric(14,2) not null default 0,
+  transaction_fee_amount numeric(14,2) not null default 0,
+  product_cost_amount numeric(14,2) not null default 0,
   invoice_id text,
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -652,6 +656,13 @@ create table if not exists public.salary_entries (
   total_salary numeric(14,2) not null default 0,
   auto_calculated boolean not null default true,
   notes text,
+  original_amount numeric(18,4) not null default 0,
+  original_currency text not null default 'USD',
+  base_currency text not null default 'USD',
+  exchange_rate numeric(18,8) not null default 1,
+  converted_amount numeric(18,4) not null default 0,
+  fx_rate_used numeric(18,8) not null default 1,
+  fx_timestamp timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -692,7 +703,14 @@ alter table public.salary_entries
   add column if not exists monthly_salary numeric(14,2) not null default 0,
   add column if not exists total_salary numeric(14,2) not null default 0,
   add column if not exists auto_calculated boolean not null default true,
-  add column if not exists notes text;
+  add column if not exists notes text,
+  add column if not exists original_amount numeric(18,4) not null default 0,
+  add column if not exists original_currency text not null default 'USD',
+  add column if not exists base_currency text not null default 'USD',
+  add column if not exists exchange_rate numeric(18,8) not null default 1,
+  add column if not exists converted_amount numeric(18,4) not null default 0,
+  add column if not exists fx_rate_used numeric(18,8) not null default 1,
+  add column if not exists fx_timestamp timestamptz;
 
 create table if not exists public.project_taxes (
   id uuid primary key default gen_random_uuid(),
