@@ -33,6 +33,12 @@ interface Taxonomy {
   is_active: boolean;
 }
 
+function normalizeTaxonomyList(value: unknown): Taxonomy[] {
+  if (Array.isArray(value)) return value as Taxonomy[];
+  if (value && Array.isArray((value as any).data)) return (value as any).data as Taxonomy[];
+  return [];
+}
+
 export const ManageTaxonomies: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -51,9 +57,12 @@ export const ManageTaxonomies: React.FC = () => {
   const itemsPerPage = 8; // Ek page par kitne items dikhane hain
 
   // Fetch Data
-  const { data: taxonomies, isLoading, isError } = useQuery<Taxonomy[]>({
+  const { data: taxonomies, isLoading, isError } = useQuery<unknown>({
     queryKey: ['lead-taxonomies'],
-    queryFn: async () => api.get('/leads/taxonomies').then((res) => res.data),
+    queryFn: async () => {
+      const res = await api.get('/leads/taxonomies');
+      return normalizeTaxonomyList((res as any)?.data ?? res);
+    },
   });
 
   // Fetch distinct taxonomy types for the dropdown
@@ -61,31 +70,34 @@ export const ManageTaxonomies: React.FC = () => {
     queryKey: ['taxonomy-types'],
     queryFn: async () => {
       const res = await api.get('/leads/taxonomies');
-      const types = Array.from(new Set(res.data.map((t: any) => t.taxonomy_type)));
+      const rows = normalizeTaxonomyList((res as any)?.data ?? res);
+      const types = Array.from(new Set(rows.map((t: any) => t.taxonomy_type)));
       return types;
     },
   });
 
+  const taxonomyList = useMemo(() => normalizeTaxonomyList(taxonomies), [taxonomies]);
+
   // 1. Calculate Stats Cards Metrics (Memoized)
   const stats = useMemo(() => {
-    if (!taxonomies) return { total: 0, niches: 0, services: 0, active: 0 };
+    if (!taxonomyList.length) return { total: 0, niches: 0, services: 0, active: 0 };
     return {
-      total: taxonomies.length,
-      niches: taxonomies.filter(t => t.taxonomy_type === 'niche').length,
-      services: taxonomies.filter(t => t.taxonomy_type === 'service').length,
-      active: taxonomies.filter(t => t.is_active).length,
+      total: taxonomyList.length,
+      niches: taxonomyList.filter(t => t.taxonomy_type === 'niche').length,
+      services: taxonomyList.filter(t => t.taxonomy_type === 'service').length,
+      active: taxonomyList.filter(t => t.is_active).length,
     };
-  }, [taxonomies]);
+  }, [taxonomyList]);
 
   // 2. Filter and Search Logic (Memoized)
   const filteredTaxonomies = useMemo(() => {
-    if (!taxonomies) return [];
-    return taxonomies.filter((t) => {
+    if (!taxonomyList.length) return [];
+    return taxonomyList.filter((t) => {
       const matchesSearch = t.name.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesFilter = typeFilter === 'all' || t.taxonomy_type === typeFilter;
       return matchesSearch && matchesFilter;
     });
-  }, [taxonomies, searchQuery, typeFilter]);
+  }, [searchQuery, taxonomyList, typeFilter]);
 
   // 3. Pagination Logic (Calculated from filtered array)
   const totalPages = Math.ceil(filteredTaxonomies.length / itemsPerPage) || 1;
@@ -102,7 +114,7 @@ export const ManageTaxonomies: React.FC = () => {
 
   // Handlers
   const handleCreate = async () => {
-    if (taxonomies?.some(t => t.name.toLowerCase() === newName.trim().toLowerCase())) {
+    if (taxonomyList?.some(t => t.name.toLowerCase() === newName.trim().toLowerCase())) {
         Swal.fire('Warning', 'This taxonomy already exists.', 'warning');
         return;
       }
