@@ -130,6 +130,50 @@ const roundTo = (value: number, digits = 2) => {
 const calculateFixedPerItemAmount = (itemsCount: number, value: number): number =>
   Math.max(0, Number(itemsCount || 0)) * Math.max(0, Number(value || 0));
 
+const buildFxRateLookup = (rates: any[]) => {
+  const lookup = new Map<string, number>();
+  ensureArray(rates).forEach((rate: any) => {
+    const baseCurrency = String(rate.base_currency || '').toUpperCase();
+    const targetCurrency = String(rate.target_currency || '').toUpperCase();
+    const normalizedRate = Number(rate.rate || 0);
+    if (!baseCurrency || !targetCurrency || !Number.isFinite(normalizedRate) || normalizedRate <= 0) {
+      return;
+    }
+    lookup.set(`${baseCurrency}->${targetCurrency}`, normalizedRate);
+    lookup.set(`${targetCurrency}->${baseCurrency}`, 1 / normalizedRate);
+  });
+  return lookup;
+};
+
+const convertCurrencyAmount = (
+  amount: number,
+  fromCurrency: string,
+  toCurrency: string,
+  fxRates: Map<string, number>
+) => {
+  const normalizedAmount = Number(amount || 0);
+  const normalizedFrom = String(fromCurrency || '').toUpperCase();
+  const normalizedTo = String(toCurrency || '').toUpperCase();
+
+  if (!Number.isFinite(normalizedAmount)) return 0;
+  if (!normalizedAmount) return 0;
+  if (!normalizedFrom || !normalizedTo || normalizedFrom === normalizedTo) {
+    return roundTo(normalizedAmount, 4);
+  }
+
+  const directRate = fxRates.get(`${normalizedFrom}->${normalizedTo}`);
+  if (directRate) {
+    return roundTo(normalizedAmount * directRate, 4);
+  }
+
+  const inverseRate = fxRates.get(`${normalizedTo}->${normalizedFrom}`);
+  if (inverseRate) {
+    return roundTo(normalizedAmount / inverseRate, 4);
+  }
+
+  return roundTo(normalizedAmount, 4);
+};
+
 const summarizeFinanceRows = (
   payments: any[],
   expenses: any[],
@@ -185,7 +229,7 @@ const summarizeFinanceRows = (
   });
   const outstanding = payments
     .filter((p: any) => p.status !== 'completed')
-    .reduce((sum: number, p: any) => sum + Number(p.base_amount ?? p.received_amount ?? p.amount ?? 0), 0);
+    .reduce((sum: number, p: any) => sum + Math.max(Number(p.base_amount ?? p.amount ?? 0) - Number(p.received_amount || 0), 0), 0);
 
   return {
     futureFundPercentage,
@@ -1419,6 +1463,10 @@ export class SupabaseApiService {
     }
     if (endpoint === '/currencies') {
       return (await this.getCurrencies()) as T;
+    }
+    if (endpoint === '/fx-rates' || endpoint.startsWith('/fx-rates?')) {
+      const url = new URL(`http://local${endpoint}`);
+      return (await this.getFxRates(url.searchParams.get('base_currency') || undefined)) as T;
     }
     if (endpoint === '/leads') {
       return (await this.getLeads()) as T;
@@ -4813,17 +4861,24 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.view', 'You do not have permission to view payments.');
     const currentUserId = String(access.profile.id);
-    let query = this.client
-      .from('payments')
-      .select('id, client_name, amount, currency, base_currency, base_amount, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name)')
-      .order('payment_date', { ascending: false })
-      .limit(1000);
+    const selectClause = 'id, client_name, amount, currency, base_currency, base_amount, payment_date, payment_method, payment_method_other, status, description, project_id, commission_assignee_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name), commission_assignee:profiles!payments_commission_assignee_id_fkey(id, name, email)';
+    const legacySelectClause = 'id, client_name, amount, currency, base_currency, base_amount, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name)';
+    let query = this.client.from('payments').select(selectClause).order('payment_date', { ascending: false }).limit(1000);
 
     if (!access.canViewAllFinance) {
       query = query.eq('created_by', currentUserId);
     }
 
-    const { data, error } = await query;
+    let { data, error } = await query;
+    if (error && this.isMissingColumnError(error)) {
+      let legacyQuery = this.client.from('payments').select(legacySelectClause).order('payment_date', { ascending: false }).limit(1000);
+      if (!access.canViewAllFinance) {
+        legacyQuery = legacyQuery.eq('created_by', currentUserId);
+      }
+      const legacyResult = await legacyQuery;
+      data = legacyResult.data;
+      error = legacyResult.error;
+    }
     if (error) throw formatError(error, 'Unable to load payments.');
     return { success: true, data: ensureArray(data) };
   }
@@ -4850,6 +4905,7 @@ export class SupabaseApiService {
       status: data?.status || 'completed',
       description: data?.description || null,
       project_id: data?.project_id || null,
+      commission_assignee_id: data?.commission_assignee_id || null,
       received_amount: Number(data?.received_amount || data?.amount || 0),
       tax_amount: Number(data?.tax_amount || 0),
       commission_amount: Number(data?.commission_amount || 0),
@@ -4930,6 +4986,7 @@ export class SupabaseApiService {
       status: data?.status || 'completed',
       description: data?.description || null,
       project_id: data?.project_id || null,
+      commission_assignee_id: data?.commission_assignee_id || null,
       received_amount: Number(data?.received_amount || data?.amount || 0),
       tax_amount: Number(data?.tax_amount || 0),
       commission_amount: Number(data?.commission_amount || 0),
@@ -4973,6 +5030,7 @@ export class SupabaseApiService {
       base_amount: payload.base_amount,
       transaction_fee_amount: payload.transaction_fee_amount,
       product_cost_amount: payload.product_cost_amount,
+      commission_assignee_id: payload.commission_assignee_id,
     });
 
     if (fallbackUpdatedAttempt.error && this.isMissingColumnError(fallbackUpdatedAttempt.error)) {
@@ -5548,19 +5606,62 @@ export class SupabaseApiService {
     return { success: true, data };
   }
 
+  async getFxRates(baseCurrency?: string) {
+    let query = this.client.from('fx_rates').select('id, base_currency, target_currency, rate, updated_at').order('target_currency', { ascending: true });
+    const normalizedBase = String(baseCurrency || '').trim().toUpperCase();
+    if (normalizedBase) {
+      query = query.eq('base_currency', normalizedBase);
+    }
+    const { data, error } = await query;
+    if (error) {
+      return { success: true, data: [] };
+    }
+    return { success: true, data: ensureArray(data) };
+  }
+
   async createCurrency(data: any) {
+    const baseCurrency = String(data?.base_currency || 'USD').toUpperCase();
+    const currencyCode = String(data?.code || '').trim().toUpperCase();
+    const rate = toNullableNumber(data?.rate);
     const { data: created, error } = await this.client.from('system_currencies').insert({
-      code: data.code,
+      code: currencyCode,
       symbol: data.symbol,
       name: data.name,
     }).select().single();
     if (error) throw formatError(error, 'Failed to add currency.');
+
+    if (currencyCode && rate !== null && rate > 0 && currencyCode !== baseCurrency) {
+      const rows = [
+        {
+          base_currency: baseCurrency,
+          target_currency: currencyCode,
+          rate,
+        },
+      ] as Array<Record<string, any>>;
+
+      const inverseRate = roundTo(1 / rate, 8);
+      if (Number.isFinite(inverseRate) && inverseRate > 0) {
+        rows.push({
+          base_currency: currencyCode,
+          target_currency: baseCurrency,
+          rate: inverseRate,
+        });
+      }
+
+      await this.client.from('fx_rates').upsert(rows, { onConflict: 'base_currency,target_currency' });
+    }
+
     return { success: true, data: created };
   }
 
   async deleteCurrency(id: string) {
+    const { data: currencyRow } = await this.client.from('system_currencies').select('code').eq('id', id).single();
     const { error } = await this.client.from('system_currencies').delete().eq('id', id);
     if (error) throw formatError(error, 'Failed to delete currency.');
+    const currencyCode = String((currencyRow as any)?.code || '').toUpperCase();
+    if (currencyCode) {
+      await this.client.from('fx_rates').delete().or(`base_currency.eq.${currencyCode},target_currency.eq.${currencyCode}`);
+    }
     return { success: true };
   }
 
@@ -5664,34 +5765,36 @@ export class SupabaseApiService {
     const restrictToOwn = !access.canViewAllFinance;
     const canViewSalaryData = access.canViewAllFinance || access.permissions.includes('finance.salaries.view');
     const selectedCurrency = String(currency || '').trim().toUpperCase();
-    const currencyFilter = selectedCurrency && selectedCurrency !== 'ALL' ? selectedCurrency : '';
-    const applyCurrency = (query: any) => (currencyFilter ? query.eq('currency', currencyFilter) : query);
+    let baseCurrency = 'USD';
+    let targetCurrency = selectedCurrency && selectedCurrency !== 'ALL' ? selectedCurrency : 'USD';
+    const { data: fxRatesData } = await this.client.from('fx_rates').select('base_currency, target_currency, rate');
+    const fxRates = buildFxRateLookup(ensureArray(fxRatesData));
 
     const foundersEquityPromise = access.permissions.includes('finance.founders.view')
       ? this.getFoundersEquityTotal()
       : Promise.resolve({ success: true, data: { data: { total: 0 } } });
     const salaryQuery = restrictToOwn
-      ? applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).eq('created_by', currentUserId).limit(1000))
-      : applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).limit(1000));
+      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).eq('created_by', currentUserId).limit(1000)
+      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').gte('salary_month', bounds.start).lte('salary_month', bounds.end).limit(1000);
     const allTimeSalaryQuery = restrictToOwn
-      ? applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').eq('created_by', currentUserId).limit(1000))
-      : applyCurrency(this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').limit(1000));
+      ? this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').eq('created_by', currentUserId).limit(1000)
+      : this.client.from('salary_runs').select('total_salary, salary_month, currency, created_by').limit(1000);
     const [paymentsRes, expensesRes, salaryRunsRes, foundersEquityRes, settingsRes, allTimePaymentsRes, allTimeExpensesRes, allTimeSalaryRunsRes] = await Promise.all([
       restrictToOwn
-        ? applyCurrency(this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000))
-        : applyCurrency(this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000)),
+        ? this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
       restrictToOwn
-        ? applyCurrency(this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000))
-        : applyCurrency(this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000)),
+        ? this.client.from('expenses').select('amount, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('amount, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
       canViewSalaryData ? salaryQuery : Promise.resolve({ data: [], error: null as any }),
       foundersEquityPromise,
       this.getFinanceSettings(),
       restrictToOwn
-        ? applyCurrency(this.client.from('payments').select('amount, payment_date, status, created_by').eq('created_by', currentUserId).limit(1000))
-        : applyCurrency(this.client.from('payments').select('amount, payment_date, status').limit(1000)),
+        ? this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by').eq('created_by', currentUserId).limit(1000)
+        : this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount').limit(1000),
       restrictToOwn
-        ? applyCurrency(this.client.from('expenses').select('amount, expense_date, created_by').eq('created_by', currentUserId).limit(1000))
-        : applyCurrency(this.client.from('expenses').select('amount, expense_date').limit(1000)),
+        ? this.client.from('expenses').select('amount, currency, expense_date, created_by').eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('amount, currency, expense_date').limit(1000),
       canViewSalaryData ? allTimeSalaryQuery : Promise.resolve({ data: [], error: null as any }),
     ]);
 
@@ -5709,10 +5812,37 @@ export class SupabaseApiService {
     const allTimeExpenses = ensureArray(allTimeExpensesRes.data);
     const allTimeSalaryRuns = ensureArray(allTimeSalaryRunsRes.data);
     const settings = (settingsRes as any)?.data?.data || {};
+    baseCurrency = String(settings.base_currency || settings.currency || baseCurrency).toUpperCase();
+    if (!selectedCurrency || selectedCurrency === 'ALL') {
+      targetCurrency = baseCurrency;
+    }
+    const normalizePayment = (payment: any) => {
+      const sourceCurrency = String(payment.base_amount ? payment.base_currency || baseCurrency : payment.currency || baseCurrency).toUpperCase();
+      const fallbackCurrency = String(payment.currency || sourceCurrency || baseCurrency).toUpperCase();
+      const amountCurrency = payment.base_amount ? sourceCurrency : fallbackCurrency;
+      const totalBaseAmount = convertCurrencyAmount(Number(payment.base_amount ?? payment.amount ?? 0), amountCurrency, targetCurrency, fxRates);
+      const receivedBaseAmount = convertCurrencyAmount(Number(payment.received_amount || 0), fallbackCurrency, targetCurrency, fxRates);
+      return {
+        status: payment.status,
+        amount: totalBaseAmount,
+        base_amount: totalBaseAmount,
+        received_amount: receivedBaseAmount,
+        tax_amount: convertCurrencyAmount(Number(payment.tax_amount || 0), fallbackCurrency, targetCurrency, fxRates),
+        commission_amount: convertCurrencyAmount(Number(payment.commission_amount || 0), fallbackCurrency, targetCurrency, fxRates),
+        transaction_fee_amount: convertCurrencyAmount(Number(payment.transaction_fee_amount || 0), fallbackCurrency, targetCurrency, fxRates),
+        product_cost_amount: convertCurrencyAmount(Number(payment.product_cost_amount || 0), fallbackCurrency, targetCurrency, fxRates),
+      };
+    };
+    const normalizeExpense = (expense: any) => ({
+      amount: convertCurrencyAmount(Number(expense.amount || 0), String(expense.currency || baseCurrency), targetCurrency, fxRates),
+    });
+    const normalizeSalary = (run: any) => ({
+      total_salary: convertCurrencyAmount(Number(run.total_salary || 0), String(run.currency || baseCurrency), targetCurrency, fxRates),
+    });
     const selectedSummary = summarizeFinanceRows(
-      payments,
-      expenses,
-      salaryRuns,
+      payments.map(normalizePayment),
+      expenses.map(normalizeExpense),
+      salaryRuns.map(normalizeSalary),
       settings,
       Number((foundersEquityRes as any)?.data?.data?.total || 0)
     );
@@ -5726,9 +5856,9 @@ export class SupabaseApiService {
     const effectiveSummary = hasSelectedData
       ? selectedSummary
       : summarizeFinanceRows(
-          allTimePayments,
-          allTimeExpenses,
-          allTimeSalaryRuns,
+          allTimePayments.map(normalizePayment),
+          allTimeExpenses.map(normalizeExpense),
+          allTimeSalaryRuns.map(normalizeSalary),
           settings,
           Number((foundersEquityRes as any)?.data?.data?.total || 0)
         );
@@ -5751,7 +5881,7 @@ export class SupabaseApiService {
           liabilities: effectiveSummary.summary.liabilities,
           outstanding: effectiveSummary.outstanding,
           distribution: effectiveSummary.distribution,
-          currency: currencyFilter || settings.base_currency || settings.currency || 'USD',
+          currency: targetCurrency,
           futureFundRate: effectiveSummary.futureFundPercentage,
           rangeUsed: hasSelectedData ? range : 'all',
         },
@@ -5767,15 +5897,23 @@ export class SupabaseApiService {
     const currentUserId = String(access.profile.id);
     const restrictToOwn = !access.canViewAllFinance;
     const selectedCurrency = String(currency || '').trim().toUpperCase();
-    const currencyFilter = selectedCurrency && selectedCurrency !== 'ALL' ? selectedCurrency : '';
-    const applyCurrency = (query: any) => (currencyFilter ? query.eq('currency', currencyFilter) : query);
+    let baseCurrency = 'USD';
+    let targetCurrency = selectedCurrency && selectedCurrency !== 'ALL' ? selectedCurrency : 'USD';
+    const { data: fxRatesData } = await this.client.from('fx_rates').select('base_currency, target_currency, rate');
+    const fxRates = buildFxRateLookup(ensureArray(fxRatesData));
+    const settingsRes = await this.getFinanceSettings();
+    const settings = (settingsRes as any)?.data?.data || {};
+    baseCurrency = String(settings.base_currency || settings.currency || baseCurrency).toUpperCase();
+    if (!selectedCurrency || selectedCurrency === 'ALL') {
+      targetCurrency = baseCurrency;
+    }
     const [paymentsRes, expensesRes] = await Promise.all([
       restrictToOwn
-        ? applyCurrency(this.client.from('payments').select('amount, payment_date, status, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000))
-        : applyCurrency(this.client.from('payments').select('amount, payment_date, status').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000)),
+        ? this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by').gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('payments').select('amount, base_amount, base_currency, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount').gte('payment_date', bounds.start).lte('payment_date', bounds.end).limit(1000),
       restrictToOwn
-        ? applyCurrency(this.client.from('expenses').select('amount, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000))
-        : applyCurrency(this.client.from('expenses').select('amount, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000)),
+        ? this.client.from('expenses').select('amount, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('amount, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
     ]);
 
     if (paymentsRes.error) throw formatError(paymentsRes.error, 'Unable to load payment chart.');
@@ -5785,12 +5923,16 @@ export class SupabaseApiService {
     ensureArray(paymentsRes.data).forEach((payment: any) => {
       const key = monthKey(payment.payment_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
-      if (payment.status === 'completed') buckets[key].revenue += Number(payment.base_amount ?? payment.received_amount ?? payment.amount ?? 0);
+      if (payment.status === 'completed') {
+        const paymentCurrency = String(payment.base_amount ? payment.base_currency || baseCurrency : payment.currency || baseCurrency).toUpperCase();
+        const amountCurrency = payment.base_amount ? paymentCurrency : String(payment.currency || paymentCurrency || baseCurrency).toUpperCase();
+        buckets[key].revenue += convertCurrencyAmount(Number(payment.base_amount ?? payment.amount ?? 0), amountCurrency, targetCurrency, fxRates);
+      }
     });
     ensureArray(expensesRes.data).forEach((expense: any) => {
       const key = monthKey(expense.expense_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
-      buckets[key].expenses += Number(expense.amount || 0);
+      buckets[key].expenses += convertCurrencyAmount(Number(expense.amount || 0), String(expense.currency || baseCurrency), targetCurrency, fxRates);
     });
 
     return {

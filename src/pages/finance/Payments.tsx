@@ -32,6 +32,7 @@ const Payments: React.FC = () => {
     status: 'pending',
     description: '',
     project_id: '',
+    commission_assignee_id: '',
     received_amount: '',
     tax_amount: '',
     commission_amount: '',
@@ -45,7 +46,7 @@ const Payments: React.FC = () => {
     }
   }, [searchParams]);
 
-  const { data: paymentsResponse, isLoading } = useQuery({
+  const { data: paymentsResponse, isLoading, refetch: refetchPayments } = useQuery({
     queryKey: ['payments'],
     queryFn: async () => api.get('/finance/payments'),
   });
@@ -64,6 +65,13 @@ const Payments: React.FC = () => {
     enabled: isDialogOpen,
   });
   const clients = clientsResponse?.data || [];
+
+  const { data: assigneesResponse } = useQuery({
+    queryKey: ['finance-payment-commission-assignees'],
+    queryFn: async () => api.getUsers(),
+    enabled: isDialogOpen,
+  });
+  const commissionAssignees = assigneesResponse?.data || [];
 
   const { data: financeSettingsResponse } = useQuery({
     queryKey: ['finance-settings'],
@@ -84,6 +92,7 @@ const Payments: React.FC = () => {
       status: 'pending',
       description: '',
       project_id: '',
+      commission_assignee_id: '',
       received_amount: '',
       tax_amount: '',
       commission_amount: '',
@@ -116,6 +125,7 @@ const Payments: React.FC = () => {
       status: payment.status || 'pending',
       description: payment.description || '',
       project_id: payment.project_id || '',
+      commission_assignee_id: payment.commission_assignee_id || '',
       received_amount: String(payment.received_amount || ''),
       tax_amount: String(payment.tax_amount || ''),
       commission_amount: String(payment.commission_amount || ''),
@@ -156,6 +166,7 @@ const Payments: React.FC = () => {
       await queryClient.invalidateQueries({ queryKey: ['finance-stats'], exact: false });
       await queryClient.invalidateQueries({ queryKey: ['finance-chart'], exact: false });
       await queryClient.refetchQueries({ queryKey: ['payments'] });
+      await refetchPayments();
       setIsDialogOpen(false);
       resetForm();
       toast.success(editingId ? 'Payment updated successfully' : 'Payment added successfully');
@@ -196,13 +207,14 @@ const Payments: React.FC = () => {
     e.preventDefault();
     const amountValue = Number(formData.amount || 0);
     const receivedValue = formData.received_amount === ''
-      ? (formData.status === 'completed' ? amountValue : 0)
+      ? (formData.status === 'completed' ? amountValue : formData.status === 'half' ? amountValue / 2 : 0)
       : Number(formData.received_amount || 0);
 
     createOrUpdateMutation.mutate({
       ...formData,
       amount: amountValue,
       received_amount: receivedValue,
+      commission_assignee_id: formData.commission_assignee_id || undefined,
       tax_amount: Number(formData.tax_amount || 0),
       commission_amount: Number(formData.commission_amount || 0),
       transaction_fee_amount: Number(formData.transaction_fee_amount || 0),
@@ -417,6 +429,22 @@ const Payments: React.FC = () => {
                 </select>
               </div>
               <div>
+                <Label htmlFor="commission_assignee_id">Commission Given To</Label>
+                <select
+                  id="commission_assignee_id"
+                  value={formData.commission_assignee_id}
+                  onChange={(e) => setFormData({ ...formData, commission_assignee_id: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                >
+                  <option value="">No commission assigned</option>
+                  {commissionAssignees.map((user: any) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name || user.email || user.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <Label htmlFor="status">Status</Label>
                 <select
                   id="status"
@@ -425,6 +453,7 @@ const Payments: React.FC = () => {
                   className="w-full rounded-md border border-input bg-background px-3 py-2"
                 >
                   <option value="pending">Pending</option>
+                  <option value="half">Half</option>
                   <option value="completed">Completed</option>
                 </select>
               </div>
@@ -499,6 +528,7 @@ const Payments: React.FC = () => {
                     <TableHead>Pending</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Method</TableHead>
+                    <TableHead>Commission</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -542,7 +572,15 @@ const Payments: React.FC = () => {
                         <TableCell>{payment.payment_date ? new Date(payment.payment_date).toLocaleDateString() : '-'}</TableCell>
                         <TableCell className="capitalize">{payment.payment_method?.replace(/_/g, ' ') || '-'}</TableCell>
                         <TableCell>
-                          <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
+                          <div className="space-y-1">
+                            <div>{formatMoney(payment.commission_amount || 0, payment.currency || baseCurrency)}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {payment.commission_assignee?.name || payment.commission_assignee_name || 'No assignee'}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={payment.status === 'completed' ? 'default' : payment.status === 'half' ? 'outline' : 'secondary'}>
                             {payment.status}
                           </Badge>
                         </TableCell>

@@ -27,7 +27,7 @@ const FinanceSettings: React.FC = () => {
     enable_auto_calculation: true,
   });
 
-  const [newCurrency, setNewCurrency] = useState({ code: '', symbol: '', name: '' });
+  const [newCurrency, setNewCurrency] = useState({ code: '', symbol: '', name: '', rate: '' });
 
   const { data: currenciesResponse } = useQuery({
     queryKey: ['system-currencies'],
@@ -44,6 +44,14 @@ const FinanceSettings: React.FC = () => {
   });
   
   const currentSettings = currentSettingsResponse?.data;
+  const baseCurrency = currentSettings?.data?.base_currency || currentSettings?.data?.currency || 'USD';
+
+  const { data: fxRatesResponse } = useQuery({
+    queryKey: ['fx-rates', baseCurrency],
+    queryFn: async () => api.get(`/fx-rates?base_currency=${encodeURIComponent(baseCurrency)}`),
+    enabled: Boolean(baseCurrency),
+  });
+  const fxRates = fxRatesResponse?.data || [];
   
   React.useEffect(() => {
     if (currentSettings?.data) {
@@ -86,8 +94,9 @@ const FinanceSettings: React.FC = () => {
     mutationFn: async (data: any) => api.post('/currencies', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['system-currencies'] });
+      queryClient.invalidateQueries({ queryKey: ['fx-rates'] });
       toast.success('Currency added successfully');
-      setNewCurrency({ code: '', symbol: '', name: '' });
+      setNewCurrency({ code: '', symbol: '', name: '', rate: '' });
     },
     onError: () => toast.error('Failed to add currency'),
   });
@@ -103,7 +112,11 @@ const FinanceSettings: React.FC = () => {
 
   const handleAddCurrency = () => {
     if (!newCurrency.code || !newCurrency.symbol) return toast.error('Code and symbol are required');
-    createCurrencyMutation.mutate(newCurrency);
+    const rateValue = Number(newCurrency.rate || 0);
+    if (newCurrency.code.toUpperCase() !== String(baseCurrency).toUpperCase() && (!rateValue || rateValue <= 0)) {
+      return toast.error(`Enter exchange rate for ${baseCurrency}.`);
+    }
+    createCurrencyMutation.mutate({ ...newCurrency, base_currency: baseCurrency, rate: rateValue });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -298,7 +311,7 @@ const FinanceSettings: React.FC = () => {
             <CardTitle>Manage Currencies</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-4 gap-2 items-end">
+            <div className="grid grid-cols-1 gap-2 items-end md:grid-cols-5">
               <div>
                 <Label>Code</Label>
                 <Input placeholder="e.g. USD" value={newCurrency.code} onChange={(e) => setNewCurrency({...newCurrency, code: e.target.value})} />
@@ -311,6 +324,16 @@ const FinanceSettings: React.FC = () => {
                 <Label>Name</Label>
                 <Input placeholder="e.g. US Dollar" value={newCurrency.name} onChange={(e) => setNewCurrency({...newCurrency, name: e.target.value})} />
               </div>
+              <div>
+                <Label>Rate vs {baseCurrency}</Label>
+                <Input
+                  type="number"
+                  step="0.0001"
+                  placeholder={`1 ${baseCurrency} = ?`}
+                  value={newCurrency.rate}
+                  onChange={(e) => setNewCurrency({ ...newCurrency, rate: e.target.value })}
+                />
+              </div>
               <Button type="button" onClick={handleAddCurrency} isLoading={createCurrencyMutation.isPending} loadingText="Adding Currency...">Add Currency</Button>
             </div>
             <Separator className="my-4" />
@@ -318,7 +341,17 @@ const FinanceSettings: React.FC = () => {
               {currencies.map((c: any) => (
                 <div key={c.id || c.code} className="flex items-center justify-between p-2 border rounded bg-card">
                   <div>
-                    <span className="font-medium">{c.code}</span> ({c.symbol}) - {c.name}
+                    <div className="font-medium">{c.code}</div>
+                    <div className="text-xs text-muted-foreground">{c.symbol} - {c.name}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {baseCurrency} rate: {
+                        fxRates.find((rate: any) => rate.target_currency === c.code)?.rate
+                          ? `1 ${baseCurrency} = ${Number(fxRates.find((rate: any) => rate.target_currency === c.code)?.rate || 0).toFixed(4)} ${c.code}`
+                          : c.code === baseCurrency
+                            ? `1 ${baseCurrency} = 1 ${baseCurrency}`
+                            : 'Rate not set'
+                      }
+                    </div>
                   </div>
                   {c.id && (
                     <Button type="button" variant="destructive" size="sm" onClick={() => deleteCurrencyMutation.mutate(c.id)}>

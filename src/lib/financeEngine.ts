@@ -38,7 +38,7 @@ export const calculateFinanceSummary = (input: FinanceSummaryInput): FinanceSumm
   const futureFundRate = Math.min(100, Math.max(0, Number(input.futureFundRate ?? 10)));
   const futureFund = round(Math.max(grossProfit, 0) * (futureFundRate / 100));
   const founderProfit = round(grossProfit - futureFund);
-  const liabilities = round(expenses + salaries + taxes + commissions + transactionFees + productCosts);
+  const liabilities = round(expenses + salaries + taxes + transactionFees + productCosts);
   const netProfit = founderProfit;
 
   return {
