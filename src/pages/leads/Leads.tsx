@@ -618,6 +618,9 @@ const Leads: React.FC = () => {
       if (existingId) {
         if (!canUpdateLead) return;
         await api.updateLead(existingId, payload);
+        await queryClient.invalidateQueries({ queryKey: ['leads'] });
+        await queryClient.invalidateQueries({ queryKey: ['leads-all'] });
+        await queryClient.invalidateQueries({ queryKey: ['lead-stats'] });
         return;
       }
 
@@ -641,10 +644,9 @@ const Leads: React.FC = () => {
           await api.updateLead(String(createdId), queuedPayload);
         }
       }
-
-      if (createdId) {
-        delete blankRowLeadIds.current[rowId];
-      }
+      await queryClient.invalidateQueries({ queryKey: ['leads'] });
+      await queryClient.invalidateQueries({ queryKey: ['leads-all'] });
+      await queryClient.invalidateQueries({ queryKey: ['lead-stats'] });
     } catch (error: any) {
       console.error('Lead autosave failed:', error);
       let message = error?.message || 'Unable to autosave this lead row.';
@@ -828,6 +830,8 @@ const Leads: React.FC = () => {
             Object.keys(blankRowLeadIds.current).forEach((rowKey) => {
               if (blankRowLeadIds.current[rowKey] === leadId) {
                 delete blankRowLeadIds.current[rowKey];
+                delete queuedBlankValues.current[rowKey];
+                delete pendingBlankRows.current[rowKey];
               }
             });
             if (activeLeadId === leadId) {
