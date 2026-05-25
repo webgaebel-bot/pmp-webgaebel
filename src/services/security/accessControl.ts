@@ -103,7 +103,7 @@ export const isScopeAllowed = (actualScope: AccessScope, targetScope: AccessScop
   return rank[actualScope] >= rank[targetScope];
 };
 
-export const clampPageSize = (pageSize?: number, fallback = 25, max = 100) => {
+export const clampPageSize = (pageSize?: number, fallback = 25, max = 1000) => {
   const value = Number(pageSize || fallback);
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return Math.min(Math.floor(value), max);

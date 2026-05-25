@@ -555,15 +555,19 @@ const Leads: React.FC = () => {
       }, {}),
     }));
 
+    const dataLeadIds = new Set(dataRows.map((row) => String(row.id)));
     const blankRows = Array.from({ length: Math.max(sheetRowCount - dataRows.length, 0) }, (_, index) => ({
       id: getStableBlankRowId(leadBlankRowIds, `lead-page-${page}`, index),
       ownerName: '',
       raw: null,
       values: {},
-    }));
+    })).filter((row) => {
+      const mappedLeadId = blankRowLeadIds.current[row.id];
+      return !mappedLeadId || !dataLeadIds.has(String(mappedLeadId));
+    });
 
     return [...dataRows, ...blankRows];
-  }, [leadColumns, leads, page]);
+  }, [leadColumns, leads, page, sheetRowCount]);
 
   const buildLeadPayloadFromRow = (values: Record<string, string>, lead?: Lead): CreateLeadPayload & { custom_fields?: Record<string, string> } | null => {
     const hasValue = Object.values(values).some((value) => String(value || '').trim());
