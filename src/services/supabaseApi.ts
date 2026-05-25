@@ -1747,6 +1747,10 @@ export class SupabaseApiService {
   }
 
   async put<T = any>(endpoint: string, data?: any): Promise<T> {
+    const currencyUpdateMatch = endpoint.match(/^\/currencies\/([^/]+)$/);
+    if (currencyUpdateMatch) {
+      return (await this.updateCurrency(currencyUpdateMatch[1], data)) as T;
+    }
     const founderUpdateMatch = endpoint.match(/^\/finance\/founders\/(.+)$/);
     if (founderUpdateMatch) {
       return (await this.updateFinanceFounder(founderUpdateMatch[1], data)) as T;
@@ -6059,22 +6063,76 @@ export class SupabaseApiService {
   }
 
   async getFxRates(baseCurrency?: string) {
-    let query = this.client.from('fx_rates').select('id, base_currency, target_currency, rate, updated_at').order('target_currency', { ascending: true });
     const normalizedBase = String(baseCurrency || '').trim().toUpperCase();
-    if (normalizedBase) {
-      query = query.eq('base_currency', normalizedBase);
-    }
-    const { data, error } = await query;
-    if (error) {
+    const [fxRatesRes, currenciesRes] = await Promise.all([
+      this.client.from('fx_rates').select('base_currency, target_currency, rate, updated_at'),
+      this.client.from('system_currencies').select('code, name, symbol').order('code', { ascending: true }),
+    ]);
+
+    if (fxRatesRes.error || currenciesRes.error) {
       return { success: true, data: [] };
     }
-    return { success: true, data: ensureArray(data) };
+
+    const fxLookup = buildFxRateLookup(ensureArray(fxRatesRes.data));
+    const currencyCodes = [
+      ...new Set(
+        ensureArray(currenciesRes.data)
+          .map((row: any) => String(row.code || '').trim().toUpperCase())
+          .filter(Boolean)
+      ),
+    ];
+
+    if (!normalizedBase) {
+      return {
+        success: true,
+        data: ensureArray(fxRatesRes.data).map((row: any) => ({
+          base_currency: String(row.base_currency || '').toUpperCase(),
+          target_currency: String(row.target_currency || '').toUpperCase(),
+          rate: Number(row.rate || 0),
+          updated_at: row.updated_at || null,
+        })),
+      };
+    }
+
+    const baseRow = {
+      base_currency: normalizedBase,
+      target_currency: normalizedBase,
+      rate: 1,
+      updated_at: new Date().toISOString(),
+    };
+
+    const rows = [baseRow];
+    currencyCodes.forEach((code) => {
+      if (code === normalizedBase) return;
+      const rate = resolveLookupRate(fxLookup, normalizedBase, code);
+      if (rate > 0) {
+        rows.push({
+          base_currency: normalizedBase,
+          target_currency: code,
+          rate,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    });
+
+    return { success: true, data: rows.sort((left, right) => String(left.target_currency).localeCompare(String(right.target_currency))) };
   }
 
   async createCurrency(data: any) {
     const baseCurrency = String(data?.base_currency || 'USD').toUpperCase();
     const currencyCode = String(data?.code || '').trim().toUpperCase();
     const rate = toNullableNumber(data?.rate);
+    if (!/^[A-Z]{3,10}$/.test(currencyCode)) {
+      throw new ApiError('Currency code must contain 3-10 letters only.', 400, 'FINANCE_INVALID_CURRENCY_CODE');
+    }
+    const { data: existingCurrency } = await this.client
+      .from('system_currencies')
+      .select('id')
+      .eq('code', currencyCode)
+      .maybeSingle();
+    if (existingCurrency) {
+      throw new ApiError(`Currency code ${currencyCode} already exists.`, 409, 'FINANCE_CURRENCY_CODE_DUPLICATE');
+    }
     const { data: created, error } = await this.client.from('system_currencies').insert({
       code: currencyCode,
       symbol: data.symbol,
@@ -6109,6 +6167,69 @@ export class SupabaseApiService {
     }
 
     return { success: true, data: created };
+  }
+
+  async updateCurrency(id: string, data: any) {
+    const baseCurrency = String(data?.base_currency || (await this.loadFinanceSettingsMap()).base_currency || 'USD').toUpperCase();
+    const currencyCode = String(data?.code || data?.currency_code || '').trim().toUpperCase();
+    const rate = toNullableNumber(data?.rate);
+    if (!/^[A-Z]{3,10}$/.test(currencyCode)) {
+      throw new ApiError('Currency code must contain 3-10 letters only.', 400, 'FINANCE_INVALID_CURRENCY_CODE');
+    }
+
+    const { data: currentCurrency, error: currentError } = await this.client
+      .from('system_currencies')
+      .select('id, code, symbol, name')
+      .eq('id', id)
+      .single();
+
+    if (currentError || !currentCurrency) throw formatError(currentError, 'Failed to load currency.');
+
+    const nextCode = currencyCode || String((currentCurrency as any)?.code || '').toUpperCase();
+    const { data: duplicateCurrency } = await this.client
+      .from('system_currencies')
+      .select('id')
+      .eq('code', nextCode)
+      .neq('id', id)
+      .maybeSingle();
+    if (duplicateCurrency) {
+      throw new ApiError(`Currency code ${nextCode} already exists.`, 409, 'FINANCE_CURRENCY_CODE_DUPLICATE');
+    }
+    const { data: updated, error } = await this.client
+      .from('system_currencies')
+      .update({
+        code: nextCode,
+        symbol: data.symbol ?? currentCurrency.symbol,
+        name: data.name ?? currentCurrency.name,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw formatError(error, 'Failed to update currency.');
+
+    if (nextCode && rate !== null && rate > 0) {
+      const rows = [
+        {
+          base_currency: baseCurrency,
+          target_currency: nextCode,
+          rate,
+        },
+      ] as Array<Record<string, any>>;
+
+      const inverseRate = roundTo(1 / rate, 8);
+      if (Number.isFinite(inverseRate) && inverseRate > 0) {
+        rows.push({
+          base_currency: nextCode,
+          target_currency: baseCurrency,
+          rate: inverseRate,
+        });
+      }
+
+      await this.client.from('fx_rates').upsert(rows, { onConflict: 'base_currency,target_currency' });
+    }
+
+    return { success: true, data: updated };
   }
 
   async deleteCurrency(id: string) {

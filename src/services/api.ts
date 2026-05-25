@@ -715,6 +715,13 @@ class ApiService {
     });
   }
 
+  async updateCurrency(id: string | number, data: any): Promise<any> {
+    return this.request<any>(`/currencies/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   async deleteLead(id: string | number): Promise<any> {
     return this.request<any>(`/leads/${id}`, {
       method: 'DELETE',

@@ -641,6 +641,10 @@ const Leads: React.FC = () => {
           await api.updateLead(String(createdId), queuedPayload);
         }
       }
+
+      if (createdId) {
+        delete blankRowLeadIds.current[rowId];
+      }
     } catch (error: any) {
       console.error('Lead autosave failed:', error);
       let message = error?.message || 'Unable to autosave this lead row.';
@@ -821,6 +825,11 @@ const Leads: React.FC = () => {
       if (result.isConfirmed) {
         mutations.deleteLead.mutate(leadId, {
           onSuccess: () => {
+            Object.keys(blankRowLeadIds.current).forEach((rowKey) => {
+              if (blankRowLeadIds.current[rowKey] === leadId) {
+                delete blankRowLeadIds.current[rowKey];
+              }
+            });
             if (activeLeadId === leadId) {
               setLeadDrawerOpen(false);
               setActiveLeadId(undefined);

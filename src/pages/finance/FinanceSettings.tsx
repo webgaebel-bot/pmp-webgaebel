@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { ArrowLeft, Settings, Calculator, Percent, Trash2 } from 'lucide-react';
+import { ArrowLeft, Settings, Calculator, Percent, Trash2, Pencil } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
 
@@ -38,6 +38,7 @@ const FinanceSettings: React.FC = () => {
   });
 
   const [newCurrency, setNewCurrency] = useState({ code: '', symbol: '', name: '', rate: '' });
+  const [editingCurrency, setEditingCurrency] = useState<{ id: string; code: string; symbol: string; name: string; rate: string } | null>(null);
 
   const { data: currenciesResponse } = useQuery({
     queryKey: ['system-currencies'],
@@ -111,6 +112,24 @@ const FinanceSettings: React.FC = () => {
     onError: () => toast.error('Failed to add currency'),
   });
 
+  const updateCurrencyMutation = useMutation({
+    mutationFn: async (data: { id: string; code: string; symbol: string; name: string; rate: string }) =>
+      api.updateCurrency(data.id, {
+        code: data.code,
+        symbol: data.symbol,
+        name: data.name,
+        rate: Number(data.rate || 0),
+        base_currency: baseCurrency,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system-currencies'] });
+      queryClient.invalidateQueries({ queryKey: ['fx-rates'] });
+      toast.success('Currency updated successfully');
+      setEditingCurrency(null);
+    },
+    onError: () => toast.error('Failed to update currency'),
+  });
+
   const deleteCurrencyMutation = useMutation({
     mutationFn: async (id: string) => api.delete(`/currencies/${id}`),
     onSuccess: () => {
@@ -128,6 +147,33 @@ const FinanceSettings: React.FC = () => {
       return toast.error(`Enter exchange rate for ${baseCurrency}.`);
     }
     createCurrencyMutation.mutate({ ...newCurrency, base_currency: baseCurrency, rate: rateValue });
+  };
+
+  const handleStartEditCurrency = (currency: CurrencyRow) => {
+    const code = getCurrencyCode(currency);
+    if (!code) return;
+    const rate = getCurrencyRate(currency);
+    setEditingCurrency({
+      id: String(currency.id || ''),
+      code,
+      symbol: String(currency.symbol || ''),
+      name: String(currency.name || ''),
+      rate: rate !== null ? String(rate) : '',
+    });
+  };
+
+  const handleSaveEditCurrency = () => {
+    if (!editingCurrency?.id) return;
+    if (!editingCurrency.code || !editingCurrency.symbol || !editingCurrency.name) {
+      toast.error('Code, symbol and name are required.');
+      return;
+    }
+    const rateValue = Number(editingCurrency.rate || 0);
+    if (editingCurrency.code.toUpperCase() !== String(baseCurrency).toUpperCase() && (!rateValue || rateValue <= 0)) {
+      toast.error(`Enter exchange rate for ${baseCurrency}.`);
+      return;
+    }
+    updateCurrencyMutation.mutate(editingCurrency);
   };
 
   const getCurrencyCode = (currency: CurrencyRow) => String(currency.code || currency.currency_code || '').toUpperCase();
@@ -167,6 +213,56 @@ const FinanceSettings: React.FC = () => {
     );
     if (!confirmed) return;
     deleteCurrencyMutation.mutate(currency.id);
+  };
+
+  const renderCurrencyEditor = () => {
+    if (!editingCurrency) return null;
+
+    return (
+      <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-medium">Edit Currency</p>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setEditingCurrency(null)}>
+            Cancel
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+          <div>
+            <Label>Code</Label>
+            <Input value={editingCurrency.code} onChange={(e) => setEditingCurrency({ ...editingCurrency, code: e.target.value })} />
+          </div>
+          <div>
+            <Label>Symbol</Label>
+            <Input value={editingCurrency.symbol} onChange={(e) => setEditingCurrency({ ...editingCurrency, symbol: e.target.value })} />
+          </div>
+          <div>
+            <Label>Name</Label>
+            <Input value={editingCurrency.name} onChange={(e) => setEditingCurrency({ ...editingCurrency, name: e.target.value })} />
+          </div>
+          <div>
+            <Label>Rate vs {baseCurrency}</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={editingCurrency.rate}
+              onChange={(e) => setEditingCurrency({ ...editingCurrency, rate: e.target.value })}
+              placeholder={`1 ${baseCurrency} = ?`}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" variant="outline" onClick={() => setEditingCurrency(null)}>Cancel</Button>
+          <Button
+            type="button"
+            onClick={handleSaveEditCurrency}
+            isLoading={updateCurrencyMutation.isPending}
+            loadingText="Updating Currency..."
+          >
+            Save Currency
+          </Button>
+        </div>
+      </div>
+    );
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -383,10 +479,14 @@ const FinanceSettings: React.FC = () => {
                   value={newCurrency.rate}
                   onChange={(e) => setNewCurrency({ ...newCurrency, rate: e.target.value })}
                 />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Enter how much of the new currency equals 1 {baseCurrency}. Example: if 1 USD = 278.14 PKR, enter 278.14.
+                </p>
               </div>
               <Button type="button" onClick={handleAddCurrency} isLoading={createCurrencyMutation.isPending} loadingText="Adding Currency...">Add Currency</Button>
             </div>
             <Separator className="my-4" />
+            {renderCurrencyEditor()}
             <div className="space-y-2">
               {currencies.map((c: any) => (
                 <div key={c.id || c.code || c.currency_code} className="flex items-center justify-between gap-4 p-3 border rounded bg-card">
@@ -400,19 +500,38 @@ const FinanceSettings: React.FC = () => {
                         ? `1 ${baseCurrency} = ${Number(getCurrencyRate(c)).toFixed(4)} ${getCurrencyLabel(c)}`
                         : 'Rate not set'}
                     </div>
+                    <div className="text-xs text-muted-foreground">
+                      {getCurrencyRate(c) !== null && Number(getCurrencyRate(c)) > 0
+                        ? `1 ${getCurrencyLabel(c)} = ${(1 / Number(getCurrencyRate(c))).toFixed(6)} ${baseCurrency}`
+                        : ''}
+                    </div>
                   </div>
-                  {c.id && getCurrencyLabel(c) !== String(baseCurrency).toUpperCase() && (
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleDeleteCurrency(c)}
-                      className="shrink-0"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
-                    </Button>
-                  )}
+                  <div className="flex shrink-0 gap-2">
+                    {c.id ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleStartEditCurrency(c)}
+                        className="shrink-0"
+                      >
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Edit
+                      </Button>
+                    ) : null}
+                    {c.id && getCurrencyLabel(c) !== String(baseCurrency).toUpperCase() && (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDeleteCurrency(c)}
+                        className="shrink-0"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

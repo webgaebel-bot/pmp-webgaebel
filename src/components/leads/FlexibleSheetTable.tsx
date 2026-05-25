@@ -105,6 +105,12 @@ export function FlexibleSheetTable({
     savingRows.current[row.id] = true;
     try {
       await onSaveRow(row.id, values, row.raw);
+      setDraftRows((current) => {
+        if (!current[row.id]) return current;
+        const next = { ...current };
+        delete next[row.id];
+        return next;
+      });
     } finally {
       savingRows.current[row.id] = false;
       const queuedValues = queuedSaveValues.current[row.id];
