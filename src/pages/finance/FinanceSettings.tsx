@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { ArrowLeft, Settings, Calculator, Percent, Trash2, Pencil } from 'lucide-react';
+import { ArrowLeft, Settings, Calculator, Percent, Trash2, Pencil, Landmark } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
 
@@ -491,7 +491,15 @@ const FinanceSettings: React.FC = () => {
               {currencies.map((c: any) => (
                 <div key={c.id || c.code || c.currency_code} className="flex items-center justify-between gap-4 p-3 border rounded bg-card">
                   <div>
-                    <div className="font-medium">{getCurrencyLabel(c)}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium">{getCurrencyLabel(c)}</div>
+                      {getCurrencyLabel(c) === String(baseCurrency).toUpperCase() && (
+                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                          <Landmark className="mr-1 h-3 w-3" />
+                          Base Currency
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground">
                       {c.symbol} - {c.name}
                     </div>

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings, LayoutGrid, PiggyBank } from 'lucide-react';
 import { api } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
@@ -26,7 +26,7 @@ import {
 } from 'recharts';
 
 const FinanceDashboard: React.FC = () => {
-  const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month');
+  const [timeRange, setTimeRange] = useState<'all' | 'month' | 'quarter' | 'year'>('all');
   const [currencyFilter, setCurrencyFilter] = useState<string>('all');
   const navigate = useNavigate();
   const permission = usePermission();
@@ -108,6 +108,9 @@ const FinanceDashboard: React.FC = () => {
   const distributionData = stats?.data?.distribution || [];
   const distributionColors = ['#0f766e', '#2563eb', '#f59e0b', '#7c3aed'];
   const currencyCode = stats?.data?.currency || currentSettings.base_currency || 'USD';
+  const futureFundCurrent = Number(stats?.data?.futureFund || 0);
+  const futureFundRecorded = Number(stats?.data?.futureFundRecorded || 0);
+  const companySavings = futureFundRecorded > 0 ? futureFundRecorded : Number(stats?.data?.netProfit || 0);
 
   const statCards = [
     {
@@ -147,12 +150,13 @@ const FinanceDashboard: React.FC = () => {
     { title: 'Salaries', value: stats?.data?.salaries || 0 },
   ];
 
-  const profitCards = [
-    { title: 'Gross Profit', value: stats?.data?.grossProfit || 0 },
-    { title: 'Product Costs', value: stats?.data?.productCosts || 0 },
-    { title: 'Future Fund', value: stats?.data?.futureFund || 0 },
-    { title: 'Founder Profit', value: stats?.data?.founderProfit || 0 },
-  ];
+    const profitCards = [
+      { title: 'Gross Profit', value: stats?.data?.grossProfit || 0 },
+      { title: 'Product Costs', value: stats?.data?.productCosts || 0 },
+      { title: 'Future Fund', value: futureFundCurrent },
+      { title: 'Company Savings', value: companySavings, icon: PiggyBank, highlight: true },
+      { title: 'Founder Profit', value: stats?.data?.founderProfit || 0 },
+    ];
   const chartDistributionData = distributionData.filter((item: any) => Number(item.amount || 0) > 0 && item.label !== 'Founder Equity Allocated');
   const chartDistributionTotal = chartDistributionData.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
   const getDistributionPercent = (amount: number) => (chartDistributionTotal > 0 ? (Number(amount || 0) / chartDistributionTotal) * 100 : 0);
@@ -253,7 +257,7 @@ const FinanceDashboard: React.FC = () => {
               </option>
             ))}
           </select>
-          {(['month', 'quarter', 'year'] as const).map((range) => (
+          {(['all', 'month', 'quarter', 'year'] as const).map((range) => (
             <button
               key={range}
               onClick={() => setTimeRange(range)}
@@ -263,7 +267,7 @@ const FinanceDashboard: React.FC = () => {
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
               >
-                {range.charAt(0).toUpperCase() + range.slice(1)}
+                {range === 'all' ? 'All Time' : range.charAt(0).toUpperCase() + range.slice(1)}
               </button>
             ))}
             <Button variant="outline" onClick={() => navigate('/finance/records')}>
@@ -304,15 +308,23 @@ const FinanceDashboard: React.FC = () => {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {profitCards.map((item) => (
-          <Card key={item.title}>
-            <CardContent className="p-5">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.title}</p>
-              <p className="mt-2 text-2xl font-semibold">{formatMoney(item.value, currencyCode)}</p>
-            </CardContent>
-          </Card>
-        ))}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {profitCards.map((item) => (
+            <Card key={item.title} className={item.highlight ? 'border-emerald-200 bg-emerald-50/40' : ''}>
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.title}</p>
+                  {'icon' in item && item.icon ? <item.icon className="h-4 w-4 text-emerald-600" /> : null}
+                </div>
+                <p className="mt-2 text-2xl font-semibold">{formatMoney(item.value, currencyCode)}</p>
+                {'highlight' in item && item.highlight ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Positive value means reserve. Negative value means the business is still in shortfall.
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          ))}
         <Card>
           <CardContent className="p-5">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Liabilities</p>

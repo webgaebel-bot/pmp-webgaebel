@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,6 +33,8 @@ interface DynamicSelectProps {
   disabled?: boolean;
   helperText?: string;
   className?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }
 
 export const DynamicSelect: React.FC<DynamicSelectProps> = ({
@@ -51,35 +53,66 @@ export const DynamicSelect: React.FC<DynamicSelectProps> = ({
   disabled = false,
   helperText,
   className,
+  searchable = false,
+  searchPlaceholder = 'Search options...',
 }) => {
   const normalizedValue = value || '';
   const showCustom = allowCustom && normalizedValue === '__custom__';
+  const [searchTerm, setSearchTerm] = useState('');
+  const filteredOptions = useMemo(() => {
+    if (!searchable || !searchTerm.trim()) return options;
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    return options.filter((option) => {
+      const text = `${option.label} ${option.meta || ''}`.toLowerCase();
+      return text.includes(normalizedSearch);
+    });
+  }, [options, searchable, searchTerm]);
+  const handleValueChange = (nextValue: string) => {
+    onValueChange(nextValue);
+    if (nextValue !== '__custom__') {
+      setSearchTerm('');
+    }
+  };
 
   return (
     <div className={cn('space-y-2', className)}>
       <Label>{label}</Label>
-      <Select value={normalizedValue} onValueChange={onValueChange} disabled={disabled || loading}>
+      <Select value={normalizedValue} onValueChange={handleValueChange} disabled={disabled || loading}>
         <SelectTrigger>
           <SelectValue placeholder={loading ? 'Loading...' : placeholder} />
         </SelectTrigger>
         <SelectContent>
           {loading ? (
-            <SelectItem value="__loading__" disabled>
+          <SelectItem value="__loading__" disabled>
               Loading...
             </SelectItem>
-          ) : options.length > 0 ? (
-            options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                <div className="flex flex-col">
-                  <span>{option.label}</span>
-                  {option.meta ? <span className="text-xs text-muted-foreground">{option.meta}</span> : null}
-                </div>
-              </SelectItem>
-            ))
           ) : (
-            <SelectItem value="__empty__" disabled>
-              {emptyLabel}
-            </SelectItem>
+            <>
+              {searchable ? (
+                <div className="sticky top-0 z-10 border-b bg-popover p-2">
+                  <Input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder={searchPlaceholder}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  />
+                </div>
+              ) : null}
+              {filteredOptions.length > 0 ? (
+                filteredOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <div className="flex flex-col">
+                      <span>{option.label}</span>
+                      {option.meta ? <span className="text-xs text-muted-foreground">{option.meta}</span> : null}
+                    </div>
+                  </SelectItem>
+                ))
+              ) : (
+                <SelectItem value="__empty__" disabled>
+                  {emptyLabel}
+                </SelectItem>
+              )}
+            </>
           )}
           {allowCustom ? <SelectItem value="__custom__">{customLabel}</SelectItem> : null}
         </SelectContent>

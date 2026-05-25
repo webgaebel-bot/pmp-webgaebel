@@ -9,16 +9,11 @@ import { Slider } from '@/components/ui/slider';
 import { DynamicSelect, type DynamicOption } from '@/components/common/DynamicSelect';
 import { LEAD_PRIORITIES, LEAD_SOURCES, PIPELINE_STAGES, type CreateLeadPayload, type Lead } from '@/types/leads';
 
-const OUTREACH_STATUSES = ['not_contacted', 'contacted', 'followup_sent', 'replied', 'qualified', 'closed', 'lost'] as const;
-const OUTREACH_CHANNELS = ['email', 'phone', 'whatsapp', 'linkedin', 'facebook', 'instagram', 'x', 'website', 'other'] as const;
-
 interface LeadFormModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (payload: CreateLeadPayload) => void;
   loading?: boolean;
-  users: Array<{ id: string; name: string }>;
-  projects: Array<{ id: string; name: string }>;
   niches: DynamicOption[];
   services: DynamicOption[];
   nicheLoading?: boolean;
@@ -34,8 +29,6 @@ export function LeadFormModal({
   onOpenChange,
   onSubmit,
   loading,
-  users,
-  projects,
   lead,
   niches,
   services,
@@ -61,15 +54,6 @@ export function LeadFormModal({
     lead_score: 50,
     budget: undefined,
     expected_close_date: '',
-    outreach_status: 'not_contacted',
-    outreach_channel: undefined,
-    first_contacted_at: '',
-    last_reachout_at: '',
-    followup_sent_at: '',
-    followup_notes: '',
-    close_value: undefined,
-    assigned_to: '',
-    project_id: '',
     tags: [],
     notes: '',
     contacts: [{ ...emptyContact, is_primary: true }],
@@ -102,15 +86,6 @@ export function LeadFormModal({
         lead_score: lead.lead_score || 0,
         budget: lead.budget,
         expected_close_date: lead.expected_close_date || '',
-        outreach_status: lead.outreach_status || 'not_contacted',
-        outreach_channel: lead.outreach_channel,
-        first_contacted_at: lead.first_contacted_at ? lead.first_contacted_at.slice(0, 16) : '',
-        last_reachout_at: lead.last_reachout_at ? lead.last_reachout_at.slice(0, 16) : '',
-        followup_sent_at: lead.followup_sent_at ? lead.followup_sent_at.slice(0, 16) : '',
-        followup_notes: lead.followup_notes || '',
-        close_value: lead.close_value,
-        assigned_to: lead.assigned_to || '',
-        project_id: lead.project_id || '',
         tags: (lead.lead_tags || []).map((tag) => tag.tag_name),
         notes: lead.notes || lead.lead_notes?.[0]?.content || '',
         contacts: lead.lead_contacts?.length ? lead.lead_contacts.map((contact) => ({ ...contact })) : [{ ...emptyContact, is_primary: true }],
@@ -134,15 +109,6 @@ export function LeadFormModal({
         lead_score: 50,
         budget: undefined,
         expected_close_date: '',
-        outreach_status: 'not_contacted',
-        outreach_channel: undefined,
-        first_contacted_at: '',
-        last_reachout_at: '',
-        followup_sent_at: '',
-        followup_notes: '',
-        close_value: undefined,
-        assigned_to: '',
-        project_id: '',
         tags: [],
         notes: '',
         contacts: [{ ...emptyContact, is_primary: true }],
@@ -168,14 +134,6 @@ export function LeadFormModal({
       x_url: form.x_url || undefined,
       services_offered: form.services_offered || undefined,
       expected_close_date: form.expected_close_date || undefined,
-      outreach_channel: form.outreach_channel || undefined,
-      first_contacted_at: form.first_contacted_at || undefined,
-      last_reachout_at: form.last_reachout_at || undefined,
-      followup_sent_at: form.followup_sent_at || undefined,
-      followup_notes: form.followup_notes || undefined,
-      close_value: form.close_value || undefined,
-      assigned_to: form.assigned_to || undefined,
-      project_id: form.project_id || undefined,
       budget: form.budget || undefined,
       notes: form.notes || undefined,
       tags: form.tags?.length ? form.tags : undefined,
@@ -241,6 +199,7 @@ export function LeadFormModal({
                     setForm((current) => ({ ...current, designation: next }));
                     setCustomNiche('');
                   }}
+                  searchable
                   helperText="Select a standard niche or create a new one if your role allows it."
                 />
               </div>
@@ -267,6 +226,7 @@ export function LeadFormModal({
                     setForm((current) => ({ ...current, services_offered: next }));
                     setCustomService('');
                   }}
+                  searchable
                   helperText="Select standard services or create a new one if your role allows it."
                 />
               </div>
@@ -345,71 +305,6 @@ export function LeadFormModal({
               <div className="space-y-2">
                 <Label>Expected Close Date</Label>
                 <Input type="date" value={form.expected_close_date || ''} onChange={(e) => setForm((current) => ({ ...current, expected_close_date: e.target.value }))} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>Assigned To</Label>
-                <select className="w-full rounded-md border bg-background px-3 py-2" value={form.assigned_to || ''} onChange={(e) => setForm((current) => ({ ...current, assigned_to: e.target.value }))}>
-                  <option value="">Unassigned</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>Project</Label>
-                <select className="w-full rounded-md border bg-background px-3 py-2" value={form.project_id || ''} onChange={(e) => setForm((current) => ({ ...current, project_id: e.target.value }))}>
-                  <option value="">No project</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-4">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Outreach Tracking</h3>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Outreach Status</Label>
-                <select className="w-full rounded-md border bg-background px-3 py-2" value={form.outreach_status} onChange={(e) => setForm((current) => ({ ...current, outreach_status: e.target.value as any }))}>
-                  {OUTREACH_STATUSES.map((status) => (
-                    <option key={status} value={status}>{status.replace('_', ' ')}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Outreach Channel</Label>
-                <select className="w-full rounded-md border bg-background px-3 py-2" value={form.outreach_channel || ''} onChange={(e) => setForm((current) => ({ ...current, outreach_channel: e.target.value ? e.target.value as any : undefined }))}>
-                  <option value="">Not selected</option>
-                  {OUTREACH_CHANNELS.map((channel) => (
-                    <option key={channel} value={channel}>{channel}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>First Contacted</Label>
-                <Input type="datetime-local" value={form.first_contacted_at || ''} onChange={(e) => setForm((current) => ({ ...current, first_contacted_at: e.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Last Reachout</Label>
-                <Input type="datetime-local" value={form.last_reachout_at || ''} onChange={(e) => setForm((current) => ({ ...current, last_reachout_at: e.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Follow-up Sent</Label>
-                <Input type="datetime-local" value={form.followup_sent_at || ''} onChange={(e) => setForm((current) => ({ ...current, followup_sent_at: e.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Close Value (PKR)</Label>
-                <Input type="number" min="0" value={form.close_value ?? ''} onChange={(e) => setForm((current) => ({ ...current, close_value: e.target.value ? Number(e.target.value) : undefined }))} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>Follow-up Notes</Label>
-                <Textarea rows={3} value={form.followup_notes || ''} onChange={(e) => setForm((current) => ({ ...current, followup_notes: e.target.value }))} />
               </div>
             </div>
           </section>

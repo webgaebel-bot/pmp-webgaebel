@@ -18,6 +18,7 @@ import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadsKanban } from '@/components/leads/LeadsKanban';
 import { LeadsAnalytics } from '@/components/leads/LeadsAnalytics';
 import { LeadFormModal } from '@/components/leads/LeadFormModal';
+import { FollowupFormModal } from '@/components/leads/FollowupFormModal';
 import { LeadDetailDrawer } from '@/components/leads/LeadDetailDrawer';
 import { FlexibleSheetTable, type FlexibleSheetRow } from '@/components/leads/FlexibleSheetTable';
 import { useLeads } from '@/hooks/leads/useLeads';
@@ -63,17 +64,24 @@ const defaultSourceOptions = [
 ];
 
 const defaultLeadColumns: FlexibleColumn[] = [
-  { id: 'company_name', label: 'Company Name', systemField: 'company', type: 'text' },
+  { id: 'name', label: 'Name', systemField: 'name', type: 'text' },
+  { id: 'company', label: 'Company', systemField: 'company', type: 'text' },
   { id: 'niche', label: 'Niche', systemField: 'designation', type: 'text' },
   { id: 'service', label: 'Service', systemField: 'services_offered', type: 'text' },
-  { id: 'platform_source', label: 'Platform Source', systemField: 'source', type: 'text' },
+  { id: 'source', label: 'Source', systemField: 'source', type: 'status', options: defaultSourceOptions },
+  { id: 'priority', label: 'Priority', systemField: 'priority', type: 'status' },
+  { id: 'pipeline_stage', label: 'Pipeline Stage', systemField: 'pipeline_stage', type: 'status' },
   { id: 'email', label: 'Gmail / Email', systemField: 'email', type: 'email' },
   { id: 'phone', label: 'Phone Number', systemField: 'phone', type: 'phone' },
   { id: 'website', label: 'Website', systemField: 'website', type: 'url' },
   { id: 'linkedin', label: 'LinkedIn', systemField: 'linkedin_url', type: 'url' },
   { id: 'facebook', label: 'Facebook', systemField: 'facebook_url', type: 'url' },
   { id: 'insta', label: 'Insta', systemField: 'instagram_url', type: 'url' },
-  { id: 'status', label: 'Status', systemField: 'status', type: 'status' },
+  { id: 'lead_score', label: 'Lead Score', systemField: 'lead_score', type: 'text' },
+  { id: 'budget', label: 'Budget (PKR)', systemField: 'budget', type: 'text' },
+  { id: 'expected_close_date', label: 'Expected Close Date', systemField: 'expected_close_date', type: 'date' },
+  { id: 'tags', label: 'Tags', type: 'text' },
+  { id: 'notes', label: 'Notes', systemField: 'notes', type: 'text' },
 ];
 
 const defaultFollowupColumns: FlexibleColumn[] = [
@@ -107,6 +115,16 @@ function loadColumns(key: string, fallback: FlexibleColumn[]) {
   } catch {
     return fallback;
   }
+}
+
+function mergeColumnsWithDefaults(stored: FlexibleColumn[], defaults: FlexibleColumn[]) {
+  const storedById = new Map(stored.map((column) => [column.id, column] as const));
+  return [
+    ...defaults.map((column) => {
+      const existing = storedById.get(column.id);
+      return existing ? { ...column, ...existing } : column;
+    }),
+  ];
 }
 
 
@@ -165,21 +183,54 @@ function filterRowsByDateRange(rows: Lead[], dateFrom?: string, dateTo?: string)
 
 function getLeadPlatformSourceValue(lead: Lead) {
   const customSource = String((lead.custom_fields as Record<string, unknown> | undefined)?.platform_source || '').trim();
-  if (lead.source === 'manual' && customSource) {
+  if (customSource) {
     return customSource;
   }
-  return lead.source || '';
+  return '';
+}
+
+function normalizeLeadSignalValue(value?: string) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function getLeadDedupeSignature(payload: Partial<CreateLeadPayload>) {
+  const strongSignals = [
+    normalizeLeadSignalValue(payload.email),
+    normalizeLeadSignalValue(payload.phone),
+    normalizeLeadSignalValue(payload.website),
+    normalizeLeadSignalValue(payload.linkedin_url),
+    normalizeLeadSignalValue(payload.facebook_url),
+    normalizeLeadSignalValue(payload.instagram_url),
+  ].filter(Boolean);
+
+  if (strongSignals.length > 0) {
+    return `strong:${strongSignals.join('|')}`;
+  }
+
+  const name = normalizeLeadSignalValue(payload.name);
+  const company = normalizeLeadSignalValue(payload.company);
+  if (name && company) {
+    return `record:${name}|${company}`;
+  }
+
+  return '';
 }
 
 function getStableBlankRowId(
-  rowIdsRef: React.MutableRefObject<string[]>,
+  rowIdsRef: React.MutableRefObject<Record<string, string[]>>,
   prefix: string,
   index: number
 ) {
-  if (!rowIdsRef.current[index]) {
-    rowIdsRef.current[index] = `${prefix}-${index + 1}-${Math.random().toString(36).slice(2, 9)}`;
+  if (!rowIdsRef.current[prefix]) {
+    rowIdsRef.current[prefix] = [];
   }
-  return rowIdsRef.current[index];
+
+  const scopedRowIds = rowIdsRef.current[prefix];
+  while (scopedRowIds.length <= index) {
+    scopedRowIds.push(`blank-${prefix}-${scopedRowIds.length}-${Math.random().toString(36).slice(2, 9)}`);
+  }
+
+  return scopedRowIds[index];
 }
 
 const Leads: React.FC = () => {
@@ -188,23 +239,26 @@ const Leads: React.FC = () => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const blankRowLeadIds = useRef<Record<string, string>>({});
   const blankRowFollowupIds = useRef<Record<string, string>>({});
-  const leadBlankRowIds = useRef<string[]>([]);
-  const followupBlankRowIds = useRef<string[]>([]);
+  const leadBlankRowIds = useRef<Record<string, string[]>>({});
+  const followupBlankRowIds = useRef<Record<string, string[]>>({});
   const pendingBlankRows = useRef<Record<string, boolean>>({});
   const pendingBlankFollowupRows = useRef<Record<string, boolean>>({});
   const queuedBlankValues = useRef<Record<string, Record<string, string>>>({});
   const queuedBlankFollowupValues = useRef<Record<string, Record<string, string>>>({});
+  const pendingLeadSignatures = useRef<Record<string, string>>({});
+  const recentLeadSignatures = useRef<Record<string, { rowId: string; leadId?: string; timestamp: number }>>({});
   const shownAutosaveErrors = useRef<Record<string, number>>({});
   const [view, setView] = useState<LeadsView>('table');
   const [filters, setFilters] = useState<LeadFiltersType>(emptyFilters);
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
-  const [leadColumns, setLeadColumns] = useState<FlexibleColumn[]>(() => loadColumns(LEADS_COLUMNS_KEY, defaultLeadColumns));
-  const [followupColumns, setFollowupColumns] = useState<FlexibleColumn[]>(() => loadColumns(FOLLOWUP_COLUMNS_KEY, defaultFollowupColumns));
+  const [leadColumns, setLeadColumns] = useState<FlexibleColumn[]>(() => mergeColumnsWithDefaults(loadColumns(LEADS_COLUMNS_KEY, defaultLeadColumns), defaultLeadColumns));
+  const [followupColumns, setFollowupColumns] = useState<FlexibleColumn[]>(() => mergeColumnsWithDefaults(loadColumns(FOLLOWUP_COLUMNS_KEY, defaultFollowupColumns), defaultFollowupColumns));
   const [followupSearch, setFollowupSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [leadFormOpen, setLeadFormOpen] = useState(false);
+  const [followupFormOpen, setFollowupFormOpen] = useState(false);
   const [leadDrawerOpen, setLeadDrawerOpen] = useState(false);
   const [activeLeadId, setActiveLeadId] = useState<string>();
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -240,10 +294,6 @@ const Leads: React.FC = () => {
     queryKey: ['lead-users'],
     queryFn: async () => api.getUsers(),
   });
-  const { data: projectsResponse } = useQuery({
-    queryKey: ['lead-projects'],
-    queryFn: async () => api.getProjects(),
-  });
 
   const assignedUsers = useMemo(
     () =>
@@ -252,14 +302,6 @@ const Leads: React.FC = () => {
         name: user.name || user.email || 'User',
       })),
     [usersResponse?.data]
-  );
-  const assignedProjects = useMemo(
-    () =>
-      (projectsResponse?.data || []).map((project: any) => ({
-        id: String(project.id),
-        name: project.name || 'Project',
-      })),
-    [projectsResponse?.data]
   );
 
   const {
@@ -339,15 +381,27 @@ const Leads: React.FC = () => {
 
   const leadColumnsWithOptions = useMemo(() =>
     leadColumns.map((column) => {
-      const lowerId = column.id.toLowerCase();
-      const lowerLabel = column.label.toLowerCase();
-      if (lowerId === 'niche' || lowerId === 'designation' || lowerId.includes('niche') || lowerLabel.includes('niche') || lowerLabel.includes('industry')) {
+      if (column.systemField === 'designation' || column.id === 'niche') {
         return { ...column, options: nicheOptions };
       }
-      if (lowerId === 'service' || lowerId === 'services_offered' || lowerId.includes('service') || lowerLabel.includes('service')) {
+      if (column.systemField === 'services_offered' || column.id === 'service') {
         return { ...column, options: serviceOptions };
       }
-      if (column.id === 'status' || lowerLabel === 'status') {
+      if (column.systemField === 'source' || column.id === 'source') {
+        return { ...column, options: defaultSourceOptions };
+      }
+      if (column.systemField === 'priority' || column.id === 'priority') {
+        return {
+          ...column,
+          options: [
+            { value: 'low', label: 'Low' },
+            { value: 'medium', label: 'Medium' },
+            { value: 'high', label: 'High' },
+            { value: 'urgent', label: 'Urgent' },
+          ],
+        };
+      }
+      if (column.systemField === 'pipeline_stage' || column.id === 'pipeline_stage') {
         return { ...column, options: defaultStatusOptions };
       }
       return column;
@@ -547,26 +601,45 @@ const Leads: React.FC = () => {
       ownerName: lead.created_by_name || lead.created_by_email,
       raw: lead,
       values: leadColumns.reduce<Record<string, string>>((acc, column) => {
-        if (column.id === 'company_name') acc[column.id] = lead.company || lead.name || '';
-        else if (column.systemField === 'source') acc[column.id] = getLeadPlatformSourceValue(lead);
+        if (column.id === 'name') acc[column.id] = lead.name || '';
+        else if (column.id === 'company') acc[column.id] = lead.company || '';
+        else if (column.id === 'source') acc[column.id] = String(lead.source || '');
+        else if (column.id === 'priority') acc[column.id] = String(lead.priority || '');
+        else if (column.id === 'pipeline_stage') acc[column.id] = String(lead.pipeline_stage || '');
+        else if (column.id === 'lead_score') acc[column.id] = lead.lead_score != null ? String(lead.lead_score) : '';
+        else if (column.id === 'budget') acc[column.id] = lead.budget != null ? String(lead.budget) : '';
+        else if (column.id === 'expected_close_date') acc[column.id] = lead.expected_close_date || '';
+        else if (column.id === 'tags') acc[column.id] = (lead.lead_tags || []).map((tag) => tag.tag_name).join(', ');
+        else if (column.id === 'notes') acc[column.id] = lead.notes || lead.lead_notes?.[0]?.content || '';
         else if (column.systemField) acc[column.id] = String((lead as unknown as Record<string, unknown>)[column.systemField as string] ?? '');
         else acc[column.id] = String(lead.custom_fields?.[column.id] ?? '');
         return acc;
       }, {}),
     }));
 
-    const dataLeadIds = new Set(dataRows.map((row) => String(row.id)));
-    const blankRows = Array.from({ length: Math.max(sheetRowCount - dataRows.length, 0) }, (_, index) => ({
+    const dataRowsById = new Map(dataRows.map((row) => [String(row.id), row] as const));
+    const mappedLeadIds = new Set(Object.values(blankRowLeadIds.current).map((id) => String(id)));
+    const visibleDataRows = dataRows.filter((row) => !mappedLeadIds.has(String(row.id)));
+    const blankRows = Array.from({ length: sheetRowCount }, (_, index) => ({
       id: getStableBlankRowId(leadBlankRowIds, `lead-page-${page}`, index),
       ownerName: '',
       raw: null,
-      values: {},
-    })).filter((row) => {
+      values: {} as Record<string, string>,
+    })).map((row) => {
       const mappedLeadId = blankRowLeadIds.current[row.id];
-      return !mappedLeadId || !dataLeadIds.has(String(mappedLeadId));
+      const mappedLead = mappedLeadId ? dataRowsById.get(String(mappedLeadId)) : undefined;
+      if (mappedLead) {
+        return {
+          ...row,
+          ownerName: mappedLead.ownerName,
+          raw: mappedLead.raw,
+          values: mappedLead.values,
+        };
+      }
+      return row;
     });
 
-    return [...dataRows, ...blankRows];
+    return visibleDataRows;
   }, [leadColumns, leads, page, sheetRowCount]);
 
   const buildLeadPayloadFromRow = (values: Record<string, string>, lead?: Lead): CreateLeadPayload & { custom_fields?: Record<string, string> } | null => {
@@ -578,7 +651,7 @@ const Leads: React.FC = () => {
       return acc;
     }, {});
 
-    const fallbackName = values.company_name || values.email || values.phone || values.niche || lead?.name || `Lead ${new Date().toLocaleString()}`;
+      const fallbackName = values.name || values.company || values.email || values.phone || values.niche || lead?.name || `Lead ${new Date().toLocaleString()}`;
     const rawPlatformSource = String(values.platform_source || values.source || lead?.custom_fields?.platform_source || lead?.source || 'manual').trim();
     const normalizedSource = normalizeSourceValue(rawPlatformSource);
     if (rawPlatformSource && rawPlatformSource.toLowerCase().replace(/\s+/g, '_') !== normalizedSource) {
@@ -587,7 +660,7 @@ const Leads: React.FC = () => {
 
     return {
       name: fallbackName,
-      company: values.company_name || undefined,
+      company: values.company || undefined,
       designation: values.niche || undefined,
       services_offered: values.service || undefined,
       source: normalizedSource,
@@ -597,10 +670,14 @@ const Leads: React.FC = () => {
       linkedin_url: values.linkedin || undefined,
       facebook_url: values.facebook || undefined,
       instagram_url: values.insta || undefined,
+      priority: (values.priority || lead?.priority || 'medium') as any,
+      pipeline_stage: (values.pipeline_stage || lead?.pipeline_stage || 'new') as any,
+      lead_score: values.lead_score ? Number(values.lead_score) : Number(lead?.lead_score || 0),
+      budget: values.budget ? Number(values.budget) : undefined,
+      expected_close_date: values.expected_close_date || undefined,
+      notes: values.notes || lead?.notes || undefined,
+      tags: values.tags ? values.tags.split(/[,;\n|]+/).map((tag) => tag.trim()).filter(Boolean) : lead?.lead_tags?.map((tag) => tag.tag_name),
       status: normalizeStatusValue(values.status, lead?.status || 'new'),
-      pipeline_stage: lead?.pipeline_stage || 'new',
-      priority: lead?.priority || 'medium',
-      lead_score: lead?.lead_score || 0,
       custom_fields,
     };
   };
@@ -610,6 +687,7 @@ const Leads: React.FC = () => {
     const existingId = lead?.id || blankRowLeadIds.current[rowId];
     const payload = buildLeadPayloadFromRow(values, lead || undefined);
     if (!payload) return;
+    let leadSignature = getLeadDedupeSignature(payload);
 
     try {
       setLeadRowWarnings((current) => {
@@ -622,10 +700,32 @@ const Leads: React.FC = () => {
       if (existingId) {
         if (!canUpdateLead) return;
         await api.updateLead(existingId, payload);
+        if (leadSignature) {
+          recentLeadSignatures.current[leadSignature] = {
+            rowId,
+            leadId: String(existingId),
+            timestamp: Date.now(),
+          };
+        }
         await queryClient.invalidateQueries({ queryKey: ['leads'] });
         await queryClient.invalidateQueries({ queryKey: ['leads-all'] });
         await queryClient.invalidateQueries({ queryKey: ['lead-stats'] });
         return;
+      }
+
+      if (leadSignature) {
+        const pendingOwner = pendingLeadSignatures.current[leadSignature];
+        const recentOwner = recentLeadSignatures.current[leadSignature];
+        const recentAge = recentOwner ? Date.now() - recentOwner.timestamp : Number.POSITIVE_INFINITY;
+        if ((pendingOwner && pendingOwner !== rowId) || (recentOwner && recentOwner.rowId !== rowId && recentAge < 15000)) {
+          const warningMessage = 'This lead is already being entered in another row.';
+          setLeadRowWarnings((current) => ({
+            ...current,
+            [rowId]: warningMessage,
+          }));
+          return;
+        }
+        pendingLeadSignatures.current[leadSignature] = rowId;
       }
 
       if (!canCreateLead || pendingBlankRows.current[rowId]) {
@@ -638,6 +738,13 @@ const Leads: React.FC = () => {
       const createdId = response?.data?.id || response?.id;
       if (createdId) {
         blankRowLeadIds.current[rowId] = String(createdId);
+        if (leadSignature) {
+          recentLeadSignatures.current[leadSignature] = {
+            rowId,
+            leadId: String(createdId),
+            timestamp: Date.now(),
+          };
+        }
       }
 
       const queuedValues = queuedBlankValues.current[rowId];
@@ -685,6 +792,10 @@ const Leads: React.FC = () => {
       }
     } finally {
       pendingBlankRows.current[rowId] = false;
+      delete queuedBlankValues.current[rowId];
+      if (leadSignature && pendingLeadSignatures.current[leadSignature] === rowId) {
+        delete pendingLeadSignatures.current[leadSignature];
+      }
     }
   };
 
@@ -726,15 +837,38 @@ const Leads: React.FC = () => {
       }, {}),
     }));
 
-    const blankRows = Array.from({ length: Math.max(followupSheetRowCount - dataRows.length, 0) }, (_, index) => ({
+    const dataRowsById = new Map(dataRows.map((row) => [String(row.id), row] as const));
+    const mappedFollowupIds = new Set(Object.values(blankRowFollowupIds.current).map((id) => String(id)));
+    const visibleDataRows = dataRows.filter((row) => !mappedFollowupIds.has(String(row.id)));
+    const blankRows = Array.from({ length: followupSheetRowCount }, (_, index) => ({
       id: getStableBlankRowId(followupBlankRowIds, 'followup', index),
       ownerName: '',
       raw: null,
-      values: {},
-    }));
+      values: {} as Record<string, string>,
+    })).map((row) => {
+      const mappedFollowupId = blankRowFollowupIds.current[row.id];
+      const mappedFollowup = mappedFollowupId ? dataRowsById.get(String(mappedFollowupId)) : undefined;
+      if (mappedFollowup) {
+        return {
+          ...row,
+          ownerName: mappedFollowup.ownerName,
+          raw: mappedFollowup.raw,
+          values: mappedFollowup.values,
+        };
+      }
+      return row;
+    });
 
-    return [...dataRows, ...blankRows];
+    return visibleDataRows;
   }, [followupColumns, followupQuery.data?.data, followupSheetRowCount]);
+
+  const handleCreateFollowup = (payload: { data: Record<string, string>; status?: string }) => {
+    followupMutations.createFollowup.mutate(payload, {
+      onSuccess: () => {
+        setFollowupFormOpen(false);
+      },
+    });
+  };
 
   const buildFollowupPayloadFromRow = (values: Record<string, string>) => {
     const hasValue = Object.values(values).some((value) => String(value || '').trim());
@@ -836,6 +970,11 @@ const Leads: React.FC = () => {
                 delete blankRowLeadIds.current[rowKey];
                 delete queuedBlankValues.current[rowKey];
                 delete pendingBlankRows.current[rowKey];
+              }
+            });
+            Object.keys(recentLeadSignatures.current).forEach((signature) => {
+              if (recentLeadSignatures.current[signature]?.leadId === leadId) {
+                delete recentLeadSignatures.current[signature];
               }
             });
             if (activeLeadId === leadId) {
@@ -1103,16 +1242,14 @@ const Leads: React.FC = () => {
                   emptyText={leads.length === 0 ? 'No leads yet. Enter data into the sheet to create the first lead.' : 'No leads found for the selected filters.'}
                   onColumnsChange={setLeadColumns}
                   onSaveRow={(canUpdateLead || canCreateLead) ? saveLeadRow : undefined}
-                  onAddRow={canCreateLead ? addLeadRow : undefined}
                   onDeleteRow={canDeleteLead ? handleDeleteLead : undefined}
                   rowWarnings={leadRowWarnings}
                   isFullscreen={sheetFullscreen === 'leads'}
                   onToggleFullscreen={() => setSheetFullscreen((current) => (current === 'leads' ? null : 'leads'))}
-                  canAdd={canCreateLead}
+                  canAdd={false}
                   canEdit={canUpdateLead || canCreateLead}
                   canDelete={canDeleteLead}
-                  canManageColumns={canUpdateLead}
-                  autoSave
+                  canManageColumns={false}
                 />
               )}
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1137,12 +1274,20 @@ const Leads: React.FC = () => {
           {view === 'followups' ? (
             <div className={sheetFullscreen === 'followups' ? 'fixed inset-0 z-50 bg-background/95 p-4 backdrop-blur-sm' : ''}>
               <div className={sheetFullscreen === 'followups' ? 'flex h-full flex-col gap-4' : 'space-y-4'}>
-              <Input
-                value={followupSearch}
-                onChange={(event) => setFollowupSearch(event.target.value)}
-                placeholder="Search follow-ups"
-                className="max-w-md"
-              />
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <Input
+                  value={followupSearch}
+                  onChange={(event) => setFollowupSearch(event.target.value)}
+                  placeholder="Search follow-ups"
+                  className="max-w-md"
+                />
+                {canCreateFollowups ? (
+                  <Button onClick={() => setFollowupFormOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    New Follow-up
+                  </Button>
+                ) : null}
+              </div>
               {followupQuery.isError ? (
                 <ModuleErrorState
                   title="Follow-ups could not load"
@@ -1164,15 +1309,13 @@ const Leads: React.FC = () => {
                   emptyText={followupQuery.isLoading ? 'Loading follow-ups...' : 'No follow-up rows found.'}
                   onColumnsChange={setFollowupColumns}
                   onSaveRow={(canUpdateFollowups || canCreateFollowups) ? saveFollowupRow : undefined}
-                  onAddRow={canCreateFollowups ? addFollowupRows : undefined}
                   onDeleteRow={canDeleteFollowups ? (rowId) => followupMutations.deleteFollowup.mutate(rowId) : undefined}
                   isFullscreen={sheetFullscreen === 'followups'}
                   onToggleFullscreen={() => setSheetFullscreen((current) => (current === 'followups' ? null : 'followups'))}
-                  canAdd={canCreateFollowups}
+                  canAdd={false}
                   canEdit={canUpdateFollowups || canCreateFollowups}
                   canDelete={canDeleteFollowups}
-                  canManageColumns={canUpdateFollowups}
-                  autoSave
+                  canManageColumns={false}
                 />
               )}
               </div>
@@ -1208,14 +1351,19 @@ const Leads: React.FC = () => {
         }}
         onSubmit={handleCreateOrUpdate}
         loading={mutations.createLead.isPending || mutations.updateLead.isPending}
-        users={assignedUsers}
-        projects={assignedProjects}
         niches={nicheOptions}
         services={serviceOptions}
         nicheLoading={isLoading && !leadsResponse}
         onCreateNiche={canCreateNiches ? handleCreateNiche : undefined}
         onCreateService={canCreateNiches ? handleCreateService : undefined}
         lead={editingLead}
+      />
+
+      <FollowupFormModal
+        open={followupFormOpen}
+        onOpenChange={setFollowupFormOpen}
+        onSubmit={handleCreateFollowup}
+        loading={followupMutations.createFollowup.isPending}
       />
 
       <LeadDetailDrawer

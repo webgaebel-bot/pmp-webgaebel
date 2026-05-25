@@ -18,10 +18,11 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Plus, Search, Edit, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Edit, Eye, Trash2 } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
@@ -33,6 +34,7 @@ const Expenses: React.FC = () => {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedExpense, setSelectedExpense] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     category: '',
     description: '',
@@ -88,6 +90,10 @@ const Expenses: React.FC = () => {
       project_id: expense.project_id || projectQueryId || '',
     });
     setIsDialogOpen(true);
+  };
+
+  const handleView = (expense: any) => {
+    setSelectedExpense(expense);
   };
 
   useEffect(() => {
@@ -319,6 +325,63 @@ const Expenses: React.FC = () => {
         </Dialog>
       </div>
 
+      <Dialog open={Boolean(selectedExpense)} onOpenChange={(open) => !open && setSelectedExpense(null)}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Expense Details</DialogTitle>
+            <DialogDescription>Detailed breakdown of the selected expense.</DialogDescription>
+          </DialogHeader>
+          {selectedExpense ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Category</p>
+                  <p className="font-medium capitalize">{selectedExpense.category || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Project</p>
+                  <p className="font-medium">{selectedExpense.project?.name || selectedExpense.project_name || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Amount</p>
+                  <p className="font-medium">{formatMoney(selectedExpense.amount || 0, selectedExpense.currency || expenseCurrency)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Currency</p>
+                  <p className="font-medium">{selectedExpense.currency || 'USD'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Date</p>
+                  <p className="font-medium">{selectedExpense.expense_date ? new Date(selectedExpense.expense_date).toLocaleDateString() : '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Method</p>
+                  <p className="font-medium capitalize">
+                    {selectedExpense.payment_method === 'other'
+                      ? selectedExpense.payment_method_other || 'Other'
+                      : selectedExpense.payment_method?.replace('_', ' ') || '-'}
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase text-muted-foreground">Description</p>
+                <p className="font-medium">{selectedExpense.description || '-'}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase text-muted-foreground">Receipt</p>
+                <p className="font-medium">
+                  {selectedExpense.receipt_url ? (
+                    <a href={selectedExpense.receipt_url} target="_blank" rel="noreferrer" className="text-primary underline">
+                      View receipt
+                    </a>
+                  ) : '-'}
+                </p>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -386,6 +449,9 @@ const Expenses: React.FC = () => {
                         <div className="flex gap-2">
                           <Button variant="ghost" size="icon" onClick={() => handleEdit(expense)}>
                             <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleView(expense)} aria-label="View expense details">
+                            <Eye className="h-4 w-4" />
                           </Button>
                           <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(expense.id, expense.description)}>
                             <Trash2 className="h-4 w-4" />

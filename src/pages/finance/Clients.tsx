@@ -22,7 +22,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Plus, Search, Edit, Trash2, Mail, Phone } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Edit, Eye, Trash2, Mail, Phone } from 'lucide-react';
 import { api } from '@/services/api';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
@@ -32,6 +32,7 @@ const Clients: React.FC = () => {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -73,6 +74,10 @@ const Clients: React.FC = () => {
       status: client.status || 'active',
     });
     setIsDialogOpen(true);
+  };
+
+  const handleView = (client: any) => {
+    setSelectedClient(client);
   };
 
   const { data: clientsResponse, isLoading } = useQuery({
@@ -192,6 +197,45 @@ const Clients: React.FC = () => {
         </Dialog>
       </div>
 
+      <Dialog open={Boolean(selectedClient)} onOpenChange={(open) => !open && setSelectedClient(null)}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Client Details</DialogTitle>
+            <DialogDescription>Detailed view of the selected client profile.</DialogDescription>
+          </DialogHeader>
+          {selectedClient ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Name</p>
+                  <p className="font-medium">{selectedClient.name || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Status</p>
+                  <p className="font-medium capitalize">{selectedClient.status || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Email</p>
+                  <p className="font-medium">{selectedClient.email || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Phone</p>
+                  <p className="font-medium">{selectedClient.phone || '-'}</p>
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase text-muted-foreground">Company</p>
+                <p className="font-medium">{selectedClient.company || '-'}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase text-muted-foreground">Address</p>
+                <p className="font-medium">{selectedClient.address || '-'}</p>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardHeader>
           <div className="relative">
@@ -235,6 +279,9 @@ const Clients: React.FC = () => {
                       <TableCell>
                           <div className="flex gap-2">
                             <Button variant="ghost" size="icon" onClick={() => handleEdit(client)}><Edit className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => handleView(client)} aria-label="View client details">
+                              <Eye className="h-4 w-4" />
+                            </Button>
                             <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(client.id, client.name)}>
                               <Trash2 className="h-4 w-4" />
                             </Button>

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Edit, Plus, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, Edit, Eye, Plus, Search, Trash2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { toast } from 'sonner';
 import { api } from '@/services/api';
@@ -22,6 +22,7 @@ const Payments: React.FC = () => {
   const [search, setSearch] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedPayment, setSelectedPayment] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     client_name: '',
     amount: '',
@@ -135,6 +136,10 @@ const Payments: React.FC = () => {
     setIsDialogOpen(true);
   };
 
+  const handleView = (payment: any) => {
+    setSelectedPayment(payment);
+  };
+
   const getBaseValues = (payment: any) => {
     const amount = Number(payment?.amount || 0);
     const received = Number(payment?.received_amount || 0);
@@ -244,7 +249,7 @@ const Payments: React.FC = () => {
   }, 0);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-2">
           <Button variant="ghost" size="sm" className="px-0" onClick={() => navigate('/finance')}>
@@ -444,14 +449,28 @@ const Payments: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <div>
-                <Label htmlFor="status">Status</Label>
-                <select
-                  id="status"
-                  value={formData.status}
-                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2"
-                >
+                <div>
+                  <Label htmlFor="status">Status</Label>
+                  <select
+                    id="status"
+                    value={formData.status}
+                    onChange={(e) => {
+                      const nextStatus = e.target.value;
+                      const amountValue = Number(formData.amount || 0);
+                      const nextReceived =
+                        nextStatus === 'completed'
+                          ? amountValue
+                          : nextStatus === 'half'
+                            ? amountValue / 2
+                            : 0;
+                      setFormData({
+                        ...formData,
+                        status: nextStatus,
+                        received_amount: String(nextReceived),
+                      });
+                    }}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  >
                   <option value="pending">Pending</option>
                   <option value="half">Half</option>
                   <option value="completed">Completed</option>
@@ -472,6 +491,70 @@ const Payments: React.FC = () => {
           </DialogContent>
         </Dialog>
       </div>
+
+      <Dialog open={Boolean(selectedPayment)} onOpenChange={(open) => !open && setSelectedPayment(null)}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Payment Details</DialogTitle>
+            <DialogDescription>Detailed breakdown of the selected payment.</DialogDescription>
+          </DialogHeader>
+          {selectedPayment ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Client</p>
+                  <p className="font-medium">{selectedPayment.client_name || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Project</p>
+                  <p className="font-medium">{selectedPayment.project?.name || selectedPayment.project_name || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Amount</p>
+                  <p className="font-medium">{formatMoney(selectedPayment.amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Base Amount</p>
+                  <p className="font-medium">{formatMoney(selectedPayment.base_amount || 0, baseCurrency)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Received</p>
+                  <p className="font-medium">{formatMoney(selectedPayment.received_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Status</p>
+                  <p className="font-medium capitalize">{selectedPayment.status || '-'}</p>
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Tax</p>
+                  <p className="font-medium">{formatMoney(selectedPayment.tax_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Commission</p>
+                  <p className="font-medium">{formatMoney(selectedPayment.commission_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {selectedPayment.commission_assignee?.name || selectedPayment.commission_assignee_name || 'No assignee'}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Transaction Fee</p>
+                  <p className="font-medium">{formatMoney(selectedPayment.transaction_fee_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Product Cost</p>
+                  <p className="font-medium">{formatMoney(selectedPayment.product_cost_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase text-muted-foreground">Description</p>
+                <p className="font-medium">{selectedPayment.description || '-'}</p>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -586,12 +669,15 @@ const Payments: React.FC = () => {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
-                            <Button type="button" variant="ghost" size="icon" onClick={() => handleEdit(payment)} aria-label="Edit payment">
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
+                          <Button type="button" variant="ghost" size="icon" onClick={() => handleEdit(payment)} aria-label="Edit payment">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button type="button" variant="ghost" size="icon" onClick={() => handleView(payment)} aria-label="View payment details">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
                               size="icon"
                               className="text-destructive"
                               onClick={() => handleDelete(payment.id, payment.client_name)}

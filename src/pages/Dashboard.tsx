@@ -136,7 +136,7 @@ const Dashboard: React.FC = () => {
         }
 
         if (canViewAdminDashboardSections) {
-          promises.push(api.get('/finance/stats?range=month'));
+            promises.push(api.get('/finance/stats?range=all'));
         } else {
           promises.push(Promise.resolve({ data: null }));
         }
