@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings, LayoutGrid, PiggyBank } from 'lucide-react';
+import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Wallet, PlusCircle, Receipt, Users, Settings, LayoutGrid, PiggyBank, Building2 } from 'lucide-react';
 import { api } from '@/services/api';
 import { usePermission } from '@/hooks/usePermission';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
@@ -93,6 +93,12 @@ const FinanceDashboard: React.FC = () => {
 
   const currentSettings = currentSettingsResponse?.data || {};
 
+  const { data: foundersResponse } = useQuery({
+    queryKey: ['finance-founders'],
+    queryFn: async () => api.get('/finance/founders'),
+  });
+  const founders = foundersResponse?.data || [];
+
   const { data: chartDataResponse } = useQuery({
     queryKey: ['finance-chart', timeRange, currencyFilter],
     queryFn: async () => {
@@ -110,7 +116,30 @@ const FinanceDashboard: React.FC = () => {
   const currencyCode = stats?.data?.currency || currentSettings.base_currency || 'USD';
   const futureFundCurrent = Number(stats?.data?.futureFund || 0);
   const futureFundRecorded = Number(stats?.data?.futureFundRecorded || 0);
-  const companySavings = futureFundRecorded > 0 ? futureFundRecorded : Number(stats?.data?.netProfit || 0);
+  const founderProfitGross = Number(stats?.data?.founderProfit || 0);
+  const companySavingsRate = 10;
+  const companySavings = Math.max(founderProfitGross, 0) * (companySavingsRate / 100);
+  const totalFounderEquity = founders.reduce((sum: number, founder: any) => sum + Number(founder.equity_percentage || 0), 0);
+  const normalizedFounderEquity = totalFounderEquity > 0 ? totalFounderEquity : 100;
+  const founderPayoutRows = founders
+    .map((founder: any) => {
+      const equity = Number(founder.equity_percentage || 0);
+      const share = normalizedFounderEquity > 0 ? equity / normalizedFounderEquity : 0;
+      const grossShare = founderProfitGross > 0 ? founderProfitGross * share : 0;
+      const savings = grossShare * (companySavingsRate / 100);
+      const netShare = Math.max(grossShare - savings, 0);
+      return {
+        id: founder.id,
+        name: founder.name || 'Founder',
+        equity,
+        share,
+        grossShare,
+        savings,
+        netShare,
+      };
+    })
+    .filter((row: any) => row.grossShare > 0 || row.netShare > 0 || row.equity > 0);
+  const founderCompanySavingsTotal = founderPayoutRows.reduce((sum: number, row: any) => sum + row.savings, 0);
 
   const statCards = [
     {
@@ -150,12 +179,11 @@ const FinanceDashboard: React.FC = () => {
     { title: 'Salaries', value: stats?.data?.salaries || 0 },
   ];
 
-    const profitCards = [
+  const profitCards = [
       { title: 'Gross Profit', value: stats?.data?.grossProfit || 0 },
       { title: 'Product Costs', value: stats?.data?.productCosts || 0 },
       { title: 'Future Fund', value: futureFundCurrent },
-      { title: 'Company Savings', value: companySavings, icon: PiggyBank, highlight: true },
-      { title: 'Founder Profit', value: stats?.data?.founderProfit || 0 },
+      { title: `Company Savings (from founders ${companySavingsRate}%)`, value: founderCompanySavingsTotal || companySavings, icon: PiggyBank, highlight: true },
     ];
   const chartDistributionData = distributionData.filter((item: any) => Number(item.amount || 0) > 0 && item.label !== 'Founder Equity Allocated');
   const chartDistributionTotal = chartDistributionData.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
@@ -181,6 +209,12 @@ const FinanceDashboard: React.FC = () => {
       onClick: () => navigate('/finance/clients?create=1'),
     },
     {
+      title: 'Payment Accounts',
+      description: 'Manage the bank or wallet accounts that receive client payments.',
+      icon: Building2,
+      onClick: () => navigate('/finance/accounts'),
+    },
+    {
       title: 'Salary Management',
       description: 'Open the salary module for employee payroll records.',
       icon: Wallet,
@@ -202,6 +236,7 @@ const FinanceDashboard: React.FC = () => {
     if (action.title === 'Add Payment') return permission.canAny(['finance.payments.manage', 'finance.settings.manage', 'finance.view.all']);
     if (action.title === 'Add Expense') return permission.canAny(['finance.expenses.manage', 'finance.settings.manage', 'finance.view.all']);
     if (action.title === 'Add Client') return permission.canAny(['finance.clients.manage', 'finance.settings.manage', 'finance.view.all']);
+    if (action.title === 'Payment Accounts') return permission.canAny(['finance.payments.view', 'finance.payments.manage', 'finance.settings.manage', 'finance.view.all']);
     if (action.title === 'Salary Management') return permission.canAny(['finance.salaries.manage', 'finance.settings.manage', 'finance.view.all']);
     if (action.title === 'Add Founder') return permission.canAny(['finance.founders.manage', 'finance.settings.manage', 'finance.view.all']);
     if (action.title === 'Taxes & Commissions') return permission.canAny(['finance.taxes.view', 'finance.commissions.view', 'finance.settings.manage', 'finance.view.all']);
@@ -338,6 +373,65 @@ const FinanceDashboard: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Founder Payout Breakdown</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Each founder receives their equity share from founder profit, then 10% company savings is deducted from that share.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {founderPayoutRows.length > 0 ? (
+            <div className="space-y-3">
+              {founderPayoutRows.map((founder: any) => (
+                <div key={founder.id} className="rounded-xl border bg-background p-4">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="font-semibold text-foreground">{founder.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {founder.share > 0 ? `${(founder.share * 100).toFixed(2)}% share` : 'No equity configured'}
+                      </p>
+                    </div>
+                    <div className="grid gap-2 text-sm md:grid-cols-3 md:gap-6">
+                      <div>
+                        <p className="text-xs uppercase text-muted-foreground">Gross</p>
+                        <p className="font-medium">{formatMoney(founder.grossShare, currencyCode)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase text-muted-foreground">Savings 10%</p>
+                        <p className="font-medium text-amber-600">-{formatMoney(founder.savings, currencyCode)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase text-muted-foreground">Net</p>
+                        <p className="font-semibold text-emerald-700">{formatMoney(founder.netShare, currencyCode)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="font-semibold text-foreground">Company Savings</p>
+                    <p className="text-sm text-muted-foreground">
+                      10% deducted from each founder share. Total savings: {formatMoney(founderCompanySavingsTotal || companySavings, currencyCode)}.
+                    </p>
+                  </div>
+                  <p className="text-2xl font-bold text-emerald-700">
+                    {formatMoney(founderCompanySavingsTotal || companySavings, currencyCode)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <ModuleEmptyState
+              title="No founders configured"
+              description="Add founders first so the dashboard can show per-founder payout and company savings."
+            />
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -506,10 +600,16 @@ const FinanceDashboard: React.FC = () => {
               Open the dedicated records page for project taxes and outsider commissions.
             </p>
           </div>
-          <Button variant="outline" onClick={() => navigate('/finance/records')}>
-            <LayoutGrid className="mr-2 h-4 w-4" />
-            Open Records
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => navigate('/finance/accounts')}>
+              <Building2 className="mr-2 h-4 w-4" />
+              Open Accounts
+            </Button>
+            <Button variant="outline" onClick={() => navigate('/finance/records')}>
+              <LayoutGrid className="mr-2 h-4 w-4" />
+              Open Records
+            </Button>
+          </div>
         </CardHeader>
       </Card>
     </div>

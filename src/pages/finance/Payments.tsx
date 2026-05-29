@@ -24,10 +24,13 @@ const Payments: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedPayment, setSelectedPayment] = useState<any | null>(null);
   const [formData, setFormData] = useState({
+    client_id: '',
     client_name: '',
+    account_id: '',
     amount: '',
     currency: 'USD',
     payment_date: '',
+    received_at: '',
     payment_method: 'bank_transfer',
     payment_method_other: '',
     status: 'pending',
@@ -67,6 +70,13 @@ const Payments: React.FC = () => {
   });
   const clients = clientsResponse?.data || [];
 
+  const { data: accountsResponse } = useQuery({
+    queryKey: ['finance-accounts'],
+    queryFn: async () => api.get('/finance/accounts'),
+    enabled: isDialogOpen,
+  });
+  const accounts = accountsResponse?.data || [];
+
   const { data: assigneesResponse } = useQuery({
     queryKey: ['finance-payment-commission-assignees'],
     queryFn: async () => api.getUsers(),
@@ -81,13 +91,31 @@ const Payments: React.FC = () => {
   const financeSettings = financeSettingsResponse?.data?.data || {};
   const baseCurrency = financeSettings.base_currency || 'USD';
 
+  const toDatetimeLocalValue = (value?: string | null) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+  };
+
+  const fromDatetimeLocalValue = (value?: string | null) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString();
+  };
+
   const resetForm = () => {
     setEditingId(null);
     setFormData({
+      client_id: '',
       client_name: '',
+      account_id: '',
       amount: '',
       currency: 'USD',
       payment_date: '',
+      received_at: toDatetimeLocalValue(new Date().toISOString()),
       payment_method: 'bank_transfer',
       payment_method_other: '',
       status: 'pending',
@@ -117,10 +145,13 @@ const Payments: React.FC = () => {
   const handleEdit = (payment: any) => {
     setEditingId(payment.id);
     setFormData({
+      client_id: payment.client_id || payment.client?.id || '',
       client_name: payment.client_name || '',
+      account_id: payment.account_id || payment.account?.id || '',
       amount: String(payment.amount || ''),
       currency: payment.currency || 'USD',
       payment_date: payment.payment_date || '',
+      received_at: toDatetimeLocalValue(payment.received_at || payment.created_at),
       payment_method: payment.payment_method || 'bank_transfer',
       payment_method_other: payment.payment_method_other || '',
       status: payment.status || 'pending',
@@ -217,8 +248,11 @@ const Payments: React.FC = () => {
 
     createOrUpdateMutation.mutate({
       ...formData,
+      client_id: formData.client_id || undefined,
       amount: amountValue,
       received_amount: receivedValue,
+      account_id: formData.account_id || undefined,
+      received_at: fromDatetimeLocalValue(formData.received_at) || undefined,
       commission_assignee_id: formData.commission_assignee_id || undefined,
       tax_amount: Number(formData.tax_amount || 0),
       commission_amount: Number(formData.commission_amount || 0),
@@ -229,7 +263,9 @@ const Payments: React.FC = () => {
 
   const filteredPayments = payments.filter((p: any) =>
     p.client_name?.toLowerCase().includes(search.toLowerCase()) ||
+    p.client?.name?.toLowerCase().includes(search.toLowerCase()) ||
     p.project?.name?.toLowerCase().includes(search.toLowerCase()) ||
+    p.account?.name?.toLowerCase().includes(search.toLowerCase()) ||
     p.description?.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -277,27 +313,55 @@ const Payments: React.FC = () => {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="client_id">Client</Label>
+                  <select
+                    id="client_id"
+                    value={formData.client_id}
+                    onChange={(e) => {
+                      const clientId = e.target.value;
+                      const selectedClient = clients.find((client: any) => client.id === clientId);
+                      setFormData({
+                        ...formData,
+                        client_id: clientId,
+                        client_name: selectedClient?.name || formData.client_name,
+                      });
+                    }}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  >
+                    <option value="">Select client</option>
+                    {clients.map((client: any) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name}{client.company ? ` - ${client.company}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="account_id">Receiving Account</Label>
+                  <select
+                    id="account_id"
+                    value={formData.account_id}
+                    onChange={(e) => setFormData({ ...formData, account_id: e.target.value })}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  >
+                    <option value="">Select account</option>
+                    {accounts.map((account: any) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}{account.account_type ? ` - ${account.account_type.replace(/_/g, ' ')}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div>
-                <Label htmlFor="client_name">Client Name</Label>
-                <select
+                <Label htmlFor="client_name">Client Name Override</Label>
+                <Input
                   id="client_name"
                   value={formData.client_name}
                   onChange={(e) => setFormData({ ...formData, client_name: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2"
-                  required
-                >
-                  <option value="">Select client</option>
-                  {clients.map((client: any) => (
-                    <option key={client.id} value={client.name}>
-                      {client.name}{client.company ? ` - ${client.company}` : ''}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  className="mt-2"
-                  value={formData.client_name}
-                  onChange={(e) => setFormData({ ...formData, client_name: e.target.value })}
-                  placeholder="Or type a new client name manually"
+                  placeholder="Optional manual client name"
                 />
               </div>
               <div>
@@ -390,6 +454,16 @@ const Payments: React.FC = () => {
                   value={formData.payment_date}
                   onChange={(e) => setFormData({ ...formData, payment_date: e.target.value })}
                   required
+                />
+              </div>
+              <div>
+                <Label htmlFor="received_at">Received At</Label>
+                <Input
+                  id="received_at"
+                  type="datetime-local"
+                  value={formData.received_at}
+                  onChange={(e) => setFormData({ ...formData, received_at: e.target.value })}
+                  placeholder="Optional exact receipt time"
                 />
               </div>
               <div>
@@ -503,11 +577,15 @@ const Payments: React.FC = () => {
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Client</p>
-                  <p className="font-medium">{selectedPayment.client_name || '-'}</p>
+                  <p className="font-medium">{selectedPayment.client?.name || selectedPayment.client_name || '-'}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Project</p>
                   <p className="font-medium">{selectedPayment.project?.name || selectedPayment.project_name || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Receiving Account</p>
+                  <p className="font-medium">{selectedPayment.account?.name || selectedPayment.account_name || '-'}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Amount</p>
@@ -524,6 +602,12 @@ const Payments: React.FC = () => {
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Status</p>
                   <p className="font-medium capitalize">{selectedPayment.status || '-'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Received At</p>
+                  <p className="font-medium">
+                    {selectedPayment.received_at ? new Date(selectedPayment.received_at).toLocaleString() : selectedPayment.payment_date ? new Date(selectedPayment.payment_date).toLocaleDateString() : '-'}
+                  </p>
                 </div>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
@@ -606,6 +690,7 @@ const Payments: React.FC = () => {
                   <TableRow>
                     <TableHead>Client</TableHead>
                     <TableHead>Project</TableHead>
+                    <TableHead>Account</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>Received</TableHead>
                     <TableHead>Pending</TableHead>
@@ -622,8 +707,9 @@ const Payments: React.FC = () => {
                     const pendingBase = Math.max(values.baseGross - values.baseReceived, 0);
                     return (
                       <TableRow key={payment.id}>
-                        <TableCell className="font-medium">{payment.client_name}</TableCell>
+                        <TableCell className="font-medium">{payment.client?.name || payment.client_name || '-'}</TableCell>
                         <TableCell>{payment.project?.name || payment.project_name || '-'}</TableCell>
+                        <TableCell>{payment.account?.name || payment.account_name || '-'}</TableCell>
                         <TableCell>
                           <div className="space-y-1">
                             <div>{formatMoney(payment.amount, payment.currency || baseCurrency)}</div>
@@ -652,7 +738,13 @@ const Payments: React.FC = () => {
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>{payment.payment_date ? new Date(payment.payment_date).toLocaleDateString() : '-'}</TableCell>
+                        <TableCell>
+                          {payment.received_at
+                            ? new Date(payment.received_at).toLocaleString()
+                            : payment.payment_date
+                              ? new Date(payment.payment_date).toLocaleDateString()
+                              : '-'}
+                        </TableCell>
                         <TableCell className="capitalize">{payment.payment_method?.replace(/_/g, ' ') || '-'}</TableCell>
                         <TableCell>
                           <div className="space-y-1">

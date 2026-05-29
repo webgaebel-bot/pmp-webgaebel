@@ -1729,6 +1729,9 @@ export class SupabaseApiService {
     if (endpoint === '/finance/clients') {
       return (await this.getFinanceClients()) as T;
     }
+    if (endpoint === '/finance/accounts') {
+      return (await this.getFinanceAccounts()) as T;
+    }
     if (endpoint === '/finance/expenses') {
       return (await this.getFinanceExpenses()) as T;
     }
@@ -1789,6 +1792,9 @@ export class SupabaseApiService {
     if (endpoint === '/finance/expenses') {
       return (await this.createFinanceExpense(data)) as T;
     }
+    if (endpoint === '/finance/accounts') {
+      return (await this.createFinanceAccount(data)) as T;
+    }
     if (endpoint === '/finance/payments') {
       return (await this.createFinancePayment(data)) as T;
     }
@@ -1837,6 +1843,10 @@ export class SupabaseApiService {
     if (expenseUpdateMatch) {
       return (await this.updateFinanceExpense(expenseUpdateMatch[1], data)) as T;
     }
+    const accountUpdateMatch = endpoint.match(/^\/finance\/accounts\/(.+)$/);
+    if (accountUpdateMatch) {
+      return (await this.updateFinanceAccount(accountUpdateMatch[1], data)) as T;
+    }
     const paymentUpdateMatch = endpoint.match(/^\/finance\/payments\/(.+)$/);
     if (paymentUpdateMatch) {
       return (await this.updateFinancePayment(paymentUpdateMatch[1], data)) as T;
@@ -1864,6 +1874,10 @@ export class SupabaseApiService {
     const expenseDeleteMatch = endpoint.match(/^\/finance\/expenses\/(.+)$/);
     if (expenseDeleteMatch) {
       return (await this.deleteFinanceExpense(expenseDeleteMatch[1])) as T;
+    }
+    const accountDeleteMatch = endpoint.match(/^\/finance\/accounts\/(.+)$/);
+    if (accountDeleteMatch) {
+      return (await this.deleteFinanceAccount(accountDeleteMatch[1])) as T;
     }
     const paymentDeleteMatch = endpoint.match(/^\/finance\/payments\/(.+)$/);
     if (paymentDeleteMatch) {
@@ -5004,6 +5018,99 @@ export class SupabaseApiService {
     return { success: true, data: ensureArray(data) };
   }
 
+  async getFinanceAccounts() {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.view', 'You do not have permission to view finance accounts.');
+    const selectClause = 'id, name, account_type, client_id, project_id, bank_name, account_number, iban, branch_name, account_holder_name, currency, status, is_default, notes, created_by, created_at, updated_at, client:clients(id, name), project:projects(id, name)';
+    const legacySelectClause = 'id, name, account_type, bank_name, account_number_last4, account_holder_name, currency, notes, is_active, created_at, updated_at';
+    let query = this.client
+      .from('finance_accounts')
+      .select(selectClause)
+      .order('name', { ascending: true })
+      .limit(1000);
+
+    let { data, error } = await query;
+    if (error && this.isMissingColumnError(error)) {
+      const legacyResult = await this.client
+        .from('finance_accounts')
+        .select(legacySelectClause)
+        .order('name', { ascending: true })
+        .limit(1000);
+      data = legacyResult.data;
+      error = legacyResult.error;
+    }
+
+    if (error) {
+      if (this.isMissingTableError(error, 'finance_accounts') || this.isMissingColumnError(error)) {
+        return { success: true, data: [] };
+      }
+      throw formatError(error, 'Unable to load finance accounts.');
+    }
+    return { success: true, data: ensureArray(data) };
+  }
+
+  async createFinanceAccount(data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to create finance accounts.');
+    const { data: created, error } = await this.client
+      .from('finance_accounts')
+        .insert({
+        name: data?.name,
+        account_type: data?.account_type || 'bank',
+        client_id: data?.client_id || null,
+        project_id: data?.project_id || null,
+        bank_name: data?.bank_name || null,
+        account_number: data?.account_number || null,
+        iban: data?.iban || null,
+        branch_name: data?.branch_name || null,
+        currency: String(data?.currency || 'USD').toUpperCase(),
+        status: data?.status || 'active',
+        is_default: Boolean(data?.is_default),
+        notes: data?.notes || null,
+        created_by: access.profile.id,
+      })
+      .select()
+      .single();
+
+    if (error || !created) throw formatError(error, 'Failed to create finance account.');
+    return { success: true, data: created };
+  }
+
+  async updateFinanceAccount(id: string, data: any) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to update finance accounts.');
+    const { data: updated, error } = await this.client
+      .from('finance_accounts')
+      .update({
+        name: data?.name,
+        account_type: data?.account_type || 'bank',
+        client_id: data?.client_id || null,
+        project_id: data?.project_id || null,
+        bank_name: data?.bank_name || null,
+        account_number: data?.account_number || null,
+        iban: data?.iban || null,
+        branch_name: data?.branch_name || null,
+        currency: String(data?.currency || 'USD').toUpperCase(),
+        status: data?.status || 'active',
+        is_default: Boolean(data?.is_default),
+        notes: data?.notes || null,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !updated) throw formatError(error, 'Failed to update finance account.');
+    return { success: true, data: updated };
+  }
+
+  async deleteFinanceAccount(id: string) {
+    const access = await this.getCurrentAccessContext();
+    requirePermission(access, 'finance.payments.manage', 'You do not have permission to delete finance accounts.');
+    const { error } = await this.client.from('finance_accounts').delete().eq('id', id);
+    if (error) throw formatError(error, 'Failed to delete finance account.');
+    return { success: true };
+  }
+
   async createFinanceClient(data: any) {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.clients.manage', 'You do not have permission to create finance clients.');
@@ -5158,7 +5265,7 @@ export class SupabaseApiService {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.view', 'You do not have permission to view payments.');
     const currentUserId = String(access.profile.id);
-    const selectClause = 'id, client_name, original_amount, original_currency, amount, currency, base_currency, exchange_rate, base_amount, converted_amount, fx_rate_used, fx_timestamp, payment_date, payment_method, payment_method_other, status, description, project_id, commission_assignee_id, received_amount, tax_amount, tax_converted_amount, commission_amount, commission_converted_amount, transaction_fee_amount, transaction_fee_converted_amount, product_cost_amount, product_cost_converted_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name), commission_assignee:profiles!payments_commission_assignee_id_fkey(id, name, email)';
+    const selectClause = 'id, client_id, client_name, account_id, original_amount, original_currency, amount, currency, base_currency, exchange_rate, base_amount, converted_amount, fx_rate_used, fx_timestamp, payment_date, received_at, payment_method, payment_method_other, status, description, project_id, commission_assignee_id, received_amount, tax_amount, tax_converted_amount, commission_amount, commission_converted_amount, transaction_fee_amount, transaction_fee_converted_amount, product_cost_amount, product_cost_converted_amount, invoice_id, created_by, created_at, updated_at, client:clients(id, name, company), account:finance_accounts(id, name, account_type, currency, status, is_default), project:projects(id, name), commission_assignee:profiles!payments_commission_assignee_id_fkey(id, name, email)';
     const legacySelectClause = 'id, client_name, amount, currency, base_currency, exchange_rate, base_amount, converted_amount, fx_rate_used, fx_timestamp, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name)';
     let query = this.client.from('payments').select(selectClause).order('payment_date', { ascending: false }).limit(1000);
 
@@ -5167,7 +5274,7 @@ export class SupabaseApiService {
     }
 
     let { data, error } = await query;
-    if (error && this.isMissingColumnError(error)) {
+    if (error && (this.isMissingColumnError(error) || this.isMissingTableError(error, 'finance_accounts'))) {
       let legacyQuery = this.client.from('payments').select(legacySelectClause).order('payment_date', { ascending: false }).limit(1000);
       if (!access.canViewAllFinance) {
         legacyQuery = legacyQuery.eq('created_by', currentUserId);
@@ -5196,9 +5303,11 @@ export class SupabaseApiService {
     const transactionFeeConvertedAmount = roundTo(Number(data?.transaction_fee_amount || 0) * fxRateUsed, 4);
     const productCostConvertedAmount = roundTo(Number(data?.product_cost_amount || 0) * fxRateUsed, 4);
     const paymentPayload = {
+      client_id: data?.client_id || null,
       original_amount: grossAmount,
       original_currency: paymentCurrency,
       client_name: data?.client_name,
+      account_id: data?.account_id || null,
       amount: Number(data?.amount || 0),
       currency: paymentCurrency,
       base_currency: baseCurrency,
@@ -5208,6 +5317,7 @@ export class SupabaseApiService {
       fx_rate_used: fxRateUsed,
       fx_timestamp: fxTimestamp,
       payment_date: data?.payment_date,
+      received_at: data?.received_at || null,
       payment_method: paymentMethod,
       payment_method_other: paymentMethodOther,
       status: data?.status || 'completed',
@@ -5358,9 +5468,11 @@ export class SupabaseApiService {
     const productCostConvertedAmount = roundTo(Number(data?.product_cost_amount || 0) * fxRateUsed, 4);
 
     const payload = {
+      client_id: data?.client_id || null,
       original_amount: grossAmount,
       original_currency: paymentCurrency,
       client_name: data?.client_name,
+      account_id: data?.account_id || null,
       amount: Number(data?.amount || 0),
       currency: paymentCurrency,
       base_currency: baseCurrency,
@@ -5370,6 +5482,7 @@ export class SupabaseApiService {
       fx_rate_used: fxRateUsed,
       fx_timestamp: fxTimestamp,
       payment_date: data?.payment_date,
+      received_at: data?.received_at || null,
       payment_method: paymentMethod,
       payment_method_other: paymentMethodOther,
       status: data?.status || 'completed',

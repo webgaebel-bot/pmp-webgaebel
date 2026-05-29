@@ -36,6 +36,7 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const FinanceDashboard = lazy(() => import("@/pages/finance/FinanceDashboard"));
 const FinanceTaxCommissions = lazy(() => import("@/pages/finance/FinanceTaxCommissions"));
 const Payments = lazy(() => import("@/pages/finance/Payments"));
+const FinanceAccounts = lazy(() => import("@/pages/finance/FinanceAccounts"));
 const Expenses = lazy(() => import("@/pages/finance/Expenses"));
 const Salary = lazy(() => import("@/pages/finance/Salary"));
 const Clients = lazy(() => import("@/pages/finance/Clients"));
@@ -183,6 +184,11 @@ const App = () => (
               <Route path="/finance/payments" element={
                 <ProtectedRoute permission="finance.view">
                   <Payments />
+                </ProtectedRoute>
+              } />
+              <Route path="/finance/accounts" element={
+                <ProtectedRoute permission="finance.view">
+                  <FinanceAccounts />
                 </ProtectedRoute>
               } />
               <Route path="/finance/expenses" element={
