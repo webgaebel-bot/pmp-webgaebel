@@ -91,6 +91,19 @@ const Payments: React.FC = () => {
   const financeSettings = financeSettingsResponse?.data?.data || {};
   const baseCurrency = financeSettings.base_currency || 'USD';
 
+  const getFirstPositivePaymentAmount = (payment: any, fields: string[]) => {
+    for (const field of fields) {
+      const value = Number(payment?.[field]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return 0;
+  };
+
+  const getPaymentDisplayCurrency = (payment: any) => payment?.original_currency || payment?.currency || payment?.base_currency || baseCurrency;
+  const getPaymentDisplayAmount = (payment: any) => getFirstPositivePaymentAmount(payment, ['original_amount', 'amount']);
+  const getPaymentDisplayReceivedAmount = (payment: any) => getFirstPositivePaymentAmount(payment, ['received_amount']);
+  const getPaymentDisplayDeductionAmount = (payment: any, field: string) => getFirstPositivePaymentAmount(payment, [field]);
+
   const toDatetimeLocalValue = (value?: string | null) => {
     if (!value) return '';
     const date = new Date(value);
@@ -589,7 +602,7 @@ const Payments: React.FC = () => {
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Amount</p>
-                  <p className="font-medium">{formatMoney(selectedPayment.amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getPaymentDisplayAmount(selectedPayment), getPaymentDisplayCurrency(selectedPayment))}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Base Amount</p>
@@ -597,7 +610,7 @@ const Payments: React.FC = () => {
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Received</p>
-                  <p className="font-medium">{formatMoney(selectedPayment.received_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getPaymentDisplayReceivedAmount(selectedPayment), getPaymentDisplayCurrency(selectedPayment))}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Status</p>
@@ -613,22 +626,22 @@ const Payments: React.FC = () => {
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Tax</p>
-                  <p className="font-medium">{formatMoney(selectedPayment.tax_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getPaymentDisplayDeductionAmount(selectedPayment, 'tax_amount'), getPaymentDisplayCurrency(selectedPayment))}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Commission</p>
-                  <p className="font-medium">{formatMoney(selectedPayment.commission_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getPaymentDisplayDeductionAmount(selectedPayment, 'commission_amount'), getPaymentDisplayCurrency(selectedPayment))}</p>
                   <p className="text-xs text-muted-foreground mt-1">
                     {selectedPayment.commission_assignee?.name || selectedPayment.commission_assignee_name || 'No assignee'}
                   </p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Transaction Fee</p>
-                  <p className="font-medium">{formatMoney(selectedPayment.transaction_fee_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getPaymentDisplayDeductionAmount(selectedPayment, 'transaction_fee_amount'), getPaymentDisplayCurrency(selectedPayment))}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Product Cost</p>
-                  <p className="font-medium">{formatMoney(selectedPayment.product_cost_amount || 0, selectedPayment.currency || baseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getPaymentDisplayDeductionAmount(selectedPayment, 'product_cost_amount'), getPaymentDisplayCurrency(selectedPayment))}</p>
                 </div>
               </div>
               <div className="rounded-lg border p-3">
@@ -712,7 +725,7 @@ const Payments: React.FC = () => {
                         <TableCell>{payment.account?.name || payment.account_name || '-'}</TableCell>
                         <TableCell>
                           <div className="space-y-1">
-                            <div>{formatMoney(payment.amount, payment.currency || baseCurrency)}</div>
+                            <div>{formatMoney(getPaymentDisplayAmount(payment), getPaymentDisplayCurrency(payment))}</div>
                             {payment.base_amount ? (
                               <div className="text-xs text-muted-foreground">
                                 Base: {formatMoney(payment.base_amount, baseCurrency)}
@@ -722,7 +735,7 @@ const Payments: React.FC = () => {
                         </TableCell>
                         <TableCell>
                           <div className="space-y-1">
-                            <div>{formatMoney(payment.received_amount || 0, payment.currency || baseCurrency)}</div>
+                            <div>{formatMoney(getPaymentDisplayReceivedAmount(payment), getPaymentDisplayCurrency(payment))}</div>
                             {payment.base_amount ? (
                               <div className="text-xs text-muted-foreground">
                                 Base: {formatMoney(values.baseReceived, baseCurrency)}
@@ -748,7 +761,7 @@ const Payments: React.FC = () => {
                         <TableCell className="capitalize">{payment.payment_method?.replace(/_/g, ' ') || '-'}</TableCell>
                         <TableCell>
                           <div className="space-y-1">
-                            <div>{formatMoney(payment.commission_amount || 0, payment.currency || baseCurrency)}</div>
+                            <div>{formatMoney(getPaymentDisplayDeductionAmount(payment, 'commission_amount'), getPaymentDisplayCurrency(payment))}</div>
                             <div className="text-xs text-muted-foreground">
                               {payment.commission_assignee?.name || payment.commission_assignee_name || 'No assignee'}
                             </div>

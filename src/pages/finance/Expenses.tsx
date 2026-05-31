@@ -82,7 +82,13 @@ const Expenses: React.FC = () => {
     setFormData({
       category: expense.category || '',
       description: expense.description || '',
-      amount: String(expense.amount || ''),
+      amount: String(
+        expense.original_amount ??
+          expense.amount ??
+          expense.base_amount ??
+          expense.converted_amount ??
+          ''
+      ),
       currency: expense.currency || 'USD',
       expense_date: expense.expense_date || '',
       payment_method: expense.payment_method || 'bank_transfer',
@@ -192,9 +198,25 @@ const Expenses: React.FC = () => {
     const matchesProject = projectQueryId ? e.project_id === projectQueryId : true;
     return matchesSearch && matchesProject;
   }) || [];
-  const expenseCurrency = filteredExpenses[0]?.currency || 'USD';
-  const getOriginalExpenseAmount = (expense: any) => Number(expense?.original_amount ?? expense?.amount ?? 0);
-  const getBaseExpenseAmount = (expense: any) => Number(expense?.base_amount ?? expense?.converted_amount ?? expense?.amount ?? 0);
+  const expenseCurrency = filteredExpenses[0]?.original_currency || filteredExpenses[0]?.currency || filteredExpenses[0]?.base_currency || 'USD';
+  const getFirstPositiveExpenseAmount = (expense: any) => {
+    const candidates = [expense?.original_amount, expense?.amount, expense?.base_amount, expense?.converted_amount];
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return 0;
+  };
+  const getOriginalExpenseAmount = (expense: any) => getFirstPositiveExpenseAmount(expense);
+  const getBaseExpenseAmount = (expense: any) => {
+    const candidates = [expense?.base_amount, expense?.converted_amount, expense?.original_amount, expense?.amount];
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return 0;
+  };
+  const getExpenseMoneyCurrency = (expense: any) => expense?.original_currency || expense?.currency || expense?.base_currency || expenseCurrency;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -346,11 +368,11 @@ const Expenses: React.FC = () => {
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Amount</p>
-                  <p className="font-medium">{formatMoney(getOriginalExpenseAmount(selectedExpense), selectedExpense.currency || selectedExpense.original_currency || expenseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getOriginalExpenseAmount(selectedExpense), getExpenseMoneyCurrency(selectedExpense))}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Currency</p>
-                  <p className="font-medium">{selectedExpense.currency || 'USD'}</p>
+                  <p className="font-medium">{selectedExpense.original_currency || selectedExpense.currency || 'USD'}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Base Amount</p>
@@ -440,7 +462,7 @@ const Expenses: React.FC = () => {
                         </Badge>
                       </TableCell>
                       <TableCell className="font-medium">{expense.description}</TableCell>
-                      <TableCell>{formatMoney(getOriginalExpenseAmount(expense), expense.currency || expense.original_currency || expenseCurrency)}</TableCell>
+                      <TableCell>{formatMoney(getOriginalExpenseAmount(expense), getExpenseMoneyCurrency(expense))}</TableCell>
                       <TableCell>{expense.project?.name || expense.project_name || '-'}</TableCell>
                       <TableCell>{new Date(expense.expense_date).toLocaleDateString()}</TableCell>
                       <TableCell className="capitalize">

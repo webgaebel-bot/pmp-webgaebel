@@ -33,6 +33,13 @@ const toRate = (value: unknown) => {
   return Number.isFinite(rate) && rate > 0 ? rate : null;
 };
 
+const toInverseRate = (value: unknown) => {
+  const sourceRate = toRate(value);
+  if (!sourceRate) return null;
+
+  return Number((1 / sourceRate).toFixed(8));
+};
+
 const getUpdatedAt = (response: FxApiResponse) => {
   if (typeof response.time_last_updated === 'number' && Number.isFinite(response.time_last_updated)) {
     return new Date(response.time_last_updated * 1000).toISOString();
@@ -83,15 +90,16 @@ export const useLiveExchangeRates = (): LiveExchangeRatesState => {
         const updatedAt = getUpdatedAt(payload);
 
         const rows = REQUIRED_PAIRS.map(([baseCurrency, targetCurrency]) => {
-          const directRate = toRate(bucket[targetCurrency]);
-
           if (baseCurrency === 'USD') {
+            const directRate = toRate(bucket[targetCurrency]);
             return directRate
               ? { base_currency: baseCurrency, target_currency: targetCurrency, rate: directRate, updated_at: updatedAt }
               : null;
           }
 
-          const inverseRate = directRate ? 1 / directRate : null;
+          const sourceRate = toRate(bucket[baseCurrency]);
+          const inverseRate = sourceRate ? toInverseRate(sourceRate) : null;
+
           return inverseRate && Number.isFinite(inverseRate) && inverseRate > 0
             ? { base_currency: baseCurrency, target_currency: targetCurrency, rate: inverseRate, updated_at: updatedAt }
             : null;

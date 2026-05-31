@@ -138,6 +138,127 @@ const getFirstPositiveRecordValue = (record: any, fields: string[]): number => {
   return 0;
 };
 
+const normalizeCurrencyCode = (value?: string | null, fallback = 'USD') =>
+  String(value || fallback).trim().toUpperCase() || fallback;
+
+const getRecordCurrencyCode = (record: any, fallback = 'USD') =>
+  normalizeCurrencyCode(record?.original_currency || record?.currency || record?.base_currency, fallback);
+
+const getDisplayAmountForRecord = (
+  record: any,
+  selectedCurrency: string,
+  baseCurrency: string,
+  fxRates: Map<string, number>,
+  originalFields: string[],
+  baseFields: string[]
+) => {
+  const normalizedSelected = normalizeCurrencyCode(selectedCurrency, baseCurrency);
+  const recordCurrency = getRecordCurrencyCode(record, baseCurrency);
+
+  if (recordCurrency === normalizedSelected) {
+    const originalAmount = getFirstPositiveRecordValue(record, originalFields);
+    if (originalAmount > 0) {
+      return roundTo(originalAmount, 4);
+    }
+  }
+
+  const baseAmount = getFirstPositiveRecordValue(record, baseFields);
+  if (baseAmount > 0) {
+    return convertCurrencyAmount(baseAmount, baseCurrency, normalizedSelected, fxRates);
+  }
+
+  const originalAmount = getFirstPositiveRecordValue(record, originalFields);
+  if (originalAmount > 0) {
+    return convertCurrencyAmount(originalAmount, recordCurrency, normalizedSelected, fxRates);
+  }
+
+  return 0;
+};
+
+const getPaymentDisplayGrossAmount = (
+  payment: any,
+  selectedCurrency: string,
+  baseCurrency: string,
+  fxRates: Map<string, number>
+) => {
+  const normalizedSelected = normalizeCurrencyCode(selectedCurrency, baseCurrency);
+  const recordCurrency = getRecordCurrencyCode(payment, baseCurrency);
+  const status = String(payment?.status || '').trim().toLowerCase();
+
+  if (recordCurrency === normalizedSelected) {
+    if (status === 'half') {
+      const receivedAmount = getPositiveNumber(payment?.received_amount);
+      if (receivedAmount > 0) {
+        return roundTo(receivedAmount, 4);
+      }
+
+      const fallbackAmount = getPositiveNumber(payment?.amount);
+      if (fallbackAmount > 0) {
+        return roundTo(fallbackAmount / 2, 4);
+      }
+    }
+
+    const originalAmount = getFirstPositiveRecordValue(payment, ['original_amount', 'amount']);
+    if (originalAmount > 0) {
+      return roundTo(originalAmount, 4);
+    }
+  }
+
+  const baseAmount = getPaymentGrossValue(payment);
+  if (baseAmount > 0) {
+    return convertCurrencyAmount(baseAmount, baseCurrency, normalizedSelected, fxRates);
+  }
+
+  return 0;
+};
+
+const getPaymentDisplayReceivedAmount = (
+  payment: any,
+  selectedCurrency: string,
+  baseCurrency: string,
+  fxRates: Map<string, number>
+) => {
+  const normalizedSelected = normalizeCurrencyCode(selectedCurrency, baseCurrency);
+  const recordCurrency = getRecordCurrencyCode(payment, baseCurrency);
+  const receivedAmount = getPositiveNumber(payment?.received_amount);
+  if (!receivedAmount) {
+    return 0;
+  }
+
+  if (recordCurrency === normalizedSelected) {
+    return roundTo(receivedAmount, 4);
+  }
+
+  return convertCurrencyAmount(receivedAmount, recordCurrency, normalizedSelected, fxRates);
+};
+
+const getPaymentDisplayDeductionAmount = (
+  payment: any,
+  selectedCurrency: string,
+  baseCurrency: string,
+  fxRates: Map<string, number>,
+  normalizedField: string,
+  fallbackField: string
+) => {
+  const normalizedSelected = normalizeCurrencyCode(selectedCurrency, baseCurrency);
+  const recordCurrency = getRecordCurrencyCode(payment, baseCurrency);
+
+  if (recordCurrency === normalizedSelected) {
+    const originalValue = Number(payment?.[fallbackField]);
+    if (Number.isFinite(originalValue) && originalValue > 0) {
+      return roundTo(originalValue, 4);
+    }
+    return 0;
+  }
+
+  const baseValue = getPaymentDeductionValue(payment, normalizedField, fallbackField);
+  if (baseValue > 0) {
+    return convertCurrencyAmount(baseValue, baseCurrency, normalizedSelected, fxRates);
+  }
+
+  return 0;
+};
+
 const getNormalizedConvertedAmount = (record: any, entityName: string, fallbackFields: string[] = []): number => {
   const convertedAmount = Number(record?.converted_amount);
   if (Number.isFinite(convertedAmount) && convertedAmount > 0) {
@@ -6775,13 +6896,13 @@ export class SupabaseApiService {
         : this.client.from('payments').select(legacyPaymentFields).limit(1000);
       const futureFundQuery = this.client
         .from('future_fund_transactions')
-        .select('converted_amount, base_currency, month, source, source_id')
+        .select('original_amount, original_currency, amount, currency, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, month, source, source_id')
         .gte('month', futureFundStart)
         .lte('month', futureFundEnd)
         .limit(1000);
       const allTimeFutureFundQuery = this.client
         .from('future_fund_transactions')
-        .select('converted_amount, base_currency, month, source, source_id')
+        .select('original_amount, original_currency, amount, currency, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, month, source, source_id')
         .limit(1000);
       const [paymentsRes, expensesRes, salaryRunsRes, foundersEquityRes, settingsRes, allTimePaymentsRes, allTimeExpensesRes, allTimeSalaryRunsRes, futureFundRes, allTimeFutureFundRes] = await Promise.all([
         this.executePaymentQueryWithMissingColumnFallback(paymentsQuery, legacyPaymentsQuery),
@@ -6820,27 +6941,32 @@ export class SupabaseApiService {
     if (!selectedCurrency || selectedCurrency === 'ALL') {
       targetCurrency = baseCurrency;
     }
-    const normalizePayment = (payment: any) => {
-      const convertedAmount = getPaymentGrossValue(payment);
-      return {
-        status: payment.status,
-        converted_amount: convertedAmount,
-        original_amount: getPositiveNumber(payment.original_amount),
-        received_amount: getPositiveNumber(payment.received_amount),
-        tax_amount: getPaymentDeductionValue(payment, 'tax_converted_amount', 'tax_amount'),
-        commission_amount: getPaymentDeductionValue(payment, 'commission_converted_amount', 'commission_amount'),
-        transaction_fee_amount: getPaymentDeductionValue(payment, 'transaction_fee_converted_amount', 'transaction_fee_amount'),
-        product_cost_amount: getPaymentDeductionValue(payment, 'product_cost_converted_amount', 'product_cost_amount'),
-      };
-    };
+    const normalizePayment = (payment: any) => ({
+      status: payment.status,
+      converted_amount: getPaymentDisplayGrossAmount(payment, targetCurrency, baseCurrency, fxRates),
+      original_amount: getPositiveNumber(payment.original_amount || payment.amount),
+      received_amount: getPaymentDisplayReceivedAmount(payment, targetCurrency, baseCurrency, fxRates),
+      tax_amount: getPaymentDisplayDeductionAmount(payment, targetCurrency, baseCurrency, fxRates, 'tax_converted_amount', 'tax_amount'),
+      commission_amount: getPaymentDisplayDeductionAmount(payment, targetCurrency, baseCurrency, fxRates, 'commission_converted_amount', 'commission_amount'),
+      transaction_fee_amount: getPaymentDisplayDeductionAmount(payment, targetCurrency, baseCurrency, fxRates, 'transaction_fee_converted_amount', 'transaction_fee_amount'),
+      product_cost_amount: getPaymentDisplayDeductionAmount(payment, targetCurrency, baseCurrency, fxRates, 'product_cost_converted_amount', 'product_cost_amount'),
+      currency: targetCurrency,
+      base_currency: targetCurrency,
+      exchange_rate: 1,
+      fx_rate_used: 1,
+    });
     const normalizeExpense = (expense: any) => ({
-      converted_amount: getNormalizedConvertedAmount(expense, 'expense', ['base_amount', 'original_amount', 'amount']),
+      converted_amount: getDisplayAmountForRecord(expense, targetCurrency, baseCurrency, fxRates, ['original_amount', 'amount'], ['base_amount', 'converted_amount']),
     });
     const normalizeSalary = (run: any) => ({
-      converted_amount:
-        getPositiveNumber(run.converted_amount) ||
-        getSalaryRunConvertedTotalFromEntries(run) ||
-        getSalaryRunTotalFromEntries(run) * getRecordFxRate(run),
+      converted_amount: getDisplayAmountForRecord(
+        run,
+        targetCurrency,
+        baseCurrency,
+        fxRates,
+        ['total_salary', 'amount'],
+        ['converted_amount']
+      ) || getSalaryRunConvertedTotalFromEntries(run) || getSalaryRunTotalFromEntries(run) * getRecordFxRate(run),
     });
     const selectedSummary = summarizeFinanceRows(
       payments.map(normalizePayment),
@@ -6849,9 +6975,32 @@ export class SupabaseApiService {
       settings,
       Number((foundersEquityRes as any)?.data?.data?.total || 0)
     );
-    const convertSummaryAmount = (value: number) => convertCurrencyAmount(value, baseCurrency, targetCurrency, fxRates);
-    const selectedFutureFundTotal = futureFundRows.reduce((sum: number, row: any) => sum + getPositiveNumber(row.converted_amount), 0);
-    const allTimeFutureFundTotal = allTimeFutureFundRows.reduce((sum: number, row: any) => sum + getPositiveNumber(row.converted_amount), 0);
+    const selectedFutureFundTotal = futureFundRows.reduce(
+      (sum: number, row: any) =>
+        sum +
+        getDisplayAmountForRecord(
+          row,
+          targetCurrency,
+          baseCurrency,
+          fxRates,
+          ['original_amount', 'amount'],
+          ['base_amount', 'converted_amount']
+        ),
+      0
+    );
+    const allTimeFutureFundTotal = allTimeFutureFundRows.reduce(
+      (sum: number, row: any) =>
+        sum +
+        getDisplayAmountForRecord(
+          row,
+          targetCurrency,
+          baseCurrency,
+          fxRates,
+          ['original_amount', 'amount'],
+          ['base_amount', 'converted_amount']
+        ),
+      0
+    );
     const hasSelectedData =
       payments.length > 0 ||
       expenses.length > 0 ||
@@ -6870,24 +7019,11 @@ export class SupabaseApiService {
         );
     const effectiveSummaryConverted = {
       ...effectiveSummary.summary,
-      revenue: convertSummaryAmount(effectiveSummary.summary.revenue),
-      expenses: convertSummaryAmount(effectiveSummary.summary.expenses),
-      salaries: convertSummaryAmount(effectiveSummary.summary.salaries),
-      taxes: convertSummaryAmount(effectiveSummary.summary.taxes),
-      commissions: convertSummaryAmount(effectiveSummary.summary.commissions),
-      transactionFees: convertSummaryAmount(effectiveSummary.summary.transactionFees),
-      productCosts: convertSummaryAmount(effectiveSummary.summary.productCosts),
-      grossProfit: convertSummaryAmount(effectiveSummary.summary.grossProfit),
-      futureFund: selectedFutureFundTotal > 0
-        ? convertSummaryAmount(selectedFutureFundTotal)
-        : convertSummaryAmount(effectiveSummary.summary.futureFund),
-      founderProfit: convertSummaryAmount(effectiveSummary.summary.founderProfit),
-      liabilities: convertSummaryAmount(effectiveSummary.summary.liabilities),
-      netProfit: convertSummaryAmount(effectiveSummary.summary.netProfit),
+      futureFund: selectedFutureFundTotal > 0 ? selectedFutureFundTotal : effectiveSummary.summary.futureFund,
     };
     const effectiveDistributionConverted = effectiveSummary.distribution.map((item) => ({
       ...item,
-      amount: convertSummaryAmount(item.amount),
+      amount: item.amount,
     }));
 
     return {
@@ -6906,11 +7042,11 @@ export class SupabaseApiService {
             futureFund: effectiveSummaryConverted.futureFund,
             founderProfit: effectiveSummaryConverted.founderProfit,
             liabilities: effectiveSummaryConverted.liabilities,
-            outstanding: convertSummaryAmount(effectiveSummary.outstanding),
+            outstanding: effectiveSummary.outstanding,
             distribution: effectiveDistributionConverted,
             currency: targetCurrency,
             futureFundRate: effectiveSummary.futureFundPercentage,
-            futureFundRecorded: allTimeFutureFundTotal > 0 ? convertSummaryAmount(allTimeFutureFundTotal) : 0,
+            futureFundRecorded: allTimeFutureFundTotal > 0 ? allTimeFutureFundTotal : 0,
             rangeUsed: hasSelectedData ? range : 'all',
           },
           range,
@@ -6946,7 +7082,7 @@ export class SupabaseApiService {
     }
     const { data: fxRatesData } = await this.client.from('fx_rates').select('base_currency, target_currency, rate');
     const fxRates = buildFxRateLookup(ensureArray(fxRatesData));
-    const paymentFields = 'amount, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, payment_date, status, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, created_by';
+    const paymentFields = 'original_amount, original_currency, amount, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, payment_date, status, received_amount, tax_amount, tax_converted_amount, commission_amount, commission_converted_amount, transaction_fee_amount, transaction_fee_converted_amount, product_cost_amount, product_cost_converted_amount, created_by';
     const legacyPaymentFields = 'amount, base_amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, payment_date, status, received_amount, tax_amount, commission_amount, created_by';
     const paymentsQuery = restrictToOwn
       ? this.client.from('payments').select(paymentFields).gte('payment_date', bounds.start).lte('payment_date', bounds.end).eq('created_by', currentUserId).limit(1000)
@@ -6957,8 +7093,8 @@ export class SupabaseApiService {
     const [paymentsRes, expensesRes] = await Promise.all([
       this.executePaymentQueryWithMissingColumnFallback(paymentsQuery, legacyPaymentsQuery),
       restrictToOwn
-        ? this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
-        : this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
+        ? this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date, created_by').gte('expense_date', bounds.start).lte('expense_date', bounds.end).eq('created_by', currentUserId).limit(1000)
+        : this.client.from('expenses').select('original_amount, original_currency, amount, converted_amount, base_amount, base_currency, exchange_rate, fx_rate_used, fx_timestamp, currency, expense_date').gte('expense_date', bounds.start).lte('expense_date', bounds.end).limit(1000),
     ]);
 
     if (paymentsRes.error) throw formatError(paymentsRes.error, 'Unable to load payment chart.');
@@ -6969,25 +7105,19 @@ export class SupabaseApiService {
       const key = monthKey(payment.payment_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
       if (isRealizedPaymentStatus(payment.status)) {
-        buckets[key].revenue += getPaymentGrossValue(payment);
+        buckets[key].revenue += getPaymentDisplayGrossAmount(payment, targetCurrency, baseCurrency, fxRates);
       }
     });
     ensureArray(expensesRes.data).forEach((expense: any) => {
       const key = monthKey(expense.expense_date);
       buckets[key] = buckets[key] || { month: key, revenue: 0, expenses: 0 };
-      buckets[key].expenses += getNormalizedConvertedAmount(expense, 'expense', ['base_amount', 'original_amount', 'amount']);
+      buckets[key].expenses += getDisplayAmountForRecord(expense, targetCurrency, baseCurrency, fxRates, ['original_amount', 'amount'], ['base_amount', 'converted_amount']);
     });
-
-    const convertedBuckets = Object.values(buckets).map((bucket) => ({
-      ...bucket,
-      revenue: convertCurrencyAmount(bucket.revenue, baseCurrency, targetCurrency, fxRates),
-      expenses: convertCurrencyAmount(bucket.expenses, baseCurrency, targetCurrency, fxRates),
-    }));
 
     return {
       success: true,
       data: {
-        data: convertedBuckets,
+        data: Object.values(buckets),
       },
     };
   }
