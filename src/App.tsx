@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { getDefaultLandingPath } from "@/lib/permissions";
+import { LiveExchangeRatesBootstrap } from "@/components/system/LiveExchangeRatesBootstrap";
 
 const Login = lazy(() => import("@/pages/Login"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
@@ -75,6 +76,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
+        <LiveExchangeRatesBootstrap />
         <BrowserRouter>
           <Suspense fallback={<LoadingPage text="Loading page..." />}>
           <Routes>

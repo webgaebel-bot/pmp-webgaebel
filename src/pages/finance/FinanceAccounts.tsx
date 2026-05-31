@@ -17,13 +17,11 @@ import { usePermission } from '@/hooks/usePermission';
 const emptyForm = {
   name: '',
   account_type: 'bank',
-  client_id: '',
-  project_id: '',
+  user_id: '',
   bank_name: '',
   account_number: '',
   iban: '',
   branch_name: '',
-  currency: 'USD',
   status: 'active',
   is_default: false,
   notes: '',
@@ -53,19 +51,12 @@ const FinanceAccounts: React.FC = () => {
   });
   const accounts = accountsResponse?.data || [];
 
-  const { data: clientsResponse } = useQuery({
-    queryKey: ['finance-accounts-clients'],
-    queryFn: async () => api.get('/finance/clients'),
+  const { data: usersResponse } = useQuery({
+    queryKey: ['finance-accounts-users'],
+    queryFn: async () => api.getUsers(),
     enabled: isDialogOpen,
   });
-  const clients = clientsResponse?.data || [];
-
-  const { data: projectsResponse } = useQuery({
-    queryKey: ['finance-accounts-projects'],
-    queryFn: async () => api.getProjects(),
-    enabled: isDialogOpen,
-  });
-  const projects = projectsResponse?.data || [];
+  const users = usersResponse?.data || [];
 
   const handleDialogChange = (open: boolean) => {
     setIsDialogOpen(open);
@@ -85,13 +76,11 @@ const FinanceAccounts: React.FC = () => {
     setFormData({
       name: account.name || '',
       account_type: account.account_type || 'bank',
-      client_id: account.client_id || account.client?.id || '',
-      project_id: account.project_id || account.project?.id || '',
+      user_id: account.user_id || account.user?.id || account.created_by || '',
       bank_name: account.bank_name || '',
       account_number: account.account_number || '',
       iban: account.iban || '',
       branch_name: account.branch_name || '',
-      currency: account.currency || 'USD',
       status: account.status || 'active',
       is_default: Boolean(account.is_default),
       notes: account.notes || '',
@@ -150,14 +139,12 @@ const FinanceAccounts: React.FC = () => {
     createOrUpdateMutation.mutate({
       ...formData,
       name: formData.name.trim(),
-      client_id: formData.client_id || null,
-      project_id: formData.project_id || null,
+      user_id: formData.user_id || null,
       bank_name: formData.bank_name.trim() || null,
       account_number: formData.account_number.trim() || null,
       iban: formData.iban.trim() || null,
       branch_name: formData.branch_name.trim() || null,
       notes: formData.notes.trim() || null,
-      currency: formData.currency.toUpperCase(),
       is_default: Boolean(formData.is_default),
     });
   };
@@ -170,7 +157,9 @@ const FinanceAccounts: React.FC = () => {
       account.account_number_last4,
       account.iban,
       account.branch_name,
-      account.currency,
+      account.user?.name,
+      account.user_name,
+      account.created_by_name,
     ]
       .filter(Boolean)
       .join(' ')
@@ -249,33 +238,17 @@ const FinanceAccounts: React.FC = () => {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="client_id">Client</Label>
+                  <Label htmlFor="user_id">User</Label>
                   <select
-                    id="client_id"
-                    value={formData.client_id}
-                    onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
+                    id="user_id"
+                    value={formData.user_id}
+                    onChange={(e) => setFormData({ ...formData, user_id: e.target.value })}
                     className="w-full rounded-md border border-input bg-background px-3 py-2"
                   >
-                    <option value="">Select client</option>
-                    {clients.map((client: any) => (
-                      <option key={client.id} value={client.id}>
-                        {client.name}{client.company ? ` - ${client.company}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="project_id">Project</Label>
-                  <select
-                    id="project_id"
-                    value={formData.project_id}
-                    onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2"
-                  >
-                    <option value="">Select project</option>
-                    {projects.map((project: any) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
+                    <option value="">Select user</option>
+                    {users.map((user: any) => (
+                      <option key={user.id} value={user.id}>
+                        {user.name}{user.email ? ` - ${user.email}` : ''}
                       </option>
                     ))}
                   </select>
@@ -283,10 +256,6 @@ const FinanceAccounts: React.FC = () => {
                 <div className="space-y-2">
                   <Label htmlFor="bank_name">Bank / Provider</Label>
                   <Input id="bank_name" value={formData.bank_name} onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="currency">Currency</Label>
-                  <Input id="currency" value={formData.currency} onChange={(e) => setFormData({ ...formData, currency: e.target.value })} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="account_number">Account Number</Label>
@@ -354,12 +323,8 @@ const FinanceAccounts: React.FC = () => {
                   <p className="font-medium">{selectedAccount.name || '-'}</p>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs uppercase text-muted-foreground">Client</p>
-                  <p className="font-medium">{selectedAccount.client?.name || selectedAccount.client_name || '-'}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs uppercase text-muted-foreground">Project</p>
-                  <p className="font-medium">{selectedAccount.project?.name || selectedAccount.project_name || '-'}</p>
+                  <p className="text-xs uppercase text-muted-foreground">User</p>
+                  <p className="font-medium">{selectedAccount.user?.name || selectedAccount.user_name || selectedAccount.created_by_name || '-'}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Type</p>
@@ -368,10 +333,6 @@ const FinanceAccounts: React.FC = () => {
               <div className="rounded-lg border p-3">
                 <p className="text-xs uppercase text-muted-foreground">Bank / Provider</p>
                 <p className="font-medium">{selectedAccount.bank_name || '-'}</p>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs uppercase text-muted-foreground">Currency</p>
-                <p className="font-medium">{selectedAccount.currency || '-'}</p>
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-xs uppercase text-muted-foreground">Account Number</p>
@@ -440,6 +401,9 @@ const FinanceAccounts: React.FC = () => {
                           <div>
                             <p className="font-medium">{account.name}</p>
                             <p className="text-xs text-muted-foreground">{account.account_type || 'bank'}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {account.user?.name || account.user_name || account.created_by_name || 'No user linked'}
+                            </p>
                           </div>
                         </div>
                       </td>

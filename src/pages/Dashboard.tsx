@@ -62,6 +62,7 @@ const Dashboard: React.FC = () => {
   const [leadStats, setLeadStats] = useState<any | null>(null);
   const [recentLeads, setRecentLeads] = useState<any[]>([]);
   const [leadOwnership, setLeadOwnership] = useState<LeadOwnershipRow[]>([]);
+  const [showAllLeadOwnership, setShowAllLeadOwnership] = useState(false);
   const [financeStats, setFinanceStats] = useState<any | null>(null);
   const canViewAdminDashboardSections = permission.isAdmin();
   const statsUnavailable = canViewAdminDashboardSections && !stats;
@@ -76,6 +77,7 @@ const Dashboard: React.FC = () => {
     total_users: 0,
     active_users: 0,
   };
+  const visibleLeadOwnership = showAllLeadOwnership ? leadOwnership : leadOwnership.slice(0, 4);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -476,7 +478,7 @@ const Dashboard: React.FC = () => {
           </div>
           <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
             <div className="space-y-3">
-              {leadOwnership.map((member, index) => (
+              {visibleLeadOwnership.map((member, index) => (
                 <div key={member.user_id} className="flex items-center gap-4 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
                   <span className="w-6 text-sm font-semibold text-muted-foreground">{index + 1}</span>
                   <Avatar className="h-10 w-10">
@@ -495,6 +497,17 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
               ))}
+              {leadOwnership.length > 4 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full justify-between rounded-2xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                  onClick={() => setShowAllLeadOwnership((current) => !current)}
+                >
+                  <span>{showAllLeadOwnership ? 'Show less' : `Show more (${leadOwnership.length - 4} more)`}</span>
+                  <ArrowRight className={`h-4 w-4 transition-transform ${showAllLeadOwnership ? 'rotate-90' : ''}`} />
+                </Button>
+              ) : null}
             </div>
             <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
               <p className="text-sm font-medium text-muted-foreground">Top performer</p>

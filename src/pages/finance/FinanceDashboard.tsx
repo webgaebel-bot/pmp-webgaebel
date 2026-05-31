@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,10 +28,27 @@ import {
 const FinanceDashboard: React.FC = () => {
   const [timeRange, setTimeRange] = useState<'all' | 'month' | 'quarter' | 'year'>('all');
   const [currencyFilter, setCurrencyFilter] = useState<string>('all');
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const navigate = useNavigate();
   const permission = usePermission();
   const queryClient = useQueryClient();
   const [isLiveConnected, setIsLiveConnected] = useState(false);
+
+  const availableMonths = useMemo(() => {
+    const months: Array<{ value: string; label: string }> = [];
+    const formatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    const now = new Date();
+
+    for (let index = 0; index < 24; index += 1) {
+      const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - index, 1));
+      months.push({
+        value: date.toISOString().slice(0, 7),
+        label: formatter.format(date),
+      });
+    }
+
+    return months;
+  }, []);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -74,10 +91,11 @@ const FinanceDashboard: React.FC = () => {
     error,
     refetch,
   } = useQuery({
-    queryKey: ['finance-stats', timeRange, currencyFilter],
+    queryKey: ['finance-stats', timeRange, currencyFilter, selectedMonth],
     queryFn: async () => {
       const currencyQuery = currencyFilter && currencyFilter !== 'all' ? `&currency=${currencyFilter}` : '';
-      const response = await api.get(`/finance/stats?range=${timeRange}${currencyQuery}`);
+      const monthQuery = timeRange === 'month' && selectedMonth ? `&month=${selectedMonth}` : '';
+      const response = await api.get(`/finance/stats?range=${timeRange}${currencyQuery}${monthQuery}`);
       return response;
     },
     refetchInterval: 10000,
@@ -100,10 +118,11 @@ const FinanceDashboard: React.FC = () => {
   const founders = foundersResponse?.data || [];
 
   const { data: chartDataResponse } = useQuery({
-    queryKey: ['finance-chart', timeRange, currencyFilter],
+    queryKey: ['finance-chart', timeRange, currencyFilter, selectedMonth],
     queryFn: async () => {
       const currencyQuery = currencyFilter && currencyFilter !== 'all' ? `&currency=${currencyFilter}` : '';
-      const response = await api.get(`/finance/chart?range=${timeRange}${currencyQuery}`);
+      const monthQuery = timeRange === 'month' && selectedMonth ? `&month=${selectedMonth}` : '';
+      const response = await api.get(`/finance/chart?range=${timeRange}${currencyQuery}${monthQuery}`);
       return response;
     },
     refetchInterval: 10000,
@@ -115,7 +134,6 @@ const FinanceDashboard: React.FC = () => {
   const distributionColors = ['#0f766e', '#2563eb', '#f59e0b', '#7c3aed'];
   const currencyCode = stats?.data?.currency || currentSettings.base_currency || 'USD';
   const futureFundCurrent = Number(stats?.data?.futureFund || 0);
-  const futureFundRecorded = Number(stats?.data?.futureFundRecorded || 0);
   const founderProfitGross = Number(stats?.data?.founderProfit || 0);
   const companySavingsRate = 10;
   const companySavings = Math.max(founderProfitGross, 0) * (companySavingsRate / 100);
@@ -140,6 +158,8 @@ const FinanceDashboard: React.FC = () => {
     })
     .filter((row: any) => row.grossShare > 0 || row.netShare > 0 || row.equity > 0);
   const founderCompanySavingsTotal = founderPayoutRows.reduce((sum: number, row: any) => sum + row.savings, 0);
+  const companySavingsTotal = founderCompanySavingsTotal || companySavings;
+  const reserveAllocationTotal = futureFundCurrent + companySavingsTotal;
 
   const statCards = [
     {
@@ -182,8 +202,7 @@ const FinanceDashboard: React.FC = () => {
   const profitCards = [
       { title: 'Gross Profit', value: stats?.data?.grossProfit || 0 },
       { title: 'Product Costs', value: stats?.data?.productCosts || 0 },
-      { title: 'Future Fund', value: futureFundCurrent },
-      { title: `Company Savings (from founders ${companySavingsRate}%)`, value: founderCompanySavingsTotal || companySavings, icon: PiggyBank, highlight: true },
+      { title: 'Company Savings + Future Fund', value: reserveAllocationTotal, icon: PiggyBank, highlight: true },
     ];
   const chartDistributionData = distributionData.filter((item: any) => Number(item.amount || 0) > 0 && item.label !== 'Founder Equity Allocated');
   const chartDistributionTotal = chartDistributionData.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
@@ -272,6 +291,11 @@ const FinanceDashboard: React.FC = () => {
             <p className="text-sm text-muted-foreground">
               Currency filter: {currencyFilter === 'all' ? 'All currencies' : currencyFilter}.
             </p>
+            {timeRange === 'month' ? (
+              <p className="text-sm text-muted-foreground">
+                Month snapshot: {availableMonths.find((month) => month.value === selectedMonth)?.label || selectedMonth}.
+              </p>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               Live dashboard updates {isLiveConnected ? 'enabled' : 'pending'}{isLiveConnected ? ' — changes are pushed automatically' : ''}.
             </p>
@@ -292,11 +316,11 @@ const FinanceDashboard: React.FC = () => {
               </option>
             ))}
           </select>
-          {(['all', 'month', 'quarter', 'year'] as const).map((range) => (
-            <button
-              key={range}
-              onClick={() => setTimeRange(range)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            {(['all', 'month', 'quarter', 'year'] as const).map((range) => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 timeRange === range
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
@@ -305,6 +329,19 @@ const FinanceDashboard: React.FC = () => {
                 {range === 'all' ? 'All Time' : range.charAt(0).toUpperCase() + range.slice(1)}
               </button>
             ))}
+            {timeRange === 'month' ? (
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              >
+                {availableMonths.map((month) => (
+                  <option key={month.value} value={month.value}>
+                    {month.label}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <Button variant="outline" onClick={() => navigate('/finance/records')}>
               <LayoutGrid className="mr-2 h-4 w-4" />
               Taxes & Commissions
@@ -353,9 +390,11 @@ const FinanceDashboard: React.FC = () => {
                 </div>
                 <p className="mt-2 text-2xl font-semibold">{formatMoney(item.value, currencyCode)}</p>
                 {'highlight' in item && item.highlight ? (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Positive value means reserve. Negative value means the business is still in shortfall.
-                  </p>
+                  <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                    <p>Company savings: {formatMoney(companySavingsTotal, currencyCode)}</p>
+                    <p>Future fund: {formatMoney(futureFundCurrent, currencyCode)}</p>
+                    <p>Positive value means reserve. Negative value means the business is still in shortfall.</p>
+                  </div>
                 ) : null}
               </CardContent>
             </Card>

@@ -270,6 +270,15 @@ const ProjectDetail: React.FC = () => {
       return;
     }
 
+    if (!user?.id) {
+      toast({
+        title: 'Validation Error',
+        description: 'Your session is missing. Please refresh and try again.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!newTask.project_id) {
       toast({
         title: 'Validation Error',
@@ -281,7 +290,10 @@ const ProjectDetail: React.FC = () => {
     
     setIsTaskSaving(true);
     try {
-      await api.createTask(newTask);
+      await api.createTask({
+        ...newTask,
+        reporter_id: user.id,
+      });
       toast({
         title: 'Success',
         description: 'Task created successfully.',
@@ -517,26 +529,33 @@ const ProjectDetail: React.FC = () => {
     <div className="space-y-6">
       <button
         onClick={() => navigate('/projects')}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm text-muted-foreground shadow-sm transition-colors hover:border-primary/40 hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Projects
       </button>
 
       {/* Header */}
-      <div className="bg-card rounded-lg border border-border p-6 shadow-card">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold mb-2">{project.name}</h1>
-            <div className="flex items-center gap-2">
+      <div className="overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-background via-card to-cyan-50/50 p-6 shadow-sm sm:p-8">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Project detail</p>
+            <h1 className="mt-2 break-words text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">{project.name}</h1>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
               {project.status && <StatusBadge status={project.status} />}
-
+              <PriorityBadge priority={project.priority || 'medium'} />
+              <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground">
+                {completedTasks}/{tasks.length} tasks complete
+              </span>
+              <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground">
+                {project.member_count || members.length || 0} members
+              </span>
             </div>
           </div>
           {(canEdit || canDelete) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" className="rounded-full border border-border bg-background/80 hover:bg-background">
                   <MoreVertical className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -561,11 +580,33 @@ const ProjectDetail: React.FC = () => {
             </DropdownMenu>
           )}
         </div>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Progress</p>
+            <p className="mt-2 text-2xl font-bold">{liveProgress}%</p>
+            <p className="mt-1 text-xs text-muted-foreground">From {completedTasks} completed tasks</p>
+          </div>
+          <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Tasks</p>
+            <p className="mt-2 text-2xl font-bold">{tasks.length}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Tracked in this project</p>
+          </div>
+          <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Members</p>
+            <p className="mt-2 text-2xl font-bold">{project.member_count || members.length || 0}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Working on the project</p>
+          </div>
+          <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Deadline</p>
+            <p className="mt-2 text-2xl font-bold">{project.end_date ? format(new Date(project.end_date), 'MMM dd') : 'Open'}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Target delivery</p>
+          </div>
+        </div>
       </div>
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-5 rounded-2xl bg-muted/50 p-1">
           <TabsTrigger value="overview" className="flex items-center gap-2">
             <FolderKanban className="h-4 w-4" />
             Overview
@@ -590,99 +631,94 @@ const ProjectDetail: React.FC = () => {
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="mt-6">
-          <div className="bg-card rounded-lg border border-border p-6 shadow-card">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-semibold text-muted-foreground">Description</h2>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={downloadDescriptionAsDocx}
-                    className="h-7 text-xs"
-                  >
-                    <Download className="mr-1 h-3 w-3" />
-                    Download
-                  </Button>
-                </div>
-                <p className="text-foreground whitespace-pre-wrap">
-                  {project.description || 'No description provided'}
-                </p>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_360px]">
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Description</h2>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={downloadDescriptionAsDocx}
+                  className="h-8 rounded-full text-xs"
+                >
+                  <Download className="mr-2 h-3 w-3" />
+                  Download
+                </Button>
+              </div>
+              <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">
+                {project.description || 'No description provided'}
+              </p>
+            </div>
+
+            <div className="space-y-6">
+              <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Progress</h3>
+                <ProgressBar value={liveProgress} />
+                <p className="mt-2 text-xs text-muted-foreground">{liveProgress}% complete from {completedTasks}/{tasks.length} tasks</p>
               </div>
 
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-sm font-semibold text-muted-foreground mb-2">Progress</h3>
-                  <ProgressBar value={liveProgress} />
-                  <p className="text-xs text-muted-foreground mt-1">{liveProgress}% complete from {completedTasks}/{tasks.length} tasks</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Members</p>
+                  <p className="mt-2 text-sm font-semibold">{project.member_count || members.length || 0}</p>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Members</p>
-                    <p className="text-sm font-medium text-lg">{project.member_count || members.length || 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Priority</p>
-                    <p className="text-sm font-medium capitalize">{project.priority || 'Not set'}</p>
-                  </div>
+                <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Priority</p>
+                  <p className="mt-2 text-sm font-semibold capitalize">{project.priority || 'Not set'}</p>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Start Date</p>
-                    <p className="text-sm font-medium">
-                      {project.start_date ? format(new Date(project.start_date), 'MMM dd, yyyy') : 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">End Date</p>
-                    <p className="text-sm font-medium">
-                      {project.end_date ? format(new Date(project.end_date), 'MMM dd, yyyy') : 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Created</p>
-                    <p className="text-sm font-medium">
-                      {project.created_at ? format(new Date(project.created_at), 'MMM dd, yyyy') : 'Unknown'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Status</p>
-                    <p className="text-sm font-medium capitalize">{project.status || 'Not set'}</p>
-                  </div>
+                <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Start Date</p>
+                  <p className="mt-2 text-sm font-semibold">
+                    {project.start_date ? format(new Date(project.start_date), 'MMM dd, yyyy') : 'Not set'}
+                  </p>
                 </div>
+                <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">End Date</p>
+                  <p className="mt-2 text-sm font-semibold">
+                    {project.end_date ? format(new Date(project.end_date), 'MMM dd, yyyy') : 'Not set'}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Created</p>
+                  <p className="mt-2 text-sm font-semibold">
+                    {project.created_at ? format(new Date(project.created_at), 'MMM dd, yyyy') : 'Unknown'}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Status</p>
+                  <p className="mt-2 text-sm font-semibold capitalize">{project.status || 'Not set'}</p>
+                </div>
+              </div>
 
-                <div className="border-t border-border pt-4">
-                  <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
-                    <Users className="h-4 w-4" />
-                    Project Creator
-                  </h3>
-                  {project.created_by_name ? (
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10">
-                        <span className="text-sm font-semibold">{project.created_by_name?.split(' ').map(n => n[0]).join('').toUpperCase()}</span>
-                      </div>
-                      <div>
-                        <p className="font-medium">{project.created_by_name}</p>
-                        <p className="text-xs text-muted-foreground">Project creator</p>
-                      </div>
+              <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
+                <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Users className="h-4 w-4" />
+                  Project Creator
+                </h3>
+                {project.created_by_name ? (
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10">
+                      <span className="text-sm font-semibold">{project.created_by_name?.split(' ').map(n => n[0]).join('').toUpperCase()}</span>
                     </div>
-                  ) : project.owner ? (
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-10 w-10">
-                        <AvatarImage src={project.owner?.avatar ? `${IMAGE_BASE_URL}${project.owner.avatar}` : ''} />
-                        <AvatarFallback>{project.owner?.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-medium">{project.owner?.name}</p>
-                        <p className="text-xs text-muted-foreground">{project.owner?.email}</p>
-                      </div>
+                    <div>
+                      <p className="font-medium">{project.created_by_name}</p>
+                      <p className="text-xs text-muted-foreground">Project creator</p>
                     </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No creator assigned</p>
-                  )}
-                </div>
+                  </div>
+                ) : project.owner ? (
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10">
+                      <AvatarImage src={project.owner?.avatar ? `${IMAGE_BASE_URL}${project.owner.avatar}` : ''} />
+                      <AvatarFallback>{project.owner?.name?.split(' ').map(n => n[0]).join('').toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium">{project.owner?.name}</p>
+                      <p className="text-xs text-muted-foreground">{project.owner?.email}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No creator assigned</p>
+                )}
               </div>
             </div>
           </div>
@@ -690,8 +726,8 @@ const ProjectDetail: React.FC = () => {
 
         {/* Members Tab */}
         <TabsContent value="members" className="mt-6">
-          <div className="bg-card rounded-lg border border-border shadow-card">
-            <div className="flex items-center justify-between p-4 border-b border-border">
+          <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+            <div className="flex items-center justify-between border-b border-border/60 bg-muted/30 p-4">
               <h3 className="font-semibold">Project Members ({members.length})</h3>
               <div className="flex gap-2">
                 {canManageProjectRoles && (
@@ -758,8 +794,8 @@ const ProjectDetail: React.FC = () => {
 
         {/* Tasks Tab */}
         <TabsContent value="tasks" className="mt-6">
-          <div className="bg-card rounded-lg border border-border shadow-card">
-            <div className="flex items-center justify-between p-4 border-b border-border">
+          <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+            <div className="flex items-center justify-between border-b border-border/60 bg-muted/30 p-4">
               <h3 className="font-semibold">Project Tasks ({tasks.length})</h3>
               {canCreateTask && (
                 <Button 
@@ -818,8 +854,8 @@ const ProjectDetail: React.FC = () => {
 
         {/* Files Tab */}
         <TabsContent value="files" className="mt-6">
-          <div className="bg-card rounded-lg border border-border shadow-card">
-            <div className="flex items-center justify-between p-4 border-b border-border">
+          <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+            <div className="flex items-center justify-between border-b border-border/60 bg-muted/30 p-4">
               <h3 className="font-semibold">Project Files ({files.length})</h3>
               {canUploadFiles && (
                 <div>
@@ -888,7 +924,7 @@ const ProjectDetail: React.FC = () => {
         </TabsContent>
         {/* Finance Tab */}
         <TabsContent value="finance" className="mt-6">
-          <div className="bg-card rounded-lg border border-border shadow-card p-4">
+          <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold">Finance</h3>
               <div className="flex gap-2">

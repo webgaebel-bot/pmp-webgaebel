@@ -370,9 +370,10 @@ const Projects: React.FC = () => {
           {filteredProjects.map((project) => (
             <div
               key={project.id}
-              className="bg-card rounded-lg border border-border p-5 shadow-card hover:shadow-elevated transition-shadow cursor-pointer"
+              className="group overflow-hidden rounded-3xl border border-border bg-card p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
               onClick={() => navigate(`/projects/${project.id}`)}
             >
+              <div className="mb-4 h-1 w-16 rounded-full bg-gradient-to-r from-primary/80 via-cyan-500 to-emerald-500" />
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-foreground truncate">{project.name}</h3>
@@ -435,7 +436,7 @@ const Projects: React.FC = () => {
                 </div>
               </div>
 
-              <div className="mt-4 pt-4 border-t border-border flex items-center">
+              <div className="mt-4 flex items-center border-t border-border/60 pt-4">
                 <Avatar className="h-7 w-7">
                   <AvatarImage src={project.owner?.avatar ? `${IMAGE_BASE_URL}${project.owner.avatar}` : undefined} />
                   <AvatarFallback className="bg-accent/20 text-accent text-xs">{getInitials(project.created_by_name || project.owner?.name)}</AvatarFallback>

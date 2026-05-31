@@ -193,6 +193,8 @@ const Expenses: React.FC = () => {
     return matchesSearch && matchesProject;
   }) || [];
   const expenseCurrency = filteredExpenses[0]?.currency || 'USD';
+  const getOriginalExpenseAmount = (expense: any) => Number(expense?.original_amount ?? expense?.amount ?? 0);
+  const getBaseExpenseAmount = (expense: any) => Number(expense?.base_amount ?? expense?.converted_amount ?? expense?.amount ?? 0);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -344,11 +346,19 @@ const Expenses: React.FC = () => {
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Amount</p>
-                  <p className="font-medium">{formatMoney(selectedExpense.amount || 0, selectedExpense.currency || expenseCurrency)}</p>
+                  <p className="font-medium">{formatMoney(getOriginalExpenseAmount(selectedExpense), selectedExpense.currency || selectedExpense.original_currency || expenseCurrency)}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Currency</p>
                   <p className="font-medium">{selectedExpense.currency || 'USD'}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Base Amount</p>
+                  <p className="font-medium">{formatMoney(getBaseExpenseAmount(selectedExpense), selectedExpense.base_currency || expenseCurrency)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Base Currency</p>
+                  <p className="font-medium">{selectedExpense.base_currency || selectedExpense.currency || expenseCurrency}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Date</p>
@@ -430,7 +440,7 @@ const Expenses: React.FC = () => {
                         </Badge>
                       </TableCell>
                       <TableCell className="font-medium">{expense.description}</TableCell>
-                      <TableCell>{formatMoney(expense.amount, expense.currency || expenseCurrency)}</TableCell>
+                      <TableCell>{formatMoney(getOriginalExpenseAmount(expense), expense.currency || expense.original_currency || expenseCurrency)}</TableCell>
                       <TableCell>{expense.project?.name || expense.project_name || '-'}</TableCell>
                       <TableCell>{new Date(expense.expense_date).toLocaleDateString()}</TableCell>
                       <TableCell className="capitalize">

@@ -520,7 +520,28 @@ const monthKey = (value?: string | null) => {
   return new Date(value).toLocaleString('en-US', { month: 'short', year: 'numeric' });
 };
 
-const getRangeBounds = (range?: string) => {
+const getMonthRangeBounds = (month?: string) => {
+  const normalizedMonth = String(month || '').trim();
+  if (!normalizedMonth) return null;
+
+  const match = normalizedMonth.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+    return null;
+  }
+
+  const start = new Date(Date.UTC(year, monthIndex, 1));
+  const end = new Date(Date.UTC(year, monthIndex + 1, 0, 23, 59, 59, 999));
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+};
+
+const getRangeBounds = (range?: string, month?: string) => {
   const normalizedRange = String(range || 'month').toLowerCase();
   const end = new Date();
 
@@ -529,6 +550,13 @@ const getRangeBounds = (range?: string) => {
       start: new Date('1970-01-01T00:00:00.000Z').toISOString(),
       end: end.toISOString(),
     };
+  }
+
+  if (normalizedRange === 'month') {
+    const monthBounds = getMonthRangeBounds(month);
+    if (monthBounds) {
+      return monthBounds;
+    }
   }
 
   const start = new Date(end);
@@ -1758,11 +1786,19 @@ export class SupabaseApiService {
     }
     if (endpoint.startsWith('/finance/stats')) {
       const url = new URL(`http://local${endpoint}`);
-      return (await this.getFinanceStats(url.searchParams.get('range') || 'month', url.searchParams.get('currency') || undefined)) as T;
+      return (await this.getFinanceStats(
+        url.searchParams.get('range') || 'month',
+        url.searchParams.get('currency') || undefined,
+        url.searchParams.get('month') || undefined
+      )) as T;
     }
     if (endpoint.startsWith('/finance/chart')) {
       const url = new URL(`http://local${endpoint}`);
-      return (await this.getFinanceChart(url.searchParams.get('range') || 'month', url.searchParams.get('currency') || undefined)) as T;
+      return (await this.getFinanceChart(
+        url.searchParams.get('range') || 'month',
+        url.searchParams.get('currency') || undefined,
+        url.searchParams.get('month') || undefined
+      )) as T;
     }
     if (endpoint === '/time-logs') {
       return (await this.getTimeLogs()) as T;
@@ -5021,7 +5057,7 @@ export class SupabaseApiService {
   async getFinanceAccounts() {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.view', 'You do not have permission to view finance accounts.');
-    const selectClause = 'id, name, account_type, client_id, project_id, bank_name, account_number, iban, branch_name, account_holder_name, currency, status, is_default, notes, created_by, created_at, updated_at, client:clients(id, name), project:projects(id, name)';
+    const selectClause = 'id, name, account_type, user_id, bank_name, account_number, iban, branch_name, account_holder_name, status, is_default, notes, created_by, created_at, updated_at, user:profiles!finance_accounts_user_id_fkey(id, name, email, avatar_url, profile_image)';
     const legacySelectClause = 'id, name, account_type, bank_name, account_number_last4, account_holder_name, currency, notes, is_active, created_at, updated_at';
     let query = this.client
       .from('finance_accounts')
@@ -5054,16 +5090,14 @@ export class SupabaseApiService {
     requirePermission(access, 'finance.payments.manage', 'You do not have permission to create finance accounts.');
     const { data: created, error } = await this.client
       .from('finance_accounts')
-        .insert({
+      .insert({
         name: data?.name,
         account_type: data?.account_type || 'bank',
-        client_id: data?.client_id || null,
-        project_id: data?.project_id || null,
+        user_id: data?.user_id || null,
         bank_name: data?.bank_name || null,
         account_number: data?.account_number || null,
         iban: data?.iban || null,
         branch_name: data?.branch_name || null,
-        currency: String(data?.currency || 'USD').toUpperCase(),
         status: data?.status || 'active',
         is_default: Boolean(data?.is_default),
         notes: data?.notes || null,
@@ -5072,7 +5106,30 @@ export class SupabaseApiService {
       .select()
       .single();
 
-    if (error || !created) throw formatError(error, 'Failed to create finance account.');
+    if (error || !created) {
+      if (error && this.isMissingColumnError(error)) {
+        const { data: legacyCreated, error: legacyError } = await this.client
+          .from('finance_accounts')
+          .insert({
+            name: data?.name,
+            account_type: data?.account_type || 'bank',
+            bank_name: data?.bank_name || null,
+            account_number: data?.account_number || null,
+            iban: data?.iban || null,
+            branch_name: data?.branch_name || null,
+            status: data?.status || 'active',
+            is_default: Boolean(data?.is_default),
+            notes: data?.notes || null,
+            created_by: access.profile.id,
+          })
+          .select()
+          .single();
+        if (!legacyError && legacyCreated) {
+          return { success: true, data: legacyCreated };
+        }
+      }
+      throw formatError(error, 'Failed to create finance account.');
+    }
     return { success: true, data: created };
   }
 
@@ -5084,13 +5141,11 @@ export class SupabaseApiService {
       .update({
         name: data?.name,
         account_type: data?.account_type || 'bank',
-        client_id: data?.client_id || null,
-        project_id: data?.project_id || null,
+        user_id: data?.user_id || null,
         bank_name: data?.bank_name || null,
         account_number: data?.account_number || null,
         iban: data?.iban || null,
         branch_name: data?.branch_name || null,
-        currency: String(data?.currency || 'USD').toUpperCase(),
         status: data?.status || 'active',
         is_default: Boolean(data?.is_default),
         notes: data?.notes || null,
@@ -5099,7 +5154,30 @@ export class SupabaseApiService {
       .select()
       .single();
 
-    if (error || !updated) throw formatError(error, 'Failed to update finance account.');
+    if (error || !updated) {
+      if (error && this.isMissingColumnError(error)) {
+        const { data: legacyUpdated, error: legacyError } = await this.client
+          .from('finance_accounts')
+          .update({
+            name: data?.name,
+            account_type: data?.account_type || 'bank',
+            bank_name: data?.bank_name || null,
+            account_number: data?.account_number || null,
+            iban: data?.iban || null,
+            branch_name: data?.branch_name || null,
+            status: data?.status || 'active',
+            is_default: Boolean(data?.is_default),
+            notes: data?.notes || null,
+          })
+          .eq('id', id)
+          .select()
+          .single();
+        if (!legacyError && legacyUpdated) {
+          return { success: true, data: legacyUpdated };
+        }
+      }
+      throw formatError(error, 'Failed to update finance account.');
+    }
     return { success: true, data: updated };
   }
 
@@ -5142,18 +5220,25 @@ export class SupabaseApiService {
   async getFinanceExpenses() {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.expenses.view', 'You do not have permission to view expenses.');
-    const currentUserId = String(access.profile.id);
+    const selectClause = 'id, category, description, original_amount, original_currency, amount, currency, base_currency, exchange_rate, converted_amount, fx_rate_used, fx_timestamp, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at, project:projects(id,name)';
+    const legacySelectClause = 'id, category, description, amount, currency, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at, project:projects(id,name)';
     let query = this.client
       .from('expenses')
-      .select('id, category, description, amount, currency, base_currency, exchange_rate, converted_amount, fx_rate_used, fx_timestamp, expense_date, payment_method, payment_method_other, project_id, receipt_url, approved_by, created_by, created_at, updated_at, project:projects(id,name)')
+      .select(selectClause)
       .order('expense_date', { ascending: false })
       .limit(1000);
 
-    if (!access.canViewAllFinance && !access.permissions.includes('finance.salaries.manage')) {
-      query = query.eq('created_by', currentUserId);
+    let { data, error } = await query;
+    if (error && (this.isMissingColumnError(error) || this.isMissingTableError(error, 'projects'))) {
+      const legacyQuery = this.client
+        .from('expenses')
+        .select(legacySelectClause)
+        .order('expense_date', { ascending: false })
+        .limit(1000);
+      const legacyResult = await legacyQuery;
+      data = legacyResult.data;
+      error = legacyResult.error;
     }
-
-    const { data, error } = await query;
     if (error) throw formatError(error, 'Unable to load expenses.');
     return { success: true, data: ensureArray(data) };
   }
@@ -5264,21 +5349,13 @@ export class SupabaseApiService {
   async getFinancePayments() {
     const access = await this.getCurrentAccessContext();
     requirePermission(access, 'finance.payments.view', 'You do not have permission to view payments.');
-    const currentUserId = String(access.profile.id);
     const selectClause = 'id, client_id, client_name, account_id, original_amount, original_currency, amount, currency, base_currency, exchange_rate, base_amount, converted_amount, fx_rate_used, fx_timestamp, payment_date, received_at, payment_method, payment_method_other, status, description, project_id, commission_assignee_id, received_amount, tax_amount, tax_converted_amount, commission_amount, commission_converted_amount, transaction_fee_amount, transaction_fee_converted_amount, product_cost_amount, product_cost_converted_amount, invoice_id, created_by, created_at, updated_at, client:clients(id, name, company), account:finance_accounts(id, name, account_type, currency, status, is_default), project:projects(id, name), commission_assignee:profiles!payments_commission_assignee_id_fkey(id, name, email)';
     const legacySelectClause = 'id, client_name, amount, currency, base_currency, exchange_rate, base_amount, converted_amount, fx_rate_used, fx_timestamp, payment_date, payment_method, payment_method_other, status, description, project_id, received_amount, tax_amount, commission_amount, transaction_fee_amount, product_cost_amount, invoice_id, created_by, created_at, updated_at, project:projects(id, name)';
     let query = this.client.from('payments').select(selectClause).order('payment_date', { ascending: false }).limit(1000);
 
-    if (!access.canViewAllFinance) {
-      query = query.eq('created_by', currentUserId);
-    }
-
     let { data, error } = await query;
     if (error && (this.isMissingColumnError(error) || this.isMissingTableError(error, 'finance_accounts'))) {
       let legacyQuery = this.client.from('payments').select(legacySelectClause).order('payment_date', { ascending: false }).limit(1000);
-      if (!access.canViewAllFinance) {
-        legacyQuery = legacyQuery.eq('created_by', currentUserId);
-      }
       const legacyResult = await legacyQuery;
       data = legacyResult.data;
       error = legacyResult.error;
@@ -6212,12 +6289,16 @@ export class SupabaseApiService {
     if (existingError || !existingEntry) throw formatError(existingError, 'Unable to find salary entry to delete.');
     const salaryRunId = existingEntry.salary_run_id;
 
-    const { error } = await this.client
+    const { data: deleted, error } = await this.client
       .from('salary_entries')
       .delete()
+      .select('id')
       .eq('id', id);
 
     if (error) throw formatError(error, 'Failed to delete salary entry.');
+    if (!deleted || deleted.length === 0) {
+      throw new Error('Delete did not affect any salary entry rows.');
+    }
 
     await this.recalculateSalaryRunTotal(salaryRunId);
     return { success: true };
@@ -6643,7 +6724,7 @@ export class SupabaseApiService {
     return { success: true };
   }
 
-  async getFinanceStats(range: string, currency?: string) {
+  async getFinanceStats(range: string, currency?: string, month?: string) {
     const access = await this.getCurrentAccessContext();
     const role = evaluateRole(access);
     const financeDashboardAccess = new Set([
@@ -6657,7 +6738,7 @@ export class SupabaseApiService {
     if (!canViewFinanceStats) {
       throw new ApiError('You do not have permission to view finance stats.', 403, 'PERMISSION_DENIED');
     }
-    const bounds = getRangeBounds(range);
+    const bounds = getRangeBounds(range, month);
     const currentUserId = String(access.profile.id);
     const restrictToOwn = !(role.isAdmin || access.canViewAllFinance || access.canViewTeamFinance);
     const canViewSalaryData = role.isAdmin || access.canViewAllFinance || access.permissions.includes('finance.salaries.view');
@@ -6837,7 +6918,7 @@ export class SupabaseApiService {
       };
   }
 
-  async getFinanceChart(_range: string, currency?: string) {
+  async getFinanceChart(_range: string, currency?: string, month?: string) {
     const access = await this.getCurrentAccessContext();
     const role = evaluateRole(access);
     const financeDashboardAccess = new Set([
@@ -6851,7 +6932,7 @@ export class SupabaseApiService {
     if (!canViewFinanceCharts) {
       throw new ApiError('You do not have permission to view finance charts.', 403, 'PERMISSION_DENIED');
     }
-    const bounds = getRangeBounds(_range);
+    const bounds = getRangeBounds(_range, month);
     const currentUserId = String(access.profile.id);
     const restrictToOwn = !(role.isAdmin || access.canViewAllFinance || access.canViewTeamFinance);
     const selectedCurrency = String(currency || '').trim().toUpperCase();

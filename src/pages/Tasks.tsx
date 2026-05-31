@@ -245,6 +245,15 @@ const Tasks: React.FC = () => {
       return;
     }
 
+    if (!user?.id) {
+      toast({
+        title: 'Validation Error',
+        description: 'Your session is missing. Please refresh and try again.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!newTask.project_id) {
       toast({
         title: 'Validation Error',
@@ -256,7 +265,10 @@ const Tasks: React.FC = () => {
     
     setIsSaving(true);
     try {
-      await api.createTask(newTask);
+      await api.createTask({
+        ...newTask,
+        reporter_id: user.id,
+      });
       toast({
         title: 'Success',
         description: 'Task created successfully.',
@@ -367,13 +379,13 @@ const Tasks: React.FC = () => {
       <div className="space-y-6">
         <button
           onClick={() => navigate('/tasks')}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm text-muted-foreground shadow-sm transition-colors hover:border-primary/40 hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Tasks
         </button>
 
-        <div className="bg-card rounded-lg border border-border p-8 shadow-card">
+        <div className="rounded-3xl border border-border bg-gradient-to-br from-background via-card to-emerald-50/40 p-6 shadow-sm sm:p-8">
           <div className="flex items-start justify-between mb-6">
             <div className="flex-1">
               <h1 className="text-3xl font-bold mb-2">{selectedTaskDetail.title}</h1>
@@ -410,12 +422,28 @@ const Tasks: React.FC = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-          </div>
+            </div>
+            <div className="mt-6 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Project</p>
+                <p className="mt-2 text-sm font-semibold">{(selectedTaskDetail as any).project_name || selectedTaskDetail.project?.name || 'No project'}</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Due Date</p>
+                <p className="mt-2 text-sm font-semibold">
+                  {selectedTaskDetail.due_date ? format(new Date(selectedTaskDetail.due_date), 'MMM dd, yyyy') : 'Not set'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Comments</p>
+                <p className="mt-2 text-sm font-semibold">{selectedTaskDetail.comments_count || 0}</p>
+              </div>
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="md:col-span-2">
-              <h2 className="text-sm font-semibold text-muted-foreground mb-3">Description</h2>
-              <p className="text-foreground whitespace-pre-wrap mb-8">
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-8">
+              <div className="md:col-span-2">
+                <h2 className="text-sm font-semibold text-muted-foreground mb-3">Description</h2>
+                <p className="text-foreground whitespace-pre-wrap mb-8">
                 {selectedTaskDetail.description || 'No description provided'}
               </p>
 
@@ -567,8 +595,8 @@ const Tasks: React.FC = () => {
           action={canCreate && tasks.length === 0 ? { label: 'Create Task', onClick: () => setIsCreateDialogOpen(true) } : undefined}
         />
       ) : (
-        <div className="bg-card rounded-lg border border-border shadow-card overflow-hidden">
-          <table className="data-table">
+          <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+            <table className="data-table">
             <thead>
               <tr>
                 <th className="w-10"></th>

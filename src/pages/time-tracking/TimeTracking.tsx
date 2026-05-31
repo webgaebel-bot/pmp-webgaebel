@@ -16,6 +16,14 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination';
 import { BarChart3, BriefcaseBusiness, Clock, Download, Eye, FolderKanban, Search, Target, TimerReset, Trash2, Users } from 'lucide-react';
 import { api } from '@/services/api';
 import { format } from 'date-fns';
@@ -77,6 +85,7 @@ const TimeTracking: React.FC = () => {
   const [dayFilter, setDayFilter] = useState('all');
   const [leadNicheFilter, setLeadNicheFilter] = useState('all');
   const [leadServiceFilter, setLeadServiceFilter] = useState('all');
+  const [tablePage, setTablePage] = useState(1);
   const [formData, setFormData] = useState({
     project_id: '',
     task_id: '',
@@ -377,6 +386,19 @@ const TimeTracking: React.FC = () => {
   const tableColumnCount = trackingMode === 'sales'
     ? (canViewTeamTime || canDeleteTime || canManageTime ? 9 : 8)
     : (canViewTeamTime || canDeleteTime || canManageTime ? 7 : 6);
+  const tablePageSize = trackingMode === 'sales' ? 10 : 12;
+  const tableTotalPages = Math.max(1, Math.ceil(filteredLogs.length / tablePageSize));
+  const paginatedLogs = filteredLogs.slice((tablePage - 1) * tablePageSize, tablePage * tablePageSize);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [trackingMode, search, dateFilter, dayFilter, leadNicheFilter, leadServiceFilter, selectedUserId]);
+
+  useEffect(() => {
+    if (tablePage > tableTotalPages) {
+      setTablePage(tableTotalPages);
+    }
+  }, [tablePage, tableTotalPages]);
 
   const resetEntryForm = () => {
     setFormData((current) => ({
@@ -1010,6 +1032,7 @@ const TimeTracking: React.FC = () => {
                 description="Try adjusting the filters or start a new timer session."
               />
             ) : (
+            <>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -1035,7 +1058,7 @@ const TimeTracking: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredLogs.map((log: any) => (
+                  {paginatedLogs.map((log: any) => (
                       <TableRow key={log.id}>
                         <TableCell className="font-medium">{log.user_name}</TableCell>
                         {trackingMode === 'sales' ? (
@@ -1100,6 +1123,46 @@ const TimeTracking: React.FC = () => {
                 </TableBody>
               </Table>
             </div>
+            {filteredLogs.length > tablePageSize ? (
+              <div className="flex flex-col gap-3 border-t border-border/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Showing {Math.min((tablePage - 1) * tablePageSize + 1, filteredLogs.length)} to{' '}
+                  {Math.min(tablePage * tablePageSize, filteredLogs.length)} of {filteredLogs.length} entries
+                </p>
+                <Pagination className="mx-0 w-auto justify-end">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setTablePage((current) => Math.max(1, current - 1));
+                        }}
+                        aria-disabled={tablePage === 1}
+                        className={tablePage === 1 ? 'pointer-events-none opacity-50' : ''}
+                      />
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationLink href="#" isActive size="default" onClick={(event) => event.preventDefault()}>
+                        {tablePage}
+                      </PaginationLink>
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationNext
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setTablePage((current) => Math.min(tableTotalPages, current + 1));
+                        }}
+                        aria-disabled={tablePage === tableTotalPages}
+                        className={tablePage === tableTotalPages ? 'pointer-events-none opacity-50' : ''}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </div>
+            ) : null}
+            </>
             )}
           </CardContent>
         </Card>
